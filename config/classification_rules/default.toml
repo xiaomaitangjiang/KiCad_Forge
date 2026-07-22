@@ -1,0 +1,95 @@
+# KiCad_Forge — Default classification rules
+# These rules auto-sort components into existing KiCad libraries.
+# Priority: lower = higher priority (rules evaluated in priority order).
+# Confidence: 0-100, how certain the match is.
+
+[[rule]]
+name = "贴片电阻 → Resistor_SMD"
+priority = 10
+target = "Resistor_SMD"
+confidence = 95
+condition = { type = "Resistor", package = "SMD_*" }
+
+[[rule]]
+name = "贴片电容 → Capacitor_SMD"
+priority = 10
+target = "Capacitor_SMD"
+confidence = 95
+condition = { type = "Capacitor", package = "SMD_*" }
+
+[[rule]]
+name = "贴片电感 → Inductor_SMD"
+priority = 10
+target = "Inductor_SMD"
+confidence = 95
+condition = { type = "Inductor", package = "SMD_*" }
+
+[[rule]]
+name = "贴片磁珠 → FerriteBead_SMD"
+priority = 11
+target = "FerriteBead_SMD"
+confidence = 90
+condition = { type = "FerriteBead", package = "SMD_*" }
+
+[[rule]]
+name = "二极管 → Diode_SMD"
+priority = 12
+target = "Diode_SMD"
+confidence = 90
+condition = { type = "Diode", package = "*" }
+
+[[rule]]
+name = "LED → LED_SMD"
+priority = 12
+target = "LED_SMD"
+confidence = 90
+condition = { type = "LED", package = "*" }
+
+[[rule]]
+name = "2-8引脚 IC → IC_Small_SMD"
+priority = 20
+target = "IC_Small_SMD"
+confidence = 80
+condition = { min_pins = 2, max_pins = 8 }
+
+[[rule]]
+name = "9-28引脚 IC → IC_Medium_SMD"
+priority = 20
+target = "IC_Medium_SMD"
+confidence = 80
+condition = { min_pins = 9, max_pins = 28 }
+
+[[rule]]
+name = "29+引脚 IC → IC_Large_SMD"
+priority = 20
+target = "IC_Large_SMD"
+confidence = 85
+condition = { min_pins = 29, max_pins = 9999 }
+
+[[rule]]
+name = "连接器 → Connector"
+priority = 15
+target = "Connector"
+confidence = 85
+condition = { type = "Connector" }
+
+[[rule]]
+name = "开关 → Switch"
+priority = 15
+target = "Switch"
+confidence = 85
+condition = { type = "Switch" }
+
+[[rule]]
+name = "晶振 → Crystal_SMD"
+priority = 15
+target = "Crystal_SMD"
+confidence = 90
+condition = { type = "Crystal" }
+
+[[rule]]
+name = "电压稳压器 → Regulator_SMD"
+priority = 15
+target = "Regulator_SMD"
+confidence = 90
+condition = { type = "VoltageRegulator" }

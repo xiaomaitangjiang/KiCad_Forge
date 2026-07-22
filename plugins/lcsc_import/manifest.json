@@ -1,0 +1,16 @@
+{
+  "id": "com.kicad_forge.lcsc_import",
+  "name": "LCSC Component Importer",
+  "version": "1.0.0",
+  "author": "KiCad Forge",
+  "description": "Download symbols/footprints/3D models from LCSC (via easyeda2kicad). Enter an LCSC part number like C83091 and click Import.",
+  "license": "MIT",
+  "capabilities": ["import"],
+  "one_click": true,
+  "entry": "plugin.py",
+  "entry_function": "import_component",
+  "dependencies": {
+    "python": ">=3.10",
+    "pip": ["easyeda2kicad"]
+  }
+}

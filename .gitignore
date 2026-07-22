@@ -1,0 +1,52 @@
+# Xmake
+.xmake/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.user
+*.pro.user*
+
+# Qt
+*.moc
+moc_*.cpp
+ui_*.h
+qrc_*.cpp
+*.qm
+Makefile
+*.o
+*.obj
+
+# C++ build artifacts
+*.dll
+*.dylib
+*.so
+*.exe
+*.lib
+*.a
+*.exp
+*.pdb
+*.ilk
+
+# Plugin binaries
+plugins/**/*.dll
+plugins/**/*.so
+plugins/**/*.dylib
+
+# macOS
+.DS_Store
+*.app
+
+# Linux
+*.desktop~
+*.AppImage
+
+# Runtime data
+*.db
+*.db-journal
+*.db-wal
+
+# Logs
+*.log
+logs/
