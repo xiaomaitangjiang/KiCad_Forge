@@ -38,6 +38,15 @@ public:
     /// whose filename partially matches the footprint name or symbol name.
     util::Result<int> link_3d_models_to_symbols();
 
+    /// Set target library for subsequent imports (empty = auto-create from file name)
+    void set_target_library(const std::string& id) { sym_target_library_ = id; }
+
+    /// Merge a .kicad_sym file's symbols into an existing library file.
+    /// Appends symbols and writes back using the S-expression writer.
+    /// Returns number of symbols appended.
+    util::Result<int> merge_into_library(const std::filesystem::path& source_sym,
+                                          const std::filesystem::path& target_sym);
+
     /// Get basic stats from the database.
     int symbol_count() const;
     int footprint_count() const;
@@ -47,6 +56,7 @@ private:
     void try_link_symbol_footprint(const core::Symbol& sym);
 
     storage::Database* db_;
+    core::Uuid sym_target_library_;
 };
 
 }  // namespace kforge::services

@@ -152,6 +152,52 @@ json_to_properties(const std::string& json)
 }
 
 // ============================================================
+// LibraryRepository
+// ============================================================
+
+LibraryRepository::LibraryRepository(sqlite3* db) : db_(db) {}
+
+util::Result<core::LibraryMeta> LibraryRepository::insert(const core::LibraryMeta& lib) {
+    // Check if library with this name already exists (dedup by name)
+    auto all = find_all();
+    if (all) for (auto& existing : *all) {
+        if (existing.name == lib.name) return existing;
+    }
+    const char* sql = "INSERT OR IGNORE INTO libraries(id,name,file_path,description) VALUES(?1,?2,?3,?4)";
+    core::LibraryMeta l = lib;
+    if (l.id.empty()) l.id = make_uuid();
+    ScopedStmt stmt;
+    int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
+    if (rc != SQLITE_OK) return std::unexpected(util::Error::db(sqlite3_errmsg(db_)));
+    bind_text(stmt, 1, l.id); bind_text(stmt, 2, l.name);
+    bind_text(stmt, 3, l.file_path.string()); bind_text(stmt, 4, l.description);
+    rc = sqlite3_step(stmt);
+    if (rc != SQLITE_DONE) return std::unexpected(util::Error::db(sqlite3_errmsg(db_)));
+    return l;
+}
+
+util::Result<std::vector<core::LibraryMeta>> LibraryRepository::find_all() {
+    const char* sql = "SELECT id,name,file_path,description FROM libraries ORDER BY name";
+    std::vector<core::LibraryMeta> result;
+    ScopedStmt stmt;
+    if (sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr) != SQLITE_OK) return result;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        core::LibraryMeta m;
+        m.id = col_text(stmt, 0); m.name = col_text(stmt, 1);
+        m.file_path = col_text(stmt, 2); m.description = col_text(stmt, 3);
+        result.push_back(m);
+    }
+    return result;
+}
+
+int LibraryRepository::count() const {
+    ScopedStmt stmt;
+    if (sqlite3_prepare_v2(db_, "SELECT COUNT(*) FROM libraries", -1, stmt.ref(), nullptr) == SQLITE_OK
+        && sqlite3_step(stmt) == SQLITE_ROW) return sqlite3_column_int(stmt, 0);
+    return 0;
+}
+
+// ============================================================
 // SymbolRepository
 // ============================================================
 

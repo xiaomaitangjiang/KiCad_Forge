@@ -32,6 +32,12 @@ export default function App() {
   const [plugins, setPlugins] = useState([])
   const [compTypes, setCompTypes] = useState([])
   const [pkgTypes, setPkgTypes] = useState([])
+  const [libraries, setLibraries] = useState([])
+  const [targetLib, setTargetLib] = useState('')
+  const [showImportDlg, setShowImportDlg] = useState(false)
+  const [importLcscId, setImportLcscId] = useState('')
+  const [importSymLib, setImportSymLib] = useState('')
+  const [importFpLib, setImportFpLib] = useState('')
   const toastTimer = useRef(null)
 
   const toastMsg = useCallback((msg) => {
@@ -46,10 +52,12 @@ export default function App() {
     catch { setLoading(false); toastMsg('Network error'); return null }
   }, [toastMsg])
 
+  const loadId = useRef(0)
   async function loadSymbols(q) {
+    const id = ++loadId.current
     const url = q ? `${API}/symbols?q=${encodeURIComponent(q)}` : `${API}/symbols`
     const data = await api(url)
-    if (data) setSymbols(Array.isArray(data) ? data : [])
+    if (data && id === loadId.current) setSymbols(Array.isArray(data) ? data : [])
   }
 
   async function loadStatus() { const d = await api(`${API}/status`); if (d) setStatus(d) }
@@ -58,6 +66,8 @@ export default function App() {
   async function loadSettings() { const d = await api(`${API}/settings`); if (d) setSettings(d) }
   async function loadRules() { const d = await api(`${API}/rules`); if (d) setRules(d || []) }
   async function loadPlugins() { const d = await api(`${API}/plugins`); if (d) setPlugins(d || []) }
+  async function loadLibraries() { const d = await api(`${API}/libraries`); if (d) { setLibraries(d); if (!d.find(l=>l.id===targetLib)) setTargetLib(d[0]?.id||'default') } }
+  async function createLibrary() { const name = prompt('Library name:'); if (name) { await api(`${API}/libraries`, { method: 'POST', body: JSON.stringify({ name }) }); loadLibraries() } }
   async function loadCompTypes() { const d = await api(`${API}/component-types`); if (d) setCompTypes(Array.isArray(d) ? d : []) }
   async function loadPkgTypes() { const d = await api(`${API}/package-types`); if (d) setPkgTypes(Array.isArray(d) ? d : []) }
   async function manageType(url, action, name, extra = {}) {
@@ -96,7 +106,7 @@ export default function App() {
     localStorage.setItem('kf-dark', next ? '1' : '0')
   }
 
-  useEffect(() => { loadStatus(); loadSymbols(); loadIssues(); loadMatches(); loadSettings() }, [])
+  useEffect(() => { loadStatus(); loadSymbols(); loadIssues(); loadMatches(); loadSettings(); loadLibraries() }, [])
 
   const filtered = filter ? symbols.filter(s => s.type === filter) : symbols
   const typeCounts = {}
@@ -116,7 +126,7 @@ export default function App() {
 
         <div className="section">
           <div className="section-title">Library</div>
-          <div className={`nav-item ${!filter ? 'active' : ''}`} onClick={() => { setFilter(''); setSelected(null); loadSymbols() }}>
+          <div className={`nav-item ${!filter ? 'active' : ''}`} onClick={() => { setFilter(''); setSelected(null); setTargetLib(''); loadSymbols() }}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="3"/><line x1="9" y1="9" x2="15" y2="9"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="12" y2="17"/></svg>
             All Symbols
             <span className="badge">{status.symbols}</span>
@@ -144,6 +154,20 @@ export default function App() {
           ))}
         </div>
 
+        <div className="section">
+          <div className="section-title">Libraries</div>
+          <select value={targetLib} onChange={e => setTargetLib(e.target.value)}
+            style={{ margin: '4px 10px', padding: '4px 6px', borderRadius: 6, border: '1px solid var(--sep)', background: 'var(--bg)', color: 'var(--text)', fontSize: 11, width: 'calc(100% - 20px)' }}>
+            {libraries.map(l => <option key={l.id} value={l.id}>{l.name} ({l.file_path||'local'})</option>)}
+          </select>
+          <div className="nav-item" onClick={createLibrary}>+ New Library</div>
+          {libraries.map(l => (
+            <div key={l.id} className={`nav-item ${targetLib === l.id ? 'active' : ''}`} style={{ display: 'flex', justifyContent: 'space-between' }} onClick={() => { setFilter(''); setTargetLib(l.id); const id = ++loadId.current; fetch(`${API}/symbols?library=${l.id}`).then(r=>r.json()).then(d => { if (id === loadId.current) setSymbols(d||[]) }) }}>
+              <span><span className="dot dot-ok" /> {l.name}</span>
+              <span style={{ cursor: 'pointer', color: 'var(--red)', fontSize: 14, padding: '0 4px' }} onClick={e => { e.stopPropagation(); if (confirm('Delete library "'+l.name+'" and its local files?')) { api(`${API}/libraries`, { method: 'POST', body: JSON.stringify({ action: 'delete', id: l.id }) }).then(x => { if (x?.ok) { toastMsg('Deleted ' + l.name + (x.deleted_file?' + file':'')); loadLibraries(); loadSymbols(); setTargetLib('') } else toastMsg(x?.error) }) } }}>×</span>
+            </div>
+          ))}
+        </div>
         <div className="section">
           <div className="section-title">Tools</div>
           <div className="nav-item" onClick={() => { loadRules(); setShowRules(true) }}>
@@ -196,28 +220,13 @@ export default function App() {
             Auto Match
           </button>
           <span className="sep" />
-          <input
-            style={{ width: 150 }}
-            placeholder="LCSC ID (e.g. C83091)..."
-            title="Fetch component from LCSC via easyeda2kicad plugin"
-            onKeyDown={e => {
-              if (e.key === 'Enter') {
-                const v = e.target.value.trim()
-                if (v) {
-                  toastMsg('Plugin: fetching ' + v + '...')
-                  api(`${API}/plugins/execute?id=com.kicad_forge.lcsc_import`, {
-                    method: 'POST',
-                    body: JSON.stringify({ lcsc_id: v })
-                  })
-                    .then(d => {
-                      if (d?.ok) { toastMsg('Plugin: imported ' + (d.created||0) + ' items'); loadSymbols(); loadStatus() }
-                      else toastMsg('Plugin: ' + (d?.error||d?.messages?.join?.(' ')||'failed'))
-                    })
-                  e.target.value = ''
-                }
-              }
-            }}
-          />
+          <button className="btn-primary" onClick={() => {
+            setImportLcscId(''); setImportSymLib(targetLib); setImportFpLib('');
+            setShowImportDlg(true); loadLibraries()
+          }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Import LCSC
+          </button>
           <span className="sep" />
           <input
             placeholder="Search symbols..."
@@ -328,6 +337,13 @@ export default function App() {
               <div className="actions">
                 <button className="primary" onClick={classify}>Auto Classify</button>
                 <button onClick={autoMatch}>Find Matching Footprint</button>
+                <button style={{ color: 'var(--red)', borderColor: 'var(--red)' }}
+                  onClick={async () => {
+                    if (!confirm(`Delete "${selected.name}"?`)) return
+                    const r = await api(`${API}/libraries`, { method: 'POST', body: JSON.stringify({ action: 'delete_symbol', id: selected.id }) })
+                    if (r?.ok) { toastMsg('Deleted'); setSelected(null); loadSymbols(); loadStatus() }
+                    else toastMsg(r?.error||'Failed')
+                  }}>Delete Symbol</button>
               </div>
             </div>
           </>
@@ -342,29 +358,112 @@ export default function App() {
       {/* Toast */}
       <div id="toast" className={toast ? 'show' : ''}>{toast}</div>
 
-      {/* Settings Modal */}
-      {showSettings && (
-        <Modal title="Settings" onClose={() => setShowSettings(false)}>
+      {/* LCSC Import Dialog */}
+      {showImportDlg && (
+        <Modal title="Import LCSC Component" onClose={() => setShowImportDlg(false)}>
           <div className="form-group">
-            <label>Symbol Library Path</label>
-            <input value={settings.symbol_lib_path || ''} onChange={e => setSettings({ ...settings, symbol_lib_path: e.target.value })} placeholder="e.g. C:\Users\xiaom\Desktop\EXT_Internal_kicad_Lib\Symbols" />
-            <span className="form-hint">Directory containing .kicad_sym files</span>
+            <label>LCSC Part Number</label>
+            <input value={importLcscId} onChange={e => setImportLcscId(e.target.value)}
+              placeholder="e.g. C347222" autoFocus
+              onKeyDown={e => { if (e.key === 'Enter') document.getElementById('import-btn').click() }} />
           </div>
           <div className="form-group">
-            <label>Footprint Library Path</label>
-            <input value={settings.footprint_lib_path || ''} onChange={e => setSettings({ ...settings, footprint_lib_path: e.target.value })} placeholder="e.g. C:\KiCad\footprints" />
-            <span className="form-hint">Directory containing .kicad_mod files</span>
+            <label>Target Symbol Library</label>
+            <select value={importSymLib} onChange={e => setImportSymLib(e.target.value)}
+              style={{ width: '100%', padding: '8px 12px', border: '1px solid var(--sep)', borderRadius: 7, fontSize: 12.5, background: 'var(--bg)', color: 'var(--text)' }}>
+              <option value="">-- Select library --</option>
+              {libraries.map(l => <option key={l.id} value={l.id}>{l.name} ({l.symbol_count || 0} symbols)</option>)}
+            </select>
           </div>
           <div className="form-group">
-            <label>3D Model Path</label>
-            <input value={settings.model_3d_path || ''} onChange={e => setSettings({ ...settings, model_3d_path: e.target.value })} placeholder="e.g. C:\KiCad\3dmodels" />
-            <span className="form-hint">Directory containing .step / .wrl files</span>
+            <label>Target Footprint Library (optional)</label>
+            <select value={importFpLib} onChange={e => setImportFpLib(e.target.value)}
+              style={{ width: '100%', padding: '8px 12px', border: '1px solid var(--sep)', borderRadius: 7, fontSize: 12.5, background: 'var(--bg)', color: 'var(--text)' }}>
+              <option value="">-- Same as symbol library --</option>
+              {libraries.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+            </select>
           </div>
           <div className="btn-row">
-            <button className="btn-ghost" onClick={() => setShowSettings(false)}>Cancel</button>
-            <button className="btn-primary" onClick={saveSettings}>Save & Import</button>
+            <button className="btn-ghost" onClick={() => setShowImportDlg(false)}>Cancel</button>
+            <button id="import-btn" className="btn-primary" onClick={async () => {
+              const lcsc = importLcscId.trim()
+              if (!lcsc) { toastMsg('Enter an LCSC part number'); return }
+              if (!importSymLib) { toastMsg('Select a target symbol library'); return }
+              setShowImportDlg(false)
+              toastMsg('Fetching ' + lcsc + '...')
+              const r = await api(`${API}/plugins/execute?id=com.kicad_forge.lcsc_import`, {
+                method: 'POST',
+                body: JSON.stringify({ lcsc_id: lcsc,
+                  options: {
+                    target_library: (libraries.find(l => l.id === importSymLib) || {}).file_path || importSymLib,
+                    target_library_id: importSymLib,
+                    footprint_library: importFpLib
+                  }
+                })
+              })
+              if (r?.ok) {
+                toastMsg('Imported ' + lcsc + ': ' + ((r.imported_symbols||0) || (r.library_symbols||0)) + ' in library')
+                loadSymbols(); loadLibraries(); loadStatus()
+              } else toastMsg('Failed: ' + (r?.error || 'unknown'))
+            }}>Import</button>
           </div>
         </Modal>
+      )}
+
+      {/* Settings Modal */}
+      {showSettings && (
+        <MultiModal title="Settings" onClose={() => setShowSettings(false)} sections={[
+          { key: 'paths', label: '📁 Library Paths',
+            content: <>
+              <div className="form-group">
+                <label>Symbol Library Path</label>
+                <input value={settings.symbol_lib_path || ''} onChange={e => setSettings({ ...settings, symbol_lib_path: e.target.value })} placeholder="e.g. C:\Users\xiaom\Desktop\EXT_Internal_kicad_Lib\Symbols" />
+                <span className="form-hint">Directory containing .kicad_sym files</span>
+              </div>
+              <div className="form-group">
+                <label>Footprint Library Path</label>
+                <input value={settings.footprint_lib_path || ''} onChange={e => setSettings({ ...settings, footprint_lib_path: e.target.value })} placeholder="e.g. C:\KiCad\footprints" />
+                <span className="form-hint">Directory containing .kicad_mod files</span>
+              </div>
+              <div className="form-group">
+                <label>3D Model Path</label>
+                <input value={settings.model_3d_path || ''} onChange={e => setSettings({ ...settings, model_3d_path: e.target.value })} placeholder="e.g. C:\KiCad\3dmodels" />
+                <span className="form-hint">Directory containing .step / .wrl files</span>
+              </div>
+              <div className="btn-row"><button className="btn-primary" onClick={saveSettings}>Save & Import</button></div>
+            </>
+          },
+          { key: 'utils', label: '🔧 Utilities',
+            content: <>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <div style={{ padding: 12, border: '1px solid var(--sep)', borderRadius: 8 }}>
+                  <strong>Reset Database</strong>
+                  <p style={{ fontSize: 11, color: 'var(--text2)', margin: '4px 0' }}>
+                    Deletes all imported metadata. Original .kicad_sym files are NOT touched.<br/>
+                    Restart the app after reset.
+                  </p>
+                  <button style={{ padding: '6px 14px', border: '1px solid var(--red)', borderRadius: 6, color: 'var(--red)', background: 'transparent', cursor: 'pointer' }}
+                    onClick={async () => {
+                      if (!confirm('Reset database? All metadata will be lost.\n.kicad_sym files on disk are safe.\nRestart the app after.')) return
+                      const r = await api(`${API}/db/reset`, { method: 'POST' })
+                      toastMsg(r?.ok ? r.message : 'Reset failed')
+                    }}>Reset Database</button>
+                </div>
+                <div style={{ padding: 12, border: '1px solid var(--sep)', borderRadius: 8 }}>
+                  <strong>Reimport All</strong>
+                  <p style={{ fontSize: 11, color: 'var(--text2)', margin: '4px 0' }}>Re-scan configured paths and reimport all symbols/footprints.</p>
+                  <button className="btn-primary" style={{ padding: '6px 14px' }} onClick={saveSettings}>Reimport</button>
+                </div>
+                <div style={{ padding: 12, border: '1px solid var(--sep)', borderRadius: 8 }}>
+                  <strong>Database Location</strong>
+                  <p style={{ fontSize: 10, color: 'var(--text2)', margin: '4px 0', wordBreak: 'break-all' }}>
+                    %APPDATA%/kicad_forge/meta.db
+                  </p>
+                </div>
+              </div>
+            </>
+          }
+        ]} />
       )}
 
       {/* Rules Modal */}
@@ -420,6 +519,35 @@ export default function App() {
         onAdd={(name) => manageType(`${API}/package-types`, 'add', name).then(ok => ok && loadPkgTypes())}
         onRemove={(name) => manageType(`${API}/package-types`, 'remove', name).then(ok => ok && loadPkgTypes())}
         showCategory={true} />}
+    </div>
+  )
+}
+
+function MultiModal({ title, sections, onClose }) {
+  const [tab, setTab] = useState(sections[0]?.key || '')
+  return (
+    <div className="modal-overlay show" onClick={e => { if (e.target === e.currentTarget) onClose() }}>
+      <div className="modal" style={{ minWidth: 520 }}>
+        <div className="modal-header">
+          <h3>{title}</h3>
+          <button className="modal-close" onClick={onClose}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div style={{ display: 'flex', gap: 16 }}>
+          <div style={{ width: 140, borderRight: '1px solid var(--sep)', paddingRight: 12 }}>
+            {sections.map(s => (
+              <div key={s.key} onClick={() => setTab(s.key)}
+                style={{ padding: '8px 10px', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: tab === s.key ? 600 : 400,
+                  background: tab === s.key ? 'var(--accent)' : 'transparent',
+                  color: tab === s.key ? '#fff' : 'var(--text)' }}>
+                {s.label}
+              </div>
+            ))}
+          </div>
+          <div style={{ flex: 1, minHeight: 200 }}>{sections.find(s => s.key === tab)?.content}</div>
+        </div>
+      </div>
     </div>
   )
 }

@@ -1,98 +1,160 @@
 #!/usr/bin/env python3
 """
-LCSC Import Plugin for KiCad Forge (.kfplug)
-Self-contained — bundles easyeda2kicad (MIT) inside the plugin directory.
-No external dependencies needed beyond Python 3.10+.
-
-Usage: python plugin.py import '{"source":"C83091"}'
+LCSC Import Plugin — fetches from easyeda2kicad (bundled, MIT), merges symbol blocks.
+Usage: python plugin.py import '{"source":"C37593","options":{"target_library":"/path/to/lib.kicad_sym"}}'
 """
 
-import json
-import os
-import subprocess
-import sys
+import json, os, re, subprocess, sys
 
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
-
-# Use bundled easyeda2kicad — no pip install needed
 sys.path.insert(0, PLUGIN_DIR)
-sys.path.insert(0, os.path.join(PLUGIN_DIR, "easyeda2kicad"))
+
+POWER_NAMES = {'VCC','VDD','V+','VCCA','VCCD','VBAT','VIN','AVDD','DVDD',
+               'VSS','GND','V-','VEE','AGND','DGND','VS+','VP','VPP','VREF'}
 
 
-def fetch_from_lcsc(lcsc_id: str, output_dir: str) -> dict:
-    """Download component from LCSC using bundled easyeda2kicad."""
+def extract_symbol_blocks(text: str) -> list:
+    """Extract top-level (symbol ...) blocks by counting parentheses."""
+    blocks, pos = [], 0
+    while (pos := text.find("(symbol ", pos)) != -1:
+        start, depth, in_str = pos, 0, False
+        while pos < len(text):
+            c = text[pos]
+            if c == '"' and (pos == 0 or text[pos-1] != '\\'): in_str = not in_str
+            elif not in_str:
+                if c == '(': depth += 1
+                elif c == ')':
+                    depth -= 1
+                    if depth == 0: pos += 1; break
+            pos += 1
+        block = text[start:pos]
+        m = re.search(r'\(symbol\s+"([^"]+)"', block)
+        blocks.append((m.group(1) if m else "Unknown", block))
+    return blocks
+
+
+def fix_pin_types(block: str) -> str:
+    """Replace 'unspecified line' with correct type. Finds each pin by paren depth."""
+    result = []
+    i, n = 0, len(block)
+    while i < n:
+        if block[i:i+4] == '(pin':
+            # Find end of this pin by counting parentheses
+            d, j, in_s = 0, i, False
+            while j < n:
+                c = block[j]
+                if c == '"' and (j == 0 or block[j-1] != '\\'): in_s = not in_s
+                elif not in_s:
+                    if c == '(': d += 1
+                    elif c == ')': d -= 1;
+                j += 1
+                if d == 0 and not in_s: break
+            pin = block[i:j]
+            # Extract pin name
+            nm = re.search(r'\(name\s+"?([^"\s)]+)"?\s*\(effects', pin)
+            pname = nm.group(1) if nm else ""
+            etype = 'power_in' if pname in POWER_NAMES else 'passive'
+            pin = pin.replace('unspecified line', f'{etype} line', 1)
+            result.append(pin)
+            i = j
+        else:
+            result.append(block[i])
+            i += 1
+    return ''.join(result)
+
+
+def merge_into_file(blocks: list, target: str):
+    if os.path.exists(target):
+        text = open(target, encoding='utf-8').read()
+    else:
+        text = '(kicad_symbol_lib\n\t(version 20231120)\n\t(generator "KiCad_Forge")\n)\n'
+
+    # Find depth-0 closer
+    d, pos = 0, len(text)
+    for i in range(len(text)-1, -1, -1):
+        if text[i] == ')':
+            d += 1
+            if d == 1: pos = i; break
+        elif text[i] == '(': d -= 1
+    if pos < 0: raise ValueError("no closer")
+
+    text = text[:pos] + "\n" + "\n".join(blocks) + "\n" + text[pos:]
+    open(target, 'w', encoding='utf-8').write(text)
+
+
+def fetch_and_merge(lcsc_id: str, target_file: str, output_dir: str) -> dict:
     os.makedirs(output_dir, exist_ok=True)
 
-    # Run bundled easyeda2kicad via "python -m easyeda2kicad"
-    # PYTHONPATH ensures the bundled copy is used, not any system install
+    # Run easyeda2kicad
     env = os.environ.copy()
     env["PYTHONPATH"] = PLUGIN_DIR
-    cmd = [sys.executable, "-m", "easyeda2kicad",
-           "--lcsc_id", lcsc_id, "--output", output_dir,
-           "--symbol", "--footprint"]
+    r = subprocess.run(
+        [sys.executable, "-m", "easyeda2kicad",
+         "--lcsc_id", lcsc_id, "--output", output_dir, "--symbol", "--footprint"],
+        capture_output=True, text=True, timeout=120, env=env)
 
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, env=env)
+    syms = [f for f in os.listdir(output_dir) if f.endswith(".kicad_sym")]
+    if not syms:
+        return {"ok": False, "error": f"No .kicad_sym. {r.stderr[:200]}"}
 
-        files = os.listdir(output_dir) if os.path.isdir(output_dir) else []
-        sym_files = [os.path.join(output_dir, f) for f in files if f.endswith(".kicad_sym")]
-        mod_files = [os.path.join(output_dir, f) for f in files if f.endswith(".kicad_mod")]
-        stp_files = [os.path.join(output_dir, f) for f in files if f.endswith((".step", ".stp"))]
+    blocks = extract_symbol_blocks(open(os.path.join(output_dir, syms[0]), encoding='utf-8').read())
+    if not blocks:
+        return {"ok": False, "error": "No (symbol ...) blocks"}
 
-        return {
-            "ok": bool(sym_files or mod_files),
-            "lcsc_id": lcsc_id,
-            "output_dir": output_dir,
-            "symbols": sym_files,
-            "footprints": mod_files,
-            "models_3d": stp_files,
-            "stdout": result.stdout[-500:],
-            "stderr": result.stderr[-500:] if result.returncode != 0 else "",
-        }
-    except Exception as e:
-        return {"ok": False, "lcsc_id": lcsc_id, "error": str(e)}
+    # Fix pin types
+    fixed = [fix_pin_types(b[1]) for b in blocks]
+    # Fix footprint library prefix: easyeda2kicad:NAME → target_lib:NAME
+    target_lib = os.path.splitext(os.path.basename(target_file))[0]
+    for i in range(len(fixed)):
+        fixed[i] = fixed[i].replace('easyeda2kicad:', target_lib + ':')
+    merge_into_file(fixed, target_file)
+
+    # Copy footprints to the corresponding .pretty folder
+    fp_copied = 0
+    # e.g. Symbols/EXT_LDO.kicad_sym → Footprints/EXT_LDO.pretty/
+    sym_dir = os.path.dirname(target_file)
+    fp_base = os.path.join(os.path.dirname(sym_dir), "Footprints") if "Symbols" in sym_dir else sym_dir
+    target_lib = os.path.splitext(os.path.basename(target_file))[0]
+    target_pretty = os.path.join(fp_base, target_lib + ".pretty")
+    os.makedirs(target_pretty, exist_ok=True)
+
+    # Copy from .pretty subdirectories
+    for d in os.listdir(output_dir):
+        src_pretty = os.path.join(output_dir, d)
+        if not d.endswith(".pretty") or not os.path.isdir(src_pretty):
+            continue
+        for f in os.listdir(src_pretty):
+            if f.endswith(".kicad_mod"):
+                src = os.path.join(src_pretty, f)
+                dst = os.path.join(target_pretty, f)
+                with open(src, 'rb') as fr: data = fr.read()
+                with open(dst, 'wb') as fw: fw.write(data)
+                fp_copied += 1
+
+    # Also copy standalone .kicad_mod files directly in output dir
+    for f in os.listdir(output_dir):
+        if f.endswith(".kicad_mod") and os.path.isfile(os.path.join(output_dir, f)):
+            src = os.path.join(output_dir, f)
+            dst = os.path.join(target_pretty, f)
+            with open(src, 'rb') as fr: data = fr.read()
+            with open(dst, 'wb') as fw: fw.write(data)
+            fp_copied += 1
+
+    return {"ok": True, "lcsc_id": lcsc_id, "merged_into": target_file,
+            "symbol_names": [b[0] for b in blocks], "block_count": len(blocks),
+            "footprints_copied": fp_copied, "output_dir": output_dir}
 
 
-def import_component(args: dict) -> dict:
-    """Main entry point for import action."""
-    lcsc_id = args.get("source", "") or args.get("lcsc_id", "")
-    if not lcsc_id:
-        return {"ok": False, "error": "Missing lcsc_id in args.source or args.lcsc_id"}
-
-    output_base = args.get("output_dir", os.path.join(PLUGIN_DIR, "fetched"))
-    output_dir = os.path.join(output_base, lcsc_id)
-
-    result = fetch_from_lcsc(lcsc_id, output_dir)
-    return result
-
-
-# ============================================================
-# CLI interface: python plugin.py <action> '<json>'
-# ============================================================
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print(json.dumps({"ok": False, "error": "Usage: plugin.py <action> [json_args]"}))
-        sys.exit(1)
-
-    action = sys.argv[1]
-    args = {}
-    if len(sys.argv) > 2:
-        try:
-            args = json.loads(sys.argv[2])
-        except json.JSONDecodeError as e:
-            print(json.dumps({"ok": False, "error": f"Invalid JSON: {e}"}))
-            sys.exit(1)
-
-    if action == "info":
-        # Return plugin metadata
-        manifest_path = os.path.join(PLUGIN_DIR, "manifest.json")
-        with open(manifest_path) as f:
-            manifest = json.load(f)
-        manifest["ok"] = True
-        print(json.dumps(manifest))
-    elif action == "import":
-        result = import_component(args)
-        print(json.dumps(result))
+        print(json.dumps({"ok": False, "error": "Usage: plugin.py <action> [args]"})); sys.exit(1)
+    action, args = sys.argv[1], json.loads(sys.argv[2]) if len(sys.argv) > 2 else {}
+    if action == "import":
+        id = args.get("source") or args.get("lcsc_id", "")
+        tgt = args.get("options", {}).get("target_library", "")
+        if not tgt: print(json.dumps({"ok": False, "error": "Missing target_library"})); sys.exit(1)
+        print(json.dumps(fetch_and_merge(id, tgt, os.path.join(PLUGIN_DIR, "fetched", id))))
+    elif action == "info":
+        print(open(os.path.join(PLUGIN_DIR, "manifest.json")).read())
     else:
-        print(json.dumps({"ok": False, "error": f"Unknown action: {action}"}))
-        sys.exit(1)
+        print(json.dumps({"ok": False, "error": f"Unknown: {action}"}))

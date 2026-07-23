@@ -163,22 +163,49 @@ util::Result<std::string> PluginManager::execute(
 
     printf("[plugin] Execute: %s\n", cmd.c_str());
 
-    FILE* pipe = popen(cmd.c_str(), "r");
-    if (!pipe) {
-        return std::unexpected(util::Error::io("Failed to execute plugin script"));
-    }
+#ifdef _WIN32
+    // CreateProcess + CREATE_NO_WINDOW: no console popup
+    HANDLE hRead, hWrite;
+    SECURITY_ATTRIBUTES sa = {sizeof(sa), nullptr, TRUE};
+    if (!CreatePipe(&hRead, &hWrite, &sa, 0))
+        return std::unexpected(util::Error::io("Failed to create pipe"));
+    SetHandleInformation(hRead, HANDLE_FLAG_INHERIT, 0);
+
+    STARTUPINFOA si = {sizeof(si)};
+    si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+    si.hStdOutput = hWrite; si.hStdError = hWrite;
+    si.wShowWindow = SW_HIDE;
+
+    PROCESS_INFORMATION pi = {};
+    char* cmd_copy = _strdup(cmd.c_str());
+    BOOL ok = CreateProcessA(nullptr, cmd_copy, nullptr, nullptr, TRUE,
+                              CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
+    free(cmd_copy); CloseHandle(hWrite);
 
     std::string output;
-    char buf[4096];
+    if (ok) {
+        char buf[4096]; DWORD n;
+        while (ReadFile(hRead, buf, sizeof(buf) - 1, &n, nullptr) && n > 0)
+            { buf[n] = 0; output += buf; }
+        WaitForSingleObject(pi.hProcess, 120000);
+        DWORD ec = 0; GetExitCodeProcess(pi.hProcess, &ec);
+        CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
+        if (ec != 0 && output.empty())
+            { CloseHandle(hRead); return std::unexpected(util::Error::io("Plugin exit: " + std::to_string(ec))); }
+    }
+    CloseHandle(hRead);
+    if (!ok) return std::unexpected(util::Error::io("Failed to launch plugin"));
+    return output;
+#else
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (!pipe) return std::unexpected(util::Error::io("Failed to execute plugin"));
+    std::string output; char buf[4096];
     while (fgets(buf, sizeof(buf), pipe)) output += buf;
     int rc = pclose(pipe);
-
-    if (rc != 0 && output.empty()) {
-        return std::unexpected(util::Error::io(
-            "Plugin exited with code " + std::to_string(rc)));
-    }
-
+    if (rc != 0 && output.empty())
+        return std::unexpected(util::Error::io("Plugin exit: " + std::to_string(rc)));
     return output;
+#endif
 }
 
 // ============================================================

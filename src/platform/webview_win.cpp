@@ -128,7 +128,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 // ============================================================
 
 static HMODULE try_load_webview2_dll(const wchar_t* runtime_dir = nullptr) {
-    // If a runtime directory is given, load directly from it
+    // 1. Bundled runtime (webview2_runtime/)
     if (runtime_dir && runtime_dir[0]) {
         wchar_t dll_path[MAX_PATH];
         swprintf(dll_path, MAX_PATH, L"%s\\EBWebView\\x64\\EmbeddedBrowserWebView.dll", runtime_dir);
@@ -136,7 +136,29 @@ static HMODULE try_load_webview2_dll(const wchar_t* runtime_dir = nullptr) {
         if (m) return m;
     }
 
-    // App-local WebView2Loader.dll
+    // 2. System WebView2 Runtime (via registry)
+    HKEY hk;
+    const wchar_t* keys[] = {
+        L"SOFTWARE\\WOW6432Node\\Microsoft\\EdgeUpdate\\Clients\\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
+        L"SOFTWARE\\Microsoft\\EdgeUpdate\\Clients\\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
+    };
+    for (auto* k : keys) {
+        if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, k, 0, KEY_READ, &hk) == ERROR_SUCCESS ||
+            RegOpenKeyExW(HKEY_CURRENT_USER, k, 0, KEY_READ, &hk) == ERROR_SUCCESS) {
+            wchar_t ver[64] = {}; DWORD sz = sizeof(ver);
+            if (RegQueryValueExW(hk, L"pv", nullptr, nullptr, (LPBYTE)ver, &sz) == ERROR_SUCCESS && ver[0]) {
+                wchar_t path[MAX_PATH];
+                swprintf(path, MAX_PATH,
+                    L"C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\%s\\"
+                    L"EBWebView\\x64\\EmbeddedBrowserWebView.dll", ver);
+                HMODULE m = LoadLibraryW(path);
+                if (m) { RegCloseKey(hk); return m; }
+            }
+            RegCloseKey(hk);
+        }
+    }
+
+    // 3. App-local WebView2Loader.dll (the SDK loader, not the engine)
     wchar_t exe_dir[MAX_PATH];
     GetModuleFileNameW(nullptr, exe_dir, MAX_PATH);
     wchar_t* slash = wcsrchr(exe_dir, L'\\');
@@ -145,7 +167,7 @@ static HMODULE try_load_webview2_dll(const wchar_t* runtime_dir = nullptr) {
     HMODULE m = LoadLibraryW(exe_dir);
     if (m) return m;
 
-    // System PATH
+    // 4. System PATH (last resort)
     return LoadLibraryW(L"WebView2Loader.dll");
 }
 
@@ -172,35 +194,61 @@ static bool find_bundled_runtime(wchar_t* out_path, size_t out_size) {
 
 bool show_webview_window(const char* url, const char* title,
                           int width, int height) {
-    // 1. Check for bundled WebView2 runtime
+    // Try WebView2 — skip if DLL can't be loaded cleanly
+    HMODULE wv2 = nullptr;
     wchar_t bundled_path[MAX_PATH] = {};
     bool has_bundled = find_bundled_runtime(bundled_path, MAX_PATH);
-
-    // 2. Try to load WebView2
-    HMODULE wv2 = nullptr;
     if (has_bundled) {
         wv2 = try_load_webview2_dll(bundled_path);
-        if (wv2) printf("Using bundled WebView2 runtime\n");
     }
-    if (!wv2) {
-        wv2 = try_load_webview2_dll();
-        if (wv2) printf("Using system WebView2 runtime\n");
-    }
+    if (!wv2) wv2 = try_load_webview2_dll();
 
-    // 3. No WebView2 available — open in default browser and wait
     if (!wv2 || !GetProcAddress(wv2, "CreateCoreWebView2EnvironmentWithOptions")) {
-        printf("WebView2 not found. Opening in default browser.\n"
-               "For embedded browser, download WebView2 Fixed Version:\n"
-               "  https://developer.microsoft.com/microsoft-edge/webview2/\n"
-               "Extract to webview2_runtime/ next to the exe.\n");
-        if (wv2) FreeLibrary(wv2);
-        ShellExecuteA(nullptr, "open", url, nullptr, nullptr, SW_SHOW);
-        // Show a small notification window that keeps the server alive
-        MessageBoxA(nullptr,
-            "KiCad Forge is running at http://localhost:8080\n\n"
-            "Click OK to stop the server and exit.",
-            "KiCad Forge", MB_OK | MB_ICONINFORMATION);
-        return true;
+        printf("WebView2 runtime not found. Installing Evergreen Runtime...\n");
+        // Launch the Microsoft bootstrapper (small download, ~2MB)
+        // The bootstrapper is included with the app or downloaded on demand
+        wchar_t setup_path[MAX_PATH];
+        GetTempPathW(MAX_PATH, setup_path);
+        wcscat(setup_path, L"MicrosoftEdgeWebview2Setup.exe");
+
+        // Try local copy first, otherwise download
+        if (GetFileAttributesW(setup_path) == INVALID_FILE_ATTRIBUTES) {
+            if (wv2) FreeLibrary(wv2);
+            // Fall back to browser — bootstrapper not available
+            printf("Bootstrapper not found. Opening in default browser.\n"
+                   "To enable built-in browser, install Edge WebView2 Runtime:\n"
+                   "  https://go.microsoft.com/fwlink/p/?LinkId=2124703\n");
+            ShellExecuteA(nullptr, "open", url, nullptr, nullptr, SW_SHOW);
+            // Keep server alive with simple notification
+            MessageBoxA(nullptr,
+                "KiCad Forge is running at http://localhost:8080\n\n"
+                "Click OK to stop the server and exit.",
+                "KiCad Forge", MB_OK | MB_ICONINFORMATION);
+            return true;
+        }
+
+        // Run the bootstrapper silently
+        SHELLEXECUTEINFOW sei = {sizeof(sei)};
+        sei.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NO_CONSOLE;
+        sei.lpFile = setup_path;
+        sei.lpParameters = L"/install /silent";
+        sei.nShow = SW_HIDE;
+        if (ShellExecuteExW(&sei) && sei.hProcess) {
+            WaitForSingleObject(sei.hProcess, 60000);
+            CloseHandle(sei.hProcess);
+            // Retry loading
+            wv2 = try_load_webview2_dll();
+            if (wv2) printf("WebView2 Runtime installed successfully\n");
+        }
+
+        if (!wv2) {
+            ShellExecuteA(nullptr, "open", url, nullptr, nullptr, SW_SHOW);
+            MessageBoxA(nullptr,
+                "KiCad Forge is running at http://localhost:8080\n\n"
+                "Click OK to stop the server and exit.",
+                "KiCad Forge", MB_OK | MB_ICONINFORMATION);
+            return true;
+        }
     }
 
     auto* createEnv = (CreateEnvFn)GetProcAddress(wv2, "CreateCoreWebView2EnvironmentWithOptions");

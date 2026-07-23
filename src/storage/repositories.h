@@ -17,6 +17,21 @@ struct sqlite3_stmt;
 namespace kforge::storage {
 
 // ============================================================
+// LibraryRepository — CRUD for libraries
+// ============================================================
+class LibraryRepository {
+public:
+    explicit LibraryRepository(sqlite3* db);
+
+    util::Result<core::LibraryMeta> insert(const core::LibraryMeta& lib);
+    util::Result<std::vector<core::LibraryMeta>> find_all();
+    int count() const;
+
+private:
+    sqlite3* db_;
+};
+
+// ============================================================
 // SymbolRepository — CRUD for symbols
 // ============================================================
 class SymbolRepository {

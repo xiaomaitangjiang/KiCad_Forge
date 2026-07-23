@@ -2,6 +2,8 @@
 
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
+#include <unordered_set>
 
 #include <nlohmann/json.hpp>
 
@@ -117,6 +119,13 @@ void ApiServer::auto_import() {
         if (r) printf("Auto-import: %d symbols, %d footprints from %s\n",
                        r->symbols, r->footprints, fp_path->c_str());
     }
+
+    // Auto-link symbols to footprints
+    services::CorrespondenceService cs(db_.get());
+    int linked = 0;
+    auto link_result = cs.auto_link();
+    if (link_result) linked = *link_result;
+    printf("Auto-link: %d symbol↔footprint links created\n", linked);
 }
 
 // Helper: send JSON response
@@ -145,6 +154,114 @@ void ApiServer::setup_routes() {
         json_response(r, j);
     });
 
+    // ======== Libraries ========
+    srv_.get("/api/libraries", [this](const net::Request&, net::Response& r) {
+        storage::SymbolRepository sr(db_->handle());
+        storage::LibraryRepository lr(db_->handle());
+        auto libs = lr.find_all();
+        // Only show libraries that contain symbols (not footprint-only libs)
+        auto all_syms = sr.find_all();
+        std::unordered_set<std::string> used_libs;
+        if (all_syms) for (auto& s : *all_syms) used_libs.insert(s.library_id());
+
+        json arr = json::array();
+        if (libs) for (auto& l : *libs) {
+            // Skip footprint-only libraries and unused libraries
+            if (l.name.find("_footprints") != std::string::npos) continue;
+            if (!used_libs.count(l.id)) continue;  // only show libraries with symbols
+
+            json o;
+            o["id"] = l.id; o["name"] = l.name;
+            o["file_path"] = l.file_path.string();
+            o["description"] = l.description;
+            // Count symbols in this library
+            int count = 0;
+            if (all_syms) for (auto& s : *all_syms) if (s.library_id() == l.id) count++;
+            o["symbol_count"] = count;
+            arr.push_back(o);
+        }
+        r.body = arr.dump(); r.content_type = "application/json";
+    });
+
+    srv_.post("/api/libraries", [this](const net::Request& req, net::Response& r) {
+        try {
+            auto body = json::parse(req.body);
+            std::string action = body.value("action", "create");
+            storage::LibraryRepository lr(db_->handle());
+            storage::SymbolRepository sr(db_->handle());
+            json j;
+
+            if (action == "delete") {
+                std::string lib_id = body.value("id", "");
+                if (lib_id.empty()) {
+                    j["ok"] = false; j["error"] = "Missing library id";
+                } else {
+                    auto libs = lr.find_all();
+                    std::string file_path;
+                    if (libs) for (auto& l : *libs) if (l.id == lib_id) file_path = l.file_path.string();
+                    auto syms = sr.find_by_library(lib_id);
+                    if (syms) for (auto& s : *syms) { auto _ = sr.remove(s.id()); }
+                    if (!file_path.empty() && std::filesystem::exists(file_path)) {
+                        std::filesystem::remove(file_path);
+                        j["deleted_file"] = file_path;
+                    }
+                    j["ok"] = true; j["deleted"] = lib_id;
+                }
+            } else if (action == "delete_symbol") {
+                std::string sym_id = body.value("id", "");
+                // Find symbol to get its name and library
+                auto sym = sr.find_by_id(sym_id);
+                if (!sym) { j["ok"] = false; j["error"] = "Symbol not found in DB"; }
+                else {
+                    std::string sym_name = sym->name();
+                    std::string lib_id = sym->library_id();
+                    // Delete from DB
+                    auto result = sr.remove(sym_id);
+                    j["ok"] = result.has_value();
+                    if (!result) j["error"] = result.error().message;
+                    // Remove from .kicad_sym file
+                    auto libs = lr.find_all();
+                    if (libs) for (auto& l : *libs) {
+                        if (l.id == lib_id && !l.file_path.empty() && std::filesystem::exists(l.file_path)) {
+                            std::ifstream f(l.file_path, std::ios::binary);
+                            std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+                            // Find and remove the (symbol "NAME" ...) block
+                            std::string search = "(symbol \"" + sym_name + "\"";
+                            size_t pos = text.find(search);
+                            if (pos != std::string::npos) {
+                                int depth = 0; bool in_s = false; size_t end = pos;
+                                while (end < text.size()) {
+                                    char c = text[end];
+                                    if (c == '"' && (end == 0 || text[end-1] != '\\')) in_s = !in_s;
+                                    else if (!in_s) {
+                                        if (c == '(') depth++;
+                                        else if (c == ')') { depth--; if (depth == 0) { end++; break; } }
+                                    }
+                                    end++;
+                                }
+                                if (end > pos) {
+                                    text.erase(pos, end - pos);
+                                    std::ofstream out(l.file_path, std::ios::binary);
+                                    out << text;
+                                    j["removed_from_file"] = l.file_path.string();
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                core::LibraryMeta m;
+                m.name = body.value("name", "New Library");
+                m.description = body.value("description", "");
+                m.file_path = body.value("file_path", "");
+                auto ins = lr.insert(m);
+                if (ins) { j["ok"] = true; j["id"] = ins->id; j["name"] = ins->name; }
+                else { j["ok"] = false; j["error"] = ins.error().message; }
+            }
+            json_response(r, j);
+        } catch (...) { r.body = "{\"ok\":false}"; r.content_type = "application/json"; }
+    });
+
     // ======== Status ========
     srv_.get("/api/status", [this](const net::Request&, net::Response& r) {
         services::LibraryService svc(db_.get());
@@ -157,12 +274,17 @@ void ApiServer::setup_routes() {
     srv_.get("/api/symbols", [this](const net::Request& req, net::Response& r) {
         storage::SymbolRepository repo(db_->handle());
         storage::RelationshipRepository rr(db_->handle());
+        storage::LibraryRepository lr(db_->handle());
         std::string q = req.param("q");
-        auto result = q.empty() ? repo.find_all() : repo.search(q);
+        std::string lib_id = req.param("library");
+        auto result = q.empty()
+            ? (lib_id.empty() ? repo.find_all() : repo.find_by_library(lib_id))
+            : repo.search(q);
         json arr = json::array();
         if (result) for (auto& sym : *result) {
             json s;
             s["id"] = sym.id(); s["name"] = sym.name();
+            s["library_id"] = sym.library_id();
             s["value"] = sym.default_value(); s["footprint"] = sym.footprint();
             s["pins"] = sym.pin_count(); s["mpn"] = sym.mpn();
             s["type"] = core::component_type_name(static_cast<int>(sym.component_type));
@@ -219,7 +341,7 @@ void ApiServer::setup_routes() {
     // ======== Automatch ========
     srv_.post("/api/automatch", [this](const net::Request&, net::Response& r) {
         services::CorrespondenceService svc(db_.get());
-        svc.auto_link();
+        auto _ = svc.auto_link();
         auto sug = svc.suggest_matches();
         json arr = json::array();
         if (sug) {
@@ -245,6 +367,20 @@ void ApiServer::setup_routes() {
         }
         r.body = arr.dump();
         r.content_type = "application/json";
+    });
+
+    
+    // ======== Database reset (truncate tables, keep file) ========
+    srv_.post("/api/db/reset", [this](const net::Request&, net::Response& r) {
+        json j;
+        auto _1 = db_->execute("DELETE FROM footprint_model_links");
+        auto _2 = db_->execute("DELETE FROM symbol_footprint_links");
+        auto _3 = db_->execute("DELETE FROM models_3d");
+        auto _4 = db_->execute("DELETE FROM footprints");
+        auto _5 = db_->execute("DELETE FROM symbols");
+        auto _6 = db_->execute("DELETE FROM libraries");
+        j["ok"] = true; j["message"] = "All data cleared. Reimport or restart.";
+        json_response(r, j);
     });
 
     // ======== Settings ========
@@ -285,6 +421,10 @@ void ApiServer::setup_routes() {
                     auto s = svc.import_directory(*fp_path);
                     if (s) { total_sym += s->symbols; total_fp += s->footprints; }
                 }
+                // Auto-link after settings import
+                services::CorrespondenceService cs(db_.get());
+                auto linked = cs.auto_link();
+                if (linked) printf("Auto-link: %d links from settings import\n", *linked);
                 int total_m3d = 0;
                 auto m3d_path = repo.get("model_3d_path");
                 if (m3d_path && !m3d_path->empty()) {
@@ -373,32 +513,28 @@ void ApiServer::setup_routes() {
             if (plugin_id.empty()) plugin_id = body.value("id", "");
             if (plugin_id.empty()) { j["ok"] = false; j["error"] = "Missing plugin id"; json_response(r, j); return; }
 
-            // Build args JSON for the plugin script
-            json args;
-            args["source"] = body.value("lcsc_id", body.value("source", ""));
-            if (body.contains("options")) args["options"] = body["options"];
-
-            auto result = plugins_->execute(plugin_id, "import", args.dump());
+            auto result = plugins_->execute(plugin_id, "import", body.dump());
             if (!result) {
                 j["ok"] = false; j["error"] = result.error().message;
                 json_response(r, j); return;
             }
 
-            // Parse plugin output
+            // Parse plugin output, reimport if ok
             auto out = json::parse(*result);
+            j["plugin_result"] = out;
             j["ok"] = out.value("ok", false);
-            j["lcsc_id"] = out.value("lcsc_id", "");
-            j["plugin_output"] = out;
 
-            // Import generated files into database
-            if (out.value("ok", false) && out.contains("output_dir")) {
-                std::string dir = out["output_dir"].get<std::string>();
-                services::LibraryService svc(db_.get());
-                auto ir = svc.import_directory(dir);
-                if (ir) {
-                    j["imported_symbols"] = ir->symbols;
-                    j["imported_footprints"] = ir->footprints;
-                    j["imported_models_3d"] = 0;
+            if (out.value("ok", false)) {
+                storage::SettingsRepository settings(db_->handle());
+                auto sym_path = settings.get("symbol_lib_path");
+                if (sym_path && !sym_path->empty()) {
+                    services::LibraryService svc(db_.get());
+                    // Don't set target_library here — each file auto-creates its own library
+                    auto ir = svc.import_directory(*sym_path);
+                    if (ir) {
+                        j["imported_symbols"] = ir->symbols;
+                        j["imported_footprints"] = ir->footprints;
+                    }
                 }
             }
         } catch (const json::parse_error& e) {

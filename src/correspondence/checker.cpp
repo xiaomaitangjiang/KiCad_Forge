@@ -155,7 +155,15 @@ std::vector<MatchSuggestion> CorrespondenceChecker::suggest_matches(
 
     for (const auto& sym : symbols) {
         if (sym.is_power()) continue;
-        if (!sym.footprint().empty()) continue;  // Already has footprint
+
+        // Check if the footprint_ref actually matches an existing footprint
+        if (!sym.footprint().empty()) {
+            bool found = false;
+            for (const auto& fp : footprints) {
+                if (fp.name() == sym.footprint()) { found = true; break; }
+            }
+            if (found) continue;  // Footprint already exists — no need to match
+        }
 
         MatchSuggestion best;
         best.symbol_id = sym.id();

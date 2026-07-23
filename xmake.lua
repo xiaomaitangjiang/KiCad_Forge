@@ -2,9 +2,13 @@ add_rules("mode.debug", "mode.release")
 set_languages("c++23")
 
 local msys2 = os.getenv("MSYS2_DIR") or "D:/msys64/mingw64"
+local clang_bin = msys2 .. "/bin"
 local sys_inc = msys2 .. "/include"
 local sys_lib = msys2 .. "/lib"
 
+-- Build:  $env:PATH="D:\msys64\mingw64\bin;$env:PATH"
+--         xmake f --toolchain=clang -c && xmake build
+-- Or just: .\make.ps1
 
 target("KiCad_Forge")
     set_kind("binary")
@@ -38,7 +42,10 @@ target("KiCad_Forge")
         local dest = path.join(root, "webui", "dist")
         os.rm(path.join(root, "webui", "*"))
         os.cp("$(projectdir)/webui/dist", dest)
-        -- Copy plugins to build output
         os.cp("$(projectdir)/plugins", path.join(root, "plugins"))
+        local wv2 = path.join(root, "WebView2Loader.dll")
+        if not os.isfile(wv2) then
+            print("NOTE: WebView2Loader.dll not found. Download from NuGet: Microsoft.Web.WebView2")
+        end
     end)
     add_runenvs("PATH", clang_bin, msys2 .. "/bin")
