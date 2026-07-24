@@ -39,19 +39,29 @@ static std::string find_webui_dir() {
     return "webui/dist";
 }
 
-ApiServer::ApiServer(int port) : port_(port) {}
-ApiServer::~ApiServer() { stop(); }
-
-bool ApiServer::start() {
-    std::string db_path;
+// Portable: exe_dir/data/ if exists, otherwise AppData (installer mode)
+static std::string get_data_dir() {
 #ifdef _WIN32
+    char buf[MAX_PATH];
+    GetModuleFileNameA(nullptr, buf, sizeof(buf));
+    auto exe_dir = std::filesystem::path(buf).parent_path();
+    auto portable = exe_dir / "data";
+    if (std::filesystem::exists(portable)) return portable.string();
     const char* appdata = std::getenv("APPDATA");
-    db_path = appdata ? std::string(appdata) + "/kicad_forge/meta.db" : "kicad_forge_meta.db";
+    return appdata ? std::string(appdata) + "/KiCad_Forge" : (exe_dir / "data").string();
 #else
     const char* home = std::getenv("HOME");
-    db_path = home ? std::string(home) + "/.kicad_forge/meta.db" : "kicad_forge_meta.db";
+    return home ? std::string(home) + "/.KiCad_Forge" : "./data";
 #endif
-    std::filesystem::create_directories(std::filesystem::path(db_path).parent_path());
+}
+
+ApiServer::ApiServer(int port) : port_(port) {}
+ApiServer::~ApiServer() { try { stop(); } catch (...) {} }
+
+bool ApiServer::start() {
+    auto data_dir = get_data_dir();
+    std::string db_path = data_dir + "/meta.db";
+    std::filesystem::create_directories(data_dir);
     auto db = storage::Database::open(db_path);
     if (!db) { fprintf(stderr, "DB: %s\n", db.error().message.c_str()); return false; }
     db_ = std::move(*db);
@@ -63,9 +73,9 @@ bool ApiServer::start() {
     auto_import();
 
     setup_routes();
-    srv_.set_doc_root(find_webui_dir());
+    srv_.set_mount_point("/", find_webui_dir());
 
-    thread_ = std::make_unique<std::thread>([this]() { srv_.listen(port_); });
+    thread_ = std::make_unique<std::thread>([this]() { srv_.listen("127.0.0.1", port_); });
     return true;
 }
 
@@ -81,12 +91,8 @@ void ApiServer::init_plugins() {
     // 2. Project root plugins/ (for development)
     paths.push_back(exe_dir / ".." / ".." / ".." / ".." / "plugins");
 #endif
-    // 3. User plugins directory
-#ifdef _WIN32
-    paths.push_back(std::string(std::getenv("APPDATA") ? std::getenv("APPDATA") : ".") + "/kicad_forge/plugins");
-#else
-    paths.push_back(std::string(std::getenv("HOME") ? std::getenv("HOME") : ".") + "/.kicad_forge/plugins");
-#endif
+    // 3. User plugins directory (portable or installed)
+    paths.push_back(get_data_dir() + "/plugins");
     plugins_ = std::make_unique<plugin::PluginManager>(paths);
     plugins_->discover();
 
@@ -97,9 +103,13 @@ void ApiServer::init_plugins() {
 
 void ApiServer::wait() { if (thread_ && thread_->joinable()) thread_->join(); }
 void ApiServer::stop() {
-    if (plugins_) plugins_->shutdown_all();
+    if (plugins_) { try { plugins_->shutdown_all(); } catch (...) {} }
     srv_.stop();
-    if (thread_ && thread_->joinable()) thread_->join();
+    if (thread_ && thread_->joinable()) {
+        try { thread_->join(); } catch (...) {}
+        thread_.reset();
+    }
+    db_.reset();
 }
 
 void ApiServer::auto_import() {
@@ -125,20 +135,20 @@ void ApiServer::auto_import() {
     int linked = 0;
     auto link_result = cs.auto_link();
     if (link_result) linked = *link_result;
-    printf("Auto-link: %d symbol↔footprint links created\n", linked);
+    printf("Auto-link: %d symbol<->footprint links created\n", linked);
 }
 
 // Helper: send JSON response
-static void json_response(net::Response& r, const json& j) {
-    r.body = j.dump();
-    r.content_type = "application/json";
+static void json_response(httplib::Response& r, const json& j) {
+    r.set_content(j.dump(), "application/json");
+    
 }
 
 void ApiServer::setup_routes() {
     // ======== Import ========
-    srv_.post("/api/import", [this](const net::Request& req, net::Response& r) {
+    srv_.Post("/api/import", [this](const httplib::Request& req, httplib::Response& r) {
         services::LibraryService svc(db_.get());
-        std::string dir = req.param("dir");
+        std::string dir = req.get_param_value("dir");
         json j;
         if (dir.empty()) {
             j["error"] = "Missing 'dir' parameter";
@@ -151,11 +161,11 @@ void ApiServer::setup_routes() {
                 j["messages"] = result->messages;
             }
         }
-        json_response(r, j);
+        r.set_content(j.dump(), "application/json");
     });
 
     // ======== Libraries ========
-    srv_.get("/api/libraries", [this](const net::Request&, net::Response& r) {
+    srv_.Get("/api/libraries", [this](const httplib::Request&, httplib::Response& r) {
         storage::SymbolRepository sr(db_->handle());
         storage::LibraryRepository lr(db_->handle());
         auto libs = lr.find_all();
@@ -180,10 +190,10 @@ void ApiServer::setup_routes() {
             o["symbol_count"] = count;
             arr.push_back(o);
         }
-        r.body = arr.dump(); r.content_type = "application/json";
+        r.set_content(arr.dump(), "application/json");
     });
 
-    srv_.post("/api/libraries", [this](const net::Request& req, net::Response& r) {
+    srv_.Post("/api/libraries", [this](const httplib::Request& req, httplib::Response& r) {
         try {
             auto body = json::parse(req.body);
             std::string action = body.value("action", "create");
@@ -258,25 +268,25 @@ void ApiServer::setup_routes() {
                 if (ins) { j["ok"] = true; j["id"] = ins->id; j["name"] = ins->name; }
                 else { j["ok"] = false; j["error"] = ins.error().message; }
             }
-            json_response(r, j);
-        } catch (...) { r.body = "{\"ok\":false}"; r.content_type = "application/json"; }
+            r.set_content(j.dump(), "application/json");
+        } catch (...) { r.set_content("{\"ok\":false}", "application/json");  }
     });
 
     // ======== Status ========
-    srv_.get("/api/status", [this](const net::Request&, net::Response& r) {
+    srv_.Get("/api/status", [this](const httplib::Request&, httplib::Response& r) {
         services::LibraryService svc(db_.get());
         json j; j["symbols"] = svc.symbol_count();
         j["footprints"] = svc.footprint_count(); j["ok"] = true;
-        json_response(r, j);
+        r.set_content(j.dump(), "application/json");
     });
 
     // ======== Symbols ========
-    srv_.get("/api/symbols", [this](const net::Request& req, net::Response& r) {
+    srv_.Get("/api/symbols", [this](const httplib::Request& req, httplib::Response& r) {
         storage::SymbolRepository repo(db_->handle());
         storage::RelationshipRepository rr(db_->handle());
         storage::LibraryRepository lr(db_->handle());
-        std::string q = req.param("q");
-        std::string lib_id = req.param("library");
+        std::string q = req.get_param_value("q");
+        std::string lib_id = req.get_param_value("library");
         auto result = q.empty()
             ? (lib_id.empty() ? repo.find_all() : repo.find_by_library(lib_id))
             : repo.search(q);
@@ -298,12 +308,12 @@ void ApiServer::setup_routes() {
             s["has_3d_model"] = has_3d;
             arr.push_back(s);
         }
-        r.body = arr.dump();
-        r.content_type = "application/json";
+        r.set_content(arr.dump(), "application/json");
+        
     });
 
     // ======== Classify ========
-    srv_.post("/api/classify", [this](const net::Request&, net::Response& r) {
+    srv_.Post("/api/classify", [this](const httplib::Request&, httplib::Response& r) {
         services::ClassificationService svc(db_.get());
         auto summary = svc.classify_all();
         json j;
@@ -319,11 +329,11 @@ void ApiServer::setup_routes() {
             }
             j["results"] = arr;
         }
-        json_response(r, j);
+        r.set_content(j.dump(), "application/json");
     });
 
     // ======== Check ========
-    srv_.post("/api/check", [this](const net::Request&, net::Response& r) {
+    srv_.Post("/api/check", [this](const httplib::Request&, httplib::Response& r) {
         services::CorrespondenceService svc(db_.get());
         auto issues = svc.check_all();
         json arr = json::array();
@@ -334,12 +344,12 @@ void ApiServer::setup_routes() {
             i["name"] = issue.entity_name; i["message"] = issue.message;
             i["fix"] = issue.suggested_fix; arr.push_back(i);
         }
-        r.body = arr.dump();
-        r.content_type = "application/json";
+        r.set_content(arr.dump(), "application/json");
+        
     });
 
     // ======== Automatch ========
-    srv_.post("/api/automatch", [this](const net::Request&, net::Response& r) {
+    srv_.Post("/api/automatch", [this](const httplib::Request&, httplib::Response& r) {
         services::CorrespondenceService svc(db_.get());
         auto _ = svc.auto_link();
         auto sug = svc.suggest_matches();
@@ -352,12 +362,12 @@ void ApiServer::setup_routes() {
                 m["score"] = (int)(sug->at(i).score * 100); arr.push_back(m);
             }
         }
-        r.body = arr.dump();
-        r.content_type = "application/json";
+        r.set_content(arr.dump(), "application/json");
+        
     });
 
     // ======== Rules ========
-    srv_.get("/api/rules", [this](const net::Request&, net::Response& r) {
+    srv_.Get("/api/rules", [this](const httplib::Request&, httplib::Response& r) {
         auto rules = classifier::RuleLoader::default_rules();
         json arr = json::array();
         for (auto& rule : rules) {
@@ -365,13 +375,13 @@ void ApiServer::setup_routes() {
             o["target"] = rule.target_library; o["confidence"] = rule.confidence;
             arr.push_back(o);
         }
-        r.body = arr.dump();
-        r.content_type = "application/json";
+        r.set_content(arr.dump(), "application/json");
+        
     });
 
     
     // ======== Database reset (truncate tables, keep file) ========
-    srv_.post("/api/db/reset", [this](const net::Request&, net::Response& r) {
+    srv_.Post("/api/db/reset", [this](const httplib::Request&, httplib::Response& r) {
         json j;
         auto _1 = db_->execute("DELETE FROM footprint_model_links");
         auto _2 = db_->execute("DELETE FROM symbol_footprint_links");
@@ -380,19 +390,19 @@ void ApiServer::setup_routes() {
         auto _5 = db_->execute("DELETE FROM symbols");
         auto _6 = db_->execute("DELETE FROM libraries");
         j["ok"] = true; j["message"] = "All data cleared. Reimport or restart.";
-        json_response(r, j);
+        r.set_content(j.dump(), "application/json");
     });
 
     // ======== Settings ========
-    srv_.get("/api/settings", [this](const net::Request&, net::Response& r) {
+    srv_.Get("/api/settings", [this](const httplib::Request&, httplib::Response& r) {
         storage::SettingsRepository repo(db_->handle());
         auto map = repo.all();
         json j = json::object();
         if (map) for (auto& [k, v] : *map) j[k] = v;
-        json_response(r, j);
+        r.set_content(j.dump(), "application/json");
     });
 
-    srv_.post("/api/settings", [this](const net::Request& req, net::Response& r) {
+    srv_.Post("/api/settings", [this](const httplib::Request& req, httplib::Response& r) {
         storage::SettingsRepository repo(db_->handle());
         try {
             auto j = json::parse(req.body);
@@ -438,12 +448,12 @@ void ApiServer::setup_routes() {
                 return;
             }
         } catch(...) {}
-        r.body = "{\"ok\":true}";
-        r.content_type = "application/json";
+        r.set_content("{\"ok\":true}", "application/json");
+        
     });
 
     // ======== Component Types ========
-    srv_.get("/api/component-types", [this](const net::Request&, net::Response& r) {
+    srv_.Get("/api/component-types", [this](const httplib::Request&, httplib::Response& r) {
         auto& reg = core::TypeRegistry::instance();
         json arr = json::array();
         for (auto& e : reg.component_types()) {
@@ -453,7 +463,7 @@ void ApiServer::setup_routes() {
         json_response(r, arr);
     });
 
-    srv_.post("/api/component-types", [this](const net::Request& req, net::Response& r) {
+    srv_.Post("/api/component-types", [this](const httplib::Request& req, httplib::Response& r) {
         json j;
         try {
             auto body = json::parse(req.body);
@@ -470,11 +480,11 @@ void ApiServer::setup_routes() {
                 if (j["ok"]) reg.save_component_types(); else j["error"] = "Not found";
             } else { j["ok"] = false; j["error"] = "Invalid"; }
         } catch (...) { j["ok"] = false; j["error"] = "Invalid JSON"; }
-        json_response(r, j);
+        r.set_content(j.dump(), "application/json");
     });
 
     // ======== Package Types ========
-    srv_.get("/api/package-types", [this](const net::Request&, net::Response& r) {
+    srv_.Get("/api/package-types", [this](const httplib::Request&, httplib::Response& r) {
         auto& reg = core::TypeRegistry::instance();
         json arr = json::array();
         for (auto& e : reg.package_types()) {
@@ -484,7 +494,7 @@ void ApiServer::setup_routes() {
         json_response(r, arr);
     });
 
-    srv_.post("/api/package-types", [this](const net::Request& req, net::Response& r) {
+    srv_.Post("/api/package-types", [this](const httplib::Request& req, httplib::Response& r) {
         json j;
         try {
             auto body = json::parse(req.body);
@@ -501,22 +511,22 @@ void ApiServer::setup_routes() {
                 if (j["ok"]) reg.save_package_types(); else j["error"] = "Not found";
             } else { j["ok"] = false; j["error"] = "Invalid"; }
         } catch (...) { j["ok"] = false; j["error"] = "Invalid JSON"; }
-        json_response(r, j);
+        r.set_content(j.dump(), "application/json");
     });
 
     // ======== Plugin execution ========
-    srv_.post("/api/plugins/execute", [this](const net::Request& req, net::Response& r) {
+    srv_.Post("/api/plugins/execute", [this](const httplib::Request& req, httplib::Response& r) {
         json j;
         try {
             auto body = json::parse(req.body.empty() ? "{}" : req.body);
-            std::string plugin_id = req.param("id");
+            std::string plugin_id = req.get_param_value("id");
             if (plugin_id.empty()) plugin_id = body.value("id", "");
-            if (plugin_id.empty()) { j["ok"] = false; j["error"] = "Missing plugin id"; json_response(r, j); return; }
+            if (plugin_id.empty()) { j["ok"] = false; j["error"] = "Missing plugin id"; r.set_content(j.dump(), "application/json"); return; }
 
             auto result = plugins_->execute(plugin_id, "import", body.dump());
             if (!result) {
                 j["ok"] = false; j["error"] = result.error().message;
-                json_response(r, j); return;
+                r.set_content(j.dump(), "application/json"); return;
             }
 
             // Parse plugin output, reimport if ok
@@ -542,11 +552,11 @@ void ApiServer::setup_routes() {
         } catch (...) {
             j["ok"] = false; j["error"] = "Unknown error";
         }
-        json_response(r, j);
+        r.set_content(j.dump(), "application/json");
     });
 
     // ======== Plugins ========
-    srv_.get("/api/plugins", [this](const net::Request&, net::Response& r) {
+    srv_.Get("/api/plugins", [this](const httplib::Request&, httplib::Response& r) {
         json arr = json::array();
         if (plugins_) {
             for (auto& m : plugins_->loaded_plugins()) {
@@ -563,14 +573,14 @@ void ApiServer::setup_routes() {
         json_response(r, arr);
     });
 
-    srv_.post("/api/plugins/load", [this](const net::Request& req, net::Response& r) {
-        json j; std::string id = req.param("id");
+    srv_.Post("/api/plugins/load", [this](const httplib::Request& req, httplib::Response& r) {
+        json j; std::string id = req.get_param_value("id");
         if (plugins_ && !id.empty()) {
             auto res = plugins_->load(id, nullptr);
             j["ok"] = res.has_value();
             if (!res) j["error"] = res.error().message;
         } else j["ok"] = false;
-        json_response(r, j);
+        r.set_content(j.dump(), "application/json");
     });
 }
 

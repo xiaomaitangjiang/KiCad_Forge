@@ -3,7 +3,7 @@
   "name": "LCSC Component Importer",
   "version": "1.0.0",
   "author": "KiCad Forge",
-  "description": "Download symbols/footprints/3D models from LCSC (via easyeda2kicad). Enter an LCSC part number like C83091 and click Import.",
+  "description": "Download symbols/footprints/3D models from LCSC (via easyeda2kicad). Enter an LCSC part number and click Import.",
   "license": "MIT",
   "capabilities": ["import"],
   "one_click": true,

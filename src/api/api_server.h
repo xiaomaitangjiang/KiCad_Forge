@@ -4,7 +4,7 @@
 #include <string>
 #include <thread>
 
-#include "net/http_server.h"
+#include "../third_party/httplib.h"
 #include "storage/database.h"
 #include "plugin/plugin_manager.h"
 
@@ -26,7 +26,7 @@ private:
     void auto_import();
 
     int port_;
-    net::HttpServer srv_;
+    httplib::Server srv_;
     std::unique_ptr<std::thread> thread_;
     std::unique_ptr<storage::Database> db_;
     std::unique_ptr<plugin::PluginManager> plugins_;

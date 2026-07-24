@@ -1,99 +1,100 @@
 # KiCad Forge
 
-图形化 KiCad 元件库管理工具。扫描本地 `.kicad_sym` 符号库和 `.kicad_mod` 封装库，提供 Web 界面浏览、分类、对应关系检查，支持 LCSC 一键导入插件。
+Desktop library manager for KiCad — browse, classify, and import symbols and footprints with a modern web UI and plugin system.
 
-## 快速开始
+## Quick Start
 
-### 依赖
-- [MSYS2](https://www.msys64.org/)（提供 clang、sqlite3、pthread）
-- Python 3.10+（LCSC 插件）
-- Node.js（前端构建）
+### Prerequisites
+- [MSYS2](https://www.msys64.org/) with `mingw-w64-x86_64-clang`
+- Python 3.10+ (for LCSC plugin)
+- Node.js (for frontend)
 
-### 构建
+### Build (Windows)
 
 ```powershell
-# 首次：设置 MSYS2 到 PATH
-$env:PATH = "D:\msys64\mingw64\bin;$env:PATH"
+# One-time: install dependencies
+cd webui && npm install && cd ..
 
-# 构建前端
-cd webui && npm install && npm run build && cd ..
+# Every build
+.\make.ps1
+```
 
-# 构建后端
+Output: `build/mingw/x86_64/release/KiCad_Forge.exe`
+
+Double-click to run. The app opens in an Edge `--app` window (Win11 built-in, no extra install).
+
+### Build (macOS / Linux)
+
+```bash
 xmake f --toolchain=clang -m release -c
 xmake build
 ```
 
-输出：`build/mingw/x86_64/release/KiCad_Forge.exe`
+Opens in system default browser. Close the browser tab to stop the server.
 
-### 运行
-
-双击 `KiCad_Forge.exe`，浏览器打开 `http://localhost:8080`。
-
-在 Settings → Library Paths 中设置符号库路径，点击 Save & Import。
-
-## 架构
+## Architecture
 
 ```
 src/
-├── api/             HTTP 路由层（httplib + 自研 net/http_server）
-├── core/            领域模型（Symbol, Footprint, Model3D, ComponentType）
-├── sexpr/           S-Expression 解析器（tokenizer → dom → writer）
-├── parser/          KiCad 文件解析器（.kicad_sym / .kicad_mod）
-├── storage/         SQLite 数据库层（Repository 模式）
-├── classifier/      分类规则引擎
-├── correspondence/  符号↔封装↔3D 对应关系追踪
-├── services/        业务编排层
-├── plugin/          插件管理器（Python 脚本插件）
-├── platform/        Windows 原生窗口（WebView2）
-└── net/             内置 HTTP 服务器
+├── api/              HTTP routes (httplib)
+├── core/             Domain models: Symbol, Footprint, Model3D, ComponentType
+├── sexpr/            S-Expression parser (tokenizer → DOM → writer)
+├── parser/           KiCad file parsers (.kicad_sym / .kicad_mod)
+├── storage/          SQLite database (Repository pattern)
+├── classifier/       Classification rule engine
+├── correspondence/   Symbol↔Footprint↔3D relationship tracker
+├── services/         Business logic orchestration
+├── plugin/           Python-based plugin system
+├── platform/         Cross-platform app window (CRTP)
+└── net/              Built-in HTTP server (legacy, replaced by httplib)
 
-plugins/             插件目录（运行时动态加载）
-  lcsc_import/       LCSC 一键导入插件
-webui/               React 前端
+plugins/lcsc_import/  LCSC one-click import plugin (self-contained)
+webui/                React 19 + Vite frontend
 ```
 
-## 数据库
+## Database
 
-SQLite，位置 `%APPDATA%/kicad_forge/meta.db`。
+SQLite in `./data/meta.db` (portable mode, next to exe).  
+Installer mode (future): `%APPDATA%/KiCad_Forge/meta.db`.
 
-| 表 | 说明 |
+| Table | Purpose |
 |---|---|
-| `libraries` | 符号库元数据 |
-| `symbols` | 符号实例（含引脚序列化） |
-| `footprints` | 封装实例 |
-| `models_3d` | 3D 模型引用 |
-| `symbol_footprint_links` | 符号↔封装关联 |
-| `footprint_model_links` | 封装↔3D 模型关联 |
-| `settings` | 键值配置 |
+| `libraries` | Symbol/footprint library metadata |
+| `symbols` | Symbol instances with pin serialization |
+| `footprints` | Footprint instances |
+| `models_3d` | 3D model references |
+| `symbol_footprint_links` | Symbol↔Footprint relationships |
+| `footprint_model_links` | Footprint↔3D model relationships |
+| `settings` | Key-value configuration |
 
-## 插件系统
+## Plugin System
 
-插件放在 `plugins/` 目录下，每个插件一个文件夹，包含 `manifest.json` + Python 脚本。
+Plugins live in `plugins/` as folders with `manifest.json` + Python scripts.
+The main app invokes them via CLI: `python plugin.py <action> '<json_args>'`.
+Plugin output is JSON on stdout.
 
+Example manifest:
 ```json
 {
   "id": "com.example.my_plugin",
   "name": "My Plugin",
-  "version": "1.0.0",
   "capabilities": ["import"],
   "entry": "plugin.py",
   "one_click": true
 }
 ```
 
-主程序通过 `python plugin.py <action> '<json_args>'` 调用，插件输出 JSON 到 stdout。
+The LCSC import plugin bundles [easyeda2kicad](https://github.com/uPesy/easyeda2kicad.py) (MIT) — no `pip install` needed.
 
-LCSC 导入插件自带 [easyeda2kicad](https://github.com/uPesy/easyeda2kicad.py)（MIT），无需 `pip install`。
+## Tech Stack
 
-## 技术栈
-
-| 层面 | 选择 |
+| Layer | Choice |
 |---|---|
-| 语言 | C++23 |
-| 编译器 | clang 22 (MSYS2) |
-| 构建 | xmake |
-| 前端 | React 19 + Vite |
-| 数据库 | SQLite3 |
-| HTTP | httplib (header-only) |
+| Language | C++23 |
+| Compiler | clang 22 (MSYS2) |
+| Build | xmake |
+| Frontend | React 19 + Vite |
+| Database | SQLite3 |
+| HTTP | httplib (header-only, MIT) |
 | JSON | nlohmann/json |
-| 许可证 | MIT |
+| License | MIT |
