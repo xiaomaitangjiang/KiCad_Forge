@@ -1,6 +1,6 @@
 set_toolchains("clang")
 add_rules("mode.debug", "mode.release")
-set_defaultmode("release")
+--set_defaultmode("release")
 set_languages("cxx23")
 
 local msys2 = os.getenv("MSYS2_DIR") or "D:/msys64/mingw64"

@@ -15,9 +15,11 @@
 // --------------- main entry point ---------------
 
 static int run_server() {
+    (void)setvbuf(stdout, nullptr, _IONBF, 0);  
+    // unbuffered — printf visible in debugger
     const int PORT = 8080;
 
-    //Check for stale process
+    // Check for stale process
     httplib::Client probe("127.0.0.1", PORT);
     probe.set_connection_timeout(0, 500000);
     if (probe.Get("/api/status")) {

@@ -20,35 +20,43 @@ using json = nlohmann::json;
 
 namespace kforge::api {
 
-static std::string find_webui_dir() {
+// Cross-platform: get executable's own directory
+static std::filesystem::path get_exe_dir() {
 #ifdef _WIN32
-    char exe_path[MAX_PATH];
-    GetModuleFileNameA(nullptr, exe_path, sizeof(exe_path));
-    auto exe_dir = std::filesystem::path(exe_path).parent_path();
-    auto pkg_dist = exe_dir / "webui" / "dist";
-    auto pkg = exe_dir / "webui";
-    if (std::filesystem::exists(pkg_dist / "index.html")) return pkg_dist.string();
-    if (std::filesystem::exists(pkg / "index.html")) return pkg.string();
+    char buf[MAX_PATH];
+    GetModuleFileNameA(nullptr, buf, sizeof(buf));
+    return std::filesystem::path(buf).parent_path();
+#elif defined(__APPLE__)
+    char buf[PATH_MAX];
+    uint32_t size = sizeof(buf);
+    if (_NSGetExecutablePath(buf, &size) == 0)
+        return std::filesystem::path(buf).parent_path();
+    return ".";
+#else
+    return std::filesystem::canonical("/proc/self/exe").parent_path();
 #endif
+}
 
-    for (auto* d : {"../../../../../webui/dist", "../../../../webui/dist",
-                    "../../../webui/dist", "../../webui/dist", "../webui/dist",
-                    "webui/dist", "webui"}) {
-        if (std::filesystem::exists(std::filesystem::path(d) / "index.html")) return d;
-    }
-    return "webui/dist";
+static std::string find_webui_dir() {
+    auto exe_dir = get_exe_dir();
+    auto pkg_dist = exe_dir / "webui" / "dist";
+    if (std::filesystem::exists(pkg_dist / "index.html")) return pkg_dist.string();
+    auto pkg = exe_dir / "webui";
+    if (std::filesystem::exists(pkg / "index.html")) return pkg.string();
+
+    printf("FATAL: webui/index.html not found next to exe at %s\n",
+           exe_dir.string().c_str());
+    std::exit(1);
 }
 
 // Portable: exe_dir/data/ if exists, otherwise AppData (installer mode)
 static std::string get_data_dir() {
-#ifdef _WIN32
-    char buf[MAX_PATH];
-    GetModuleFileNameA(nullptr, buf, sizeof(buf));
-    auto exe_dir = std::filesystem::path(buf).parent_path();
+    auto exe_dir = get_exe_dir();
     auto portable = exe_dir / "data";
     if (std::filesystem::exists(portable)) return portable.string();
+#ifdef _WIN32
     const char* appdata = std::getenv("APPDATA");
-    return appdata ? std::string(appdata) + "/KiCad_Forge" : (exe_dir / "data").string();
+    return appdata ? std::string(appdata) + "/KiCad_Forge/data" : (exe_dir / "data").string();
 #else
     const char* home = std::getenv("HOME");
     return home ? std::string(home) + "/.KiCad_Forge" : "./data";
@@ -82,17 +90,12 @@ bool ApiServer::start() {
 void ApiServer::init_plugins() {
     std::vector<std::filesystem::path> paths;
 
-    // 1. Next to exe (for packaged releases)
-#ifdef _WIN32
-    char exe_buf[512];
-    GetModuleFileNameA(nullptr, exe_buf, sizeof(exe_buf));
-    auto exe_dir = std::filesystem::path(exe_buf).parent_path();
-    paths.push_back(exe_dir / "plugins");
-    // 2. Project root plugins/ (for development)
-    paths.push_back(exe_dir / ".." / ".." / ".." / ".." / "plugins");
-#endif
-    // 3. User plugins directory (portable or installed)
-    paths.push_back(get_data_dir() + "/plugins");
+    // Plugins live next to exe: exe_dir/plugins
+    auto plugin_dir = get_exe_dir() / "plugins";
+    if (std::filesystem::exists(plugin_dir)) {
+        paths.emplace_back(plugin_dir);
+    }
+
     plugins_ = std::make_unique<plugin::PluginManager>(paths);
     plugins_->discover();
 
