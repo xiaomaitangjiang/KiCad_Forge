@@ -8,16 +8,6 @@ build/
 *.user
 *.pro.user*
 
-# Qt
-*.moc
-moc_*.cpp
-ui_*.h
-qrc_*.cpp
-*.qm
-Makefile
-*.o
-*.obj
-
 # C++ build artifacts
 *.dll
 *.dylib
