@@ -13,7 +13,7 @@ namespace kforge::api {
 /// Thin HTTP layer — routes requests to services, serves webui/.
 class ApiServer {
 public:
-    explicit ApiServer(int port = 8080);
+    explicit ApiServer(int port = 20443);
     ~ApiServer();
 
     bool start();
@@ -24,6 +24,9 @@ private:
     void setup_routes();
     void init_plugins();
     void auto_import();
+    void serve_plugin_icon(const std::filesystem::path& plugin_dir,
+                           const std::string& filename,
+                           httplib::Response& r);
 
     int port_;
     httplib::Server srv_;

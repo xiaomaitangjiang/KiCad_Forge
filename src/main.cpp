@@ -17,7 +17,7 @@
 static int run_server() {
     (void)setvbuf(stdout, nullptr, _IONBF, 0);  
     // unbuffered — printf visible in debugger
-    const int PORT = 8080;
+    const int PORT = 20443;
 
     // Check for stale process
     httplib::Client probe("127.0.0.1", PORT);
@@ -47,11 +47,11 @@ static int run_server() {
         }
         if (!ready) { printf("ERROR: Server not responding\n"); return 1; }
     }
-    printf("KiCad Forge running at http://localhost:%d\n", PORT);
+    printf("KiCad Forge running at http://127.0.0.1:%d\n", PORT);
 
     // 3. Open native app window (platform-specific via CRTP: Edge/Mac/Linux)
     kforge::platform::WindowConfig cfg;
-    cfg.url = "http://127.0.0.1:8080";
+    cfg.url = "http://127.0.0.1:20443";
 
     kforge::platform::NativeWindow win(cfg);
     if (win.open()) {

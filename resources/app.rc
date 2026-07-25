@@ -1,0 +1,2 @@
+// Application icon — embedded by windres
+IDI_ICON1 ICON "app.ico"

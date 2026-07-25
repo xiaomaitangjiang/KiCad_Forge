@@ -3,12 +3,34 @@
   "name": "LCSC Component Importer",
   "version": "1.0.0",
   "author": "KiCad Forge",
-  "description": "Download symbols/footprints/3D models from LCSC (via easyeda2kicad). Enter an LCSC part number and click Import.",
+  "description": "Download symbols, footprints, and 3D models from LCSC by part number",
   "license": "MIT",
   "capabilities": ["import"],
   "one_click": true,
   "entry": "plugin.py",
   "entry_function": "import_component",
+  "icon": "icon.svg",
+  "actions": [
+    {
+      "id": "import",
+      "name": "Import LCSC",
+      "description": "Import a component from LCSC by part number",
+      "trigger": "dialog",
+      "icon": "icon.svg",
+      "button": {
+        "show": true,
+        "style": "both",
+        "tooltip": "Download from LCSC"
+      },
+      "schema": {
+        "fields": [
+          { "key": "lcsc_id", "label": "LCSC Part Number", "type": "text", "required": true },
+          { "key": "target_library", "label": "Target Symbol Library", "type": "library_picker", "required": true },
+          { "key": "footprint_library", "label": "Footprint Library", "type": "library_picker" }
+        ]
+      }
+    }
+  ],
   "dependencies": {
     "python": ">=3.10",
     "pip": ["easyeda2kicad"]

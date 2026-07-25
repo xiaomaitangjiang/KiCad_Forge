@@ -34,10 +34,8 @@ export default function App() {
   const [pkgTypes, setPkgTypes] = useState([])
   const [libraries, setLibraries] = useState([])
   const [targetLib, setTargetLib] = useState('')
-  const [showImportDlg, setShowImportDlg] = useState(false)
-  const [importLcscId, setImportLcscId] = useState('')
-  const [importSymLib, setImportSymLib] = useState('')
-  const [importFpLib, setImportFpLib] = useState('')
+  const [pluginAction, setPluginAction] = useState(null)
+  const [pluginFormData, setPluginFormData] = useState({})
   const toastTimer = useRef(null)
 
   const toastMsg = useCallback((msg) => {
@@ -106,7 +104,7 @@ export default function App() {
     localStorage.setItem('kf-dark', next ? '1' : '0')
   }
 
-  useEffect(() => { loadStatus(); loadSymbols(); loadIssues(); loadMatches(); loadSettings(); loadLibraries() }, [])
+  useEffect(() => { loadStatus(); loadSymbols(); loadIssues(); loadMatches(); loadSettings(); loadLibraries(); loadPlugins() }, [])
 
   const filtered = filter ? symbols.filter(s => s.type === filter) : symbols
   const typeCounts = {}
@@ -220,13 +218,30 @@ export default function App() {
             Auto Match
           </button>
           <span className="sep" />
-          <button className="btn-primary" onClick={() => {
-            setImportLcscId(''); setImportSymLib(targetLib); setImportFpLib('');
-            setShowImportDlg(true); loadLibraries()
-          }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            Import LCSC
-          </button>
+          {plugins.filter(p => p.actions?.length > 0).map(p =>
+            p.actions.filter(a => a.button?.show !== false).map(action => {
+              const btn = action.button || {}
+              const style = btn.style || 'both'  // "icon" | "text" | "both"
+              const tooltip = btn.tooltip || action.description
+              const iconSrc = action.icon_url || p.icon_url  // fall back to plugin default icon
+              const iconEl = iconSrc
+                ? <img src={iconSrc} alt="" width="14" height="14" style={{ objectFit: 'contain' }} />
+                : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              return (
+                <button key={`${p.id}/${action.id}`}
+                  className={style === 'icon' ? 'btn-icon' : 'btn-primary'}
+                  title={tooltip}
+                  onClick={() => {
+                    loadLibraries()
+                    setPluginAction({ plugin: p, action })
+                    setPluginFormData({})
+                  }}>
+                  {(style === 'icon' || style === 'both') && iconEl}
+                  {style !== 'icon' && <span>{action.name}</span>}
+                </button>
+              )
+            })
+          )}
           <span className="sep" />
           <input
             placeholder="Search symbols..."
@@ -358,54 +373,52 @@ export default function App() {
       {/* Toast */}
       <div id="toast" className={toast ? 'show' : ''}>{toast}</div>
 
-      {/* LCSC Import Dialog */}
-      {showImportDlg && (
-        <Modal title="Import LCSC Component" onClose={() => setShowImportDlg(false)}>
-          <div className="form-group">
-            <label>LCSC Part Number</label>
-            <input value={importLcscId} onChange={e => setImportLcscId(e.target.value)}
-              placeholder="e.g. C347222" autoFocus
-              onKeyDown={e => { if (e.key === 'Enter') document.getElementById('import-btn').click() }} />
-          </div>
-          <div className="form-group">
-            <label>Target Symbol Library</label>
-            <select value={importSymLib} onChange={e => setImportSymLib(e.target.value)}
-              style={{ width: '100%', padding: '8px 12px', border: '1px solid var(--sep)', borderRadius: 7, fontSize: 12.5, background: 'var(--bg)', color: 'var(--text)' }}>
-              <option value="">-- Select library --</option>
-              {libraries.map(l => <option key={l.id} value={l.id}>{l.name} ({l.symbol_count || 0} symbols)</option>)}
-            </select>
-          </div>
-          <div className="form-group">
-            <label>Target Footprint Library (optional)</label>
-            <select value={importFpLib} onChange={e => setImportFpLib(e.target.value)}
-              style={{ width: '100%', padding: '8px 12px', border: '1px solid var(--sep)', borderRadius: 7, fontSize: 12.5, background: 'var(--bg)', color: 'var(--text)' }}>
-              <option value="">-- Same as symbol library --</option>
-              {libraries.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
-            </select>
-          </div>
+      {/* Plugin Action Dialog — dynamic form from manifest schema */}
+      {pluginAction && (
+        <Modal title={pluginAction.action.name} onClose={() => setPluginAction(null)}>
+          {(pluginAction.action.schema?.fields || []).map(f => (
+            <div key={f.key} className="form-group">
+              <label>{f.label}{f.required ? ' *' : ''}</label>
+              {f.type === 'library_picker' ? (
+                <select value={pluginFormData[f.key] || ''}
+                  onChange={e => setPluginFormData({ ...pluginFormData, [f.key]: e.target.value })}
+                  style={{ width: '100%', padding: '8px 12px', border: '1px solid var(--sep)', borderRadius: 7, fontSize: 12.5, background: 'var(--bg)', color: 'var(--text)' }}>
+                  <option value="">-- Select --</option>
+                  {libraries.map(l => <option key={l.id} value={l.id}>{l.name} ({l.symbol_count || 0})</option>)}
+                </select>
+              ) : (
+                <input value={pluginFormData[f.key] || ''}
+                  onChange={e => setPluginFormData({ ...pluginFormData, [f.key]: e.target.value })}
+                  placeholder={f.key} autoFocus
+                  onKeyDown={e => { if (e.key === 'Enter') e.target.nextElementSibling?.click() }} />
+              )}
+            </div>
+          ))}
           <div className="btn-row">
-            <button className="btn-ghost" onClick={() => setShowImportDlg(false)}>Cancel</button>
-            <button id="import-btn" className="btn-primary" onClick={async () => {
-              const lcsc = importLcscId.trim()
-              if (!lcsc) { toastMsg('Enter an LCSC part number'); return }
-              if (!importSymLib) { toastMsg('Select a target symbol library'); return }
-              setShowImportDlg(false)
-              toastMsg('Fetching ' + lcsc + '...')
-              const r = await api(`${API}/plugins/execute?id=com.kicad_forge.lcsc_import`, {
-                method: 'POST',
-                body: JSON.stringify({ lcsc_id: lcsc,
-                  options: {
-                    target_library: (libraries.find(l => l.id === importSymLib) || {}).file_path || importSymLib,
-                    target_library_id: importSymLib,
-                    footprint_library: importFpLib
-                  }
-                })
+            <button className="btn-ghost" onClick={() => setPluginAction(null)}>Cancel</button>
+            <button className="btn-primary" onClick={async () => {
+              const fields = pluginAction.action.schema?.fields || []
+              for (const f of fields) {
+                if (f.required && !pluginFormData[f.key]?.trim()) {
+                  toastMsg(`${f.label} is required`); return
+                }
+              }
+              setPluginAction(null)
+              toastMsg('Executing...')
+              const body = { action: pluginAction.action.id, ...pluginFormData }
+              // Map target_library to file_path for the plugin backend
+              if (body.target_library) {
+                const lib = libraries.find(l => l.id === body.target_library)
+                if (lib) body.target_library = lib.file_path || body.target_library
+              }
+              const r = await api(`${API}/plugins/execute?id=${pluginAction.plugin.id}`, {
+                method: 'POST', body: JSON.stringify(body)
               })
               if (r?.ok) {
-                toastMsg('Imported ' + lcsc + ': ' + ((r.imported_symbols||0) || (r.library_symbols||0)) + ' in library')
+                toastMsg('Done: ' + ((r.imported_symbols||0) || (r.library_symbols||0) || '') + ' imported')
                 loadSymbols(); loadLibraries(); loadStatus()
               } else toastMsg('Failed: ' + (r?.error || 'unknown'))
-            }}>Import</button>
+            }}>Execute</button>
           </div>
         </Modal>
       )}
@@ -490,11 +503,15 @@ export default function App() {
           {plugins.map((p, i) => (
             <div key={i} className="plugin-card">
               <div className="plugin-icon">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5 12 2"/></svg>
+                {p.icon_url
+                  ? <img src={p.icon_url} alt={p.name} width="24" height="24" style={{ objectFit: 'contain' }} />
+                  : <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5 12 2"/></svg>
+                }
               </div>
               <div className="plugin-info">
                 <div className="plugin-name">{p.name}</div>
                 <div className="plugin-meta">{p.id} · v{p.version} · <span className={`status-${p.status}`}>{p.status}</span></div>
+                {p.description && <div className="plugin-meta" style={{ marginTop: 2 }}>{p.description}</div>}
               </div>
             </div>
           ))}
