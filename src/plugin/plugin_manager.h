@@ -63,6 +63,9 @@ public:
     /// Check if a plugin is loaded/available.
     bool is_loaded(const std::string& plugin_id) const;
 
+    /// Get the directory containing a plugin's manifest + resources.
+    std::filesystem::path plugin_path(const std::string& plugin_id) const;
+
     /// Number of loaded plugins.
     size_t count() const;
 

@@ -17,6 +17,21 @@
 namespace kforge::plugin {
 
 // ============================================================
+// Plugin action — declared in manifest.json, rendered as UI button
+// ============================================================
+struct PluginAction {
+    std::string id;              // "import"
+    std::string name;            // "Import LCSC"
+    std::string description;     // tooltip
+    std::string icon;            // override default icon, optional
+    std::string trigger;         // "dialog" | "inline" | "panel"
+    bool button_show{true};      // show button in toolbar
+    std::string button_style;    // "icon" | "text" | "both" (default "both")
+    std::string button_tooltip;  // tooltip for icon-only buttons
+    nlohmann::json schema;       // form fields for trigger=dialog
+};
+
+// ============================================================
 // Plugin manifest (from manifest.json)
 // ============================================================
 struct PluginManifest {
@@ -29,6 +44,8 @@ struct PluginManifest {
     std::string entry_point;     // script file to invoke (default: plugin.py)
     std::string entry_function;  // function name in script (for future use)
     std::string min_app_version;
+    std::string icon;            // relative path to icon file (SVG or PNG)
+    std::vector<PluginAction> actions;
     bool one_click{false};
     std::vector<std::string> capabilities;
     std::vector<std::string> platforms;
