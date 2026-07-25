@@ -47,6 +47,13 @@ public:
     util::Result<int> merge_into_library(const std::filesystem::path& source_sym,
                                           const std::filesystem::path& target_sym);
 
+    /// Delete a library: removes symbols from DB, deletes .kicad_sym file, drops DB record.
+    struct DeleteLibResult { int symbols_removed; std::string deleted_file; };
+    util::Result<DeleteLibResult> delete_library(const core::Uuid& lib_id);
+
+    /// Delete a symbol: removes from DB and rewrites the .kicad_sym file without it.
+    util::Result<void> delete_symbol(const core::Uuid& sym_id);
+
     /// Get basic stats from the database.
     int symbol_count() const;
     int footprint_count() const;

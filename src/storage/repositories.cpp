@@ -197,6 +197,16 @@ int LibraryRepository::count() const {
     return 0;
 }
 
+util::Result<void> LibraryRepository::remove(const core::Uuid& id) {
+    ScopedStmt stmt;
+    int rc = sqlite3_prepare_v2(db_, "DELETE FROM libraries WHERE id = ?", -1, stmt.ref(), nullptr);
+    if (rc != SQLITE_OK) return std::unexpected(util::Error::db(sqlite3_errmsg(db_)));
+    sqlite3_bind_text(stmt, 1, id.c_str(), -1, SQLITE_STATIC);
+    if (sqlite3_step(stmt) != SQLITE_DONE)
+        return std::unexpected(util::Error::db(sqlite3_errmsg(db_)));
+    return {};
+}
+
 // ============================================================
 // SymbolRepository
 // ============================================================

@@ -172,6 +172,83 @@ int LibraryService::model_3d_count() const {
     return repo.count();
 }
 
+util::Result<LibraryService::DeleteLibResult> LibraryService::delete_library(const core::Uuid& lib_id) {
+    storage::LibraryRepository lr(db_->handle());
+    storage::SymbolRepository sr(db_->handle());
+
+    // 1. Find library + file path
+    auto libs = lr.find_all();
+    std::string file_path;
+    if (libs) for (auto& l : *libs) if (l.id == lib_id) file_path = l.file_path.string();
+    if (file_path.empty())
+        return std::unexpected(util::Error::not_found("Library not found: " + lib_id));
+
+    // 2. Remove all symbols in this library
+    int removed = 0;
+    auto syms = sr.find_by_library(lib_id);
+    if (syms) for (auto& s : *syms) { if (sr.remove(s.id())) removed++; }
+
+    // 3. Delete the .kicad_sym file
+    bool file_deleted = false;
+    if (std::filesystem::exists(file_path)) {
+        std::filesystem::remove(file_path);
+        file_deleted = true;
+    }
+
+    // 4. Remove library DB record
+    auto db_result = lr.remove(lib_id);
+    if (!db_result) return std::unexpected(db_result.error());
+
+    return DeleteLibResult{removed, file_deleted ? file_path : ""};
+}
+
+util::Result<void> LibraryService::delete_symbol(const core::Uuid& sym_id) {
+    storage::LibraryRepository lr(db_->handle());
+    storage::SymbolRepository sr(db_->handle());
+
+    auto sym = sr.find_by_id(sym_id);
+    if (!sym) return std::unexpected(util::Error::not_found("Symbol not found"));
+
+    std::string sym_name = sym->name();
+    std::string lib_id = sym->library_id();
+
+    // 1. Remove from DB
+    auto db_result = sr.remove(sym_id);
+    if (!db_result) return std::unexpected(db_result.error());
+
+    // 2. Remove from .kicad_sym file
+    auto libs = lr.find_all();
+    if (libs) for (auto& l : *libs) {
+        if (l.id != lib_id || l.file_path.empty()) continue;
+        if (!std::filesystem::exists(l.file_path)) continue;
+
+        std::ifstream f(l.file_path, std::ios::binary);
+        std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        f.close();
+
+        std::string search = "(symbol \"" + sym_name + "\"";
+        size_t pos = text.find(search);
+        if (pos == std::string::npos) continue;
+
+        // Find matching closing paren
+        int depth = 0; bool in_s = false; size_t end = pos;
+        while (end < text.size()) {
+            char c = text[end];
+            if (c == '"' && (end == 0 || text[end-1] != '\\')) in_s = !in_s;
+            else if (!in_s) {
+                if (c == '(') depth++;
+                else if (c == ')') { depth--; if (depth == 0) { end++; break; } }
+            }
+            end++;
+        }
+        text.erase(pos, end - pos);
+        std::ofstream out(l.file_path, std::ios::binary);
+        out << text;
+        break;
+    }
+    return {};
+}
+
 util::Result<int> LibraryService::scan_3d_models(const std::filesystem::path& dir) {
     if (!std::filesystem::exists(dir))
         return std::unexpected(util::Error::io("Directory not found: " + dir.string()));
