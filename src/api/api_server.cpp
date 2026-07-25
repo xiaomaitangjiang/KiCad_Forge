@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <unordered_set>
 
 #include <nlohmann/json.hpp>
@@ -115,6 +116,13 @@ void ApiServer::stop() {
     db_.reset();
 }
 
+int64_t ApiServer::ms_since_heartbeat() const {
+    auto last = last_heartbeat_.load(std::memory_order_relaxed);
+    if (last == 0) return INT64_MAX;  // no heartbeat yet
+    auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+    return (now - last) / 1000000;  // ns → ms
+}
+
 void ApiServer::auto_import() {
     storage::SettingsRepository settings(db_->handle());
     services::LibraryService svc(db_.get());
@@ -144,7 +152,26 @@ void ApiServer::auto_import() {
 // Helper: send JSON response
 static void json_response(httplib::Response& r, const json& j) {
     r.set_content(j.dump(), "application/json");
-    
+
+}
+
+static std::string read_file_str(const std::string& path) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f.is_open()) return {};
+    std::ostringstream ss; ss << f.rdbuf();
+    return ss.str();
+}
+
+void ApiServer::serve_plugin_icon(const std::filesystem::path& plugin_dir,
+                                   const std::string& filename,
+                                   httplib::Response& r) {
+    auto icon_path = plugin_dir / filename;
+    if (!std::filesystem::exists(icon_path)) { r.status = 404; return; }
+
+    std::string ext = icon_path.extension().string();
+    if (ext == ".svg") r.set_content(read_file_str(icon_path.string()), "image/svg+xml");
+    else if (ext == ".png") r.set_content(read_file_str(icon_path.string()), "image/png");
+    else r.status = 404;
 }
 
 void ApiServer::setup_routes() {
@@ -277,6 +304,11 @@ void ApiServer::setup_routes() {
 
     // ======== Status ========
     srv_.Get("/api/status", [this](const httplib::Request&, httplib::Response& r) {
+        // Update heartbeat — main.cpp uses this to know a window is still open
+        last_heartbeat_.store(
+            std::chrono::steady_clock::now().time_since_epoch().count(),
+            std::memory_order_relaxed);
+
         services::LibraryService svc(db_.get());
         json j; j["symbols"] = svc.symbol_count();
         j["footprints"] = svc.footprint_count(); j["ok"] = true;
@@ -559,21 +591,70 @@ void ApiServer::setup_routes() {
     });
 
     // ======== Plugins ========
-    srv_.Get("/api/plugins", [this](const httplib::Request&, httplib::Response& r) {
+    // Helper: build a plugin JSON object with all UI-relevant fields
+    auto build_plugin_json = [](const plugin::PluginManifest& m, const std::string& status) {
+        json p;
+        p["id"] = m.id; p["name"] = m.name;
+        p["version"] = m.version; p["description"] = m.description;
+        p["status"] = status;
+        if (!m.icon.empty()) {
+            p["icon_url"] = "/api/plugins/" + m.id + "/icon";
+        }
+        if (!m.actions.empty()) {
+            json acts = json::array();
+            for (auto& a : m.actions) {
+                json act;
+                act["id"] = a.id; act["name"] = a.name;
+                act["description"] = a.description;
+                act["trigger"] = a.trigger;
+                // Per-action icon URL only when different from plugin default
+                if (!a.icon.empty() && a.icon != m.icon)
+                    act["icon_url"] = "/api/plugins/" + m.id + "/icon/" + a.id;
+                if (!a.schema.is_null()) act["schema"] = a.schema;
+                // Button display preferences
+                act["button"] = { {"show", a.button_show},
+                                  {"style", a.button_style.empty() ? "both" : a.button_style},
+                                  {"tooltip", a.button_tooltip} };
+                acts.push_back(act);
+            }
+            p["actions"] = acts;
+        }
+        return p;
+    };
+
+    srv_.Get("/api/plugins", [this, build_plugin_json](const httplib::Request&, httplib::Response& r) {
         json arr = json::array();
         if (plugins_) {
             for (auto& m : plugins_->loaded_plugins()) {
-                json p; p["id"] = m.id; p["name"] = m.name;
-                p["version"] = m.version; p["status"] = "loaded"; arr.push_back(p);
+                arr.push_back(build_plugin_json(m, "loaded"));
             }
             for (auto& m : plugins_->available_plugins()) {
                 if (!plugins_->is_loaded(m.id)) {
-                    json p; p["id"] = m.id; p["name"] = m.name;
-                    p["version"] = m.version; p["status"] = "available"; arr.push_back(p);
+                    arr.push_back(build_plugin_json(m, "available"));
                 }
             }
         }
         json_response(r, arr);
+    });
+
+    // Serve plugin icon files (SVG or PNG)
+    srv_.Get(R"(/api/plugins/([^/]+)/icon/([^/]+))", [this](const httplib::Request& req, httplib::Response& r) {
+        std::string pid = req.matches[1];
+        std::string action_id = req.matches[2];
+        if (!plugins_) { r.status = 404; return; }
+        auto dir = plugins_->plugin_path(pid);
+        if (dir.empty()) { r.status = 404; return; }
+        serve_plugin_icon(dir, action_id + ".svg", r);
+        if (r.status == 404) serve_plugin_icon(dir, action_id + ".png", r);
+    });
+
+    srv_.Get(R"(/api/plugins/([^/]+)/icon)", [this](const httplib::Request& req, httplib::Response& r) {
+        std::string pid = req.matches[1];
+        if (!plugins_) { r.status = 404; return; }
+        auto dir = plugins_->plugin_path(pid);
+        if (dir.empty()) { r.status = 404; return; }
+        serve_plugin_icon(dir, "icon.svg", r);
+        if (r.status == 404) serve_plugin_icon(dir, "icon.png", r);
     });
 
     srv_.Post("/api/plugins/load", [this](const httplib::Request& req, httplib::Response& r) {

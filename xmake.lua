@@ -1,6 +1,6 @@
 set_toolchains("clang")
 add_rules("mode.debug", "mode.release")
---set_defaultmode("release")
+set_defaultmode("release")
 set_languages("cxx23")
 
 local msys2 = os.getenv("MSYS2_DIR") or "D:/msys64/mingw64"
@@ -24,6 +24,23 @@ target("KiCad_Forge")
     add_files("src/classifier/**.cpp")
     add_files("src/correspondence/**.cpp")
     add_files("src/plugin/plugin_manager.cpp")
+    -- Auto-generate app.ico from favicon.svg before building
+    before_build(function(target)
+        local svg = path.join(os.projectdir(), "webui", "public", "favicon.svg")
+        local ico = path.join(os.projectdir(), "resources", "app.ico")
+        local script = path.join(os.projectdir(), "scripts", "svg2ico.py")
+        if os.isfile(svg) and (not os.isfile(ico) or os.mtime(svg) > os.mtime(ico)) then
+            -- Try Windows Python first, then system python
+            local python = os.getenv("LOCALAPPDATA") .. "\\Programs\\Python\\Python313\\python.exe"
+            if not os.isfile(python) then python = "python" end
+            local ok = os.execv(python, {script})
+            if ok then
+                print("  ✓ icon regenerated from favicon.svg")
+                os.touch(path.join(os.projectdir(), "resources", "app.rc"))
+            end
+        end
+    end)
+    add_files("resources/app.rc")  -- Windows exe icon
     add_files("src/core/type_registry.cpp")
 
     add_includedirs("src", "src/third_party", sys_inc)
@@ -43,9 +60,14 @@ target("KiCad_Forge")
         local dest = path.join(root, "webui", "dist")
         os.rm(path.join(root, "webui", "*"))
         os.cp("$(projectdir)/webui/dist", dest)
-        -- Plugins
+        -- Plugins (remove existing dir to ensure new files like icons sync)
+        os.rm(path.join(root, "plugins"))
         os.cp("$(projectdir)/plugins", path.join(root, "plugins"))
         -- Portable data directory (DB, settings go here)
         os.mkdir(path.join(root, "data"))
+        -- Copy required MinGW DLLs so exe runs standalone (no MSYS2 PATH needed)
+        os.cp(path.join(msys2, "bin", "libstdc++-6.dll"), path.join(root, "libstdc++-6.dll"))
+        os.cp(path.join(msys2, "bin", "libgcc_s_seh-1.dll"), path.join(root, "libgcc_s_seh-1.dll"))
+        os.cp(path.join(msys2, "bin", "libwinpthread-1.dll"), path.join(root, "libwinpthread-1.dll"))
     end)
     add_runenvs("PATH", msys2 .. "/bin")

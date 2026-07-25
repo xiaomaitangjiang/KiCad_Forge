@@ -17,7 +17,7 @@
 static int run_server() {
     (void)setvbuf(stdout, nullptr, _IONBF, 0);  
     // unbuffered — printf visible in debugger
-    const int PORT = 8080;
+    const int PORT = 20443;
 
     // Check for stale process
     httplib::Client probe("127.0.0.1", PORT);
@@ -47,19 +47,20 @@ static int run_server() {
         }
         if (!ready) { printf("ERROR: Server not responding\n"); return 1; }
     }
-    printf("KiCad Forge running at http://localhost:%d\n", PORT);
+    printf("KiCad Forge running at http://127.0.0.1:%d\n", PORT);
 
-    // 3. Open native app window (platform-specific via CRTP: Edge/Mac/Linux)
+    // 3. Open native app window, then block until user closes it.
+    //    Uses frontend heartbeat — works across all platforms.
     kforge::platform::WindowConfig cfg;
-    cfg.url = "http://127.0.0.1:8080";
+    cfg.url = "http://127.0.0.1:20443";
 
     kforge::platform::NativeWindow win(cfg);
-    if (win.open()) {
-        // Block until the user closes the browser window, then clean up
-        printf("Close browser window or press Ctrl+C to stop\n"); fflush(stdout);
-        win.monitor();
+    if (!win.open()) {
+        printf("ERROR: Could not open browser window\n");
+        return 1;
     }
-    // server destructor runs here → stops listening → port freed
+    printf("Close browser window or press Ctrl+C to stop\n"); fflush(stdout);
+    win.monitor([&] { return server.ms_since_heartbeat() < 1500; });
     return 0;
 }
 

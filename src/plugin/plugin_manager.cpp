@@ -68,6 +68,16 @@ size_t PluginManager::count() const {
     return loaded_.size();
 }
 
+std::filesystem::path PluginManager::plugin_path(const std::string& plugin_id) const {
+    std::lock_guard lock(mutex_);
+    // Check loaded first, then discovered
+    auto lit = loaded_.find(plugin_id);
+    if (lit != loaded_.end()) return lit->second.plugin_dir;
+    auto dit = plugin_dirs_.find(plugin_id);
+    if (dit != plugin_dirs_.end()) return dit->second;
+    return {};
+}
+
 util::Result<void> PluginManager::load(const std::string& plugin_id, IPluginContext*) {
     std::lock_guard lock(mutex_);
 
@@ -223,6 +233,29 @@ util::Result<PluginManifest> PluginManifest::from_json(const nlohmann::json& doc
     m.entry_point = doc.value("entry", "plugin.py");
     m.min_app_version = doc.value("min_app_version", "");
     m.one_click = doc.value("one_click", false);
+    m.icon = doc.value("icon", "");
+
+    // Parse actions from manifest
+    if (doc.contains("actions") && doc["actions"].is_array()) {
+        for (const auto& a : doc["actions"]) {
+            PluginAction act;
+            act.id = a.value("id", "");
+            act.name = a.value("name", "");
+            act.description = a.value("description", "");
+            act.icon = a.value("icon", "");
+            act.trigger = a.value("trigger", "inline");
+            // Button display options
+            if (a.contains("button")) {
+                const auto& btn = a["button"];
+                act.button_show = btn.value("show", true);
+                act.button_style = btn.value("style", "both");
+                act.button_tooltip = btn.value("tooltip", "");
+            }
+            if (a.contains("schema")) act.schema = a["schema"];
+            if (!act.id.empty()) m.actions.push_back(std::move(act));
+        }
+    }
+
     if (doc.contains("capabilities") && doc["capabilities"].is_array()) {
         for (auto& c : doc["capabilities"]) m.capabilities.push_back(c.get<std::string>());
     }
