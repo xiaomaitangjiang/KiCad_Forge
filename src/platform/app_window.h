@@ -2,8 +2,13 @@
 // Windows: Edge --app mode | macOS: WKWebView | Linux: GTK WebKit
 #pragma once
 
+#include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <string>
+#include <thread>
+#include <vector>
 #include <cstdio>
 
 #ifdef _WIN32
@@ -19,11 +24,29 @@ struct WindowConfig {
     int height{800};
 };
 
-// CRTP base — derived must implement: open(), close()
+// CRTP base — derived must implement: open()
 template <typename Derived>
 class AppWindow {
 public:
     explicit AppWindow(const WindowConfig& cfg) : cfg_(cfg) {}
+
+    /// Block until the heartbeat stops (frontend window closed).
+    /// `is_alive` returns true while the frontend is still connected.
+    template <typename F>
+    void monitor(F&& is_alive) {
+        using namespace std::chrono;
+        // Wait up to 30s for the first heartbeat
+        auto deadline = steady_clock::now() + seconds(30);
+        while (steady_clock::now() < deadline && !is_alive()) {
+            std::this_thread::sleep_for(milliseconds(500));
+        }
+        // Keep running while heartbeat is alive
+        while (is_alive()) {
+            std::this_thread::sleep_for(seconds(1));
+        }
+        // Heartbeat stopped — window closed, time to exit
+    }
+
 protected:
     WindowConfig cfg_;
 };
@@ -83,40 +106,52 @@ public:
 
     bool open() {
         std::string exe = find_edge();
-        if (exe.empty()) return false;
+        if (exe.empty()) {
+            printf("FATAL: Could not find msedge.exe. Is Edge installed?\n");
+            return false;
+        }
         printf("AppWindow: %s\n", exe.c_str());
+        printf("AppWindow: launching: %s\n", cfg_.url.c_str());
 
-        std::string cmd = "\"" + exe + "\" --app=" + cfg_.url +
-            " --window-size=" + std::to_string(cfg_.width) + "," + std::to_string(cfg_.height);
+        std::string cmd = "\"" + exe + "\" --app=" + cfg_.url
+            + " --window-size=" + std::to_string(cfg_.width) + "," + std::to_string(cfg_.height);
+
+        // CreateProcessA may modify the command line — copy to mutable buffer
+        std::vector<char> cmd_buf(cmd.begin(), cmd.end());
+        cmd_buf.push_back('\0');
 
         STARTUPINFOA si{sizeof(si)};
         si.dwFlags = STARTF_USESHOWWINDOW;
         si.wShowWindow = SW_SHOW;
         PROCESS_INFORMATION pi{};
 
-        if (!CreateProcessA(nullptr, cmd.data(), nullptr, nullptr, FALSE,
-                            0, nullptr, nullptr, &si, &pi))
+        if (!CreateProcessA(nullptr, cmd_buf.data(), nullptr, nullptr,
+                            FALSE, 0, nullptr, nullptr, &si, &pi))
             return false;
 
         CloseHandle(pi.hThread);
-        process_.reset(pi.hProcess);
+        CloseHandle(pi.hProcess);
         return true;
-    }
-
-    void close() { process_.reset(); }
-
-    /// Block until the Edge window closes, or return immediately if no process.
-    void monitor() {
-        if (process_) WaitForSingleObject(process_.get(), INFINITE);
     }
 
 private:
     static std::string find_edge() {
+        // 1. Try registry (most reliable across installations)
+        for (auto* key : {"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\msedge.exe",
+                          "SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\App Paths\\msedge.exe"}) {
+            char path[MAX_PATH]; DWORD len = sizeof(path);
+            if (ERROR_SUCCESS == RegGetValueA(HKEY_LOCAL_MACHINE, key, "", RRF_RT_REG_SZ,
+                                              nullptr, path, &len))
+                if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES) return path;
+            if (ERROR_SUCCESS == RegGetValueA(HKEY_CURRENT_USER, key, "", RRF_RT_REG_SZ,
+                                              nullptr, path, &len))
+                if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES) return path;
+        }
+
+        // 2. Scan version folders under known install dirs
         const char* bases[] = {
             "C:\\Program Files (x86)\\Microsoft\\Edge\\Application",
             "C:\\Program Files\\Microsoft\\Edge\\Application",
-            "C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application",
-            "C:\\Program Files\\Microsoft\\EdgeWebView\\Application",
         };
         for (auto* base : bases) {
             WIN32_FIND_DATAA fd{};
@@ -127,15 +162,10 @@ private:
             do {
                 if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
                 if (fd.cFileName[0] == '.') continue;
-                // Try msedge.exe first (supports --app), fall back to msedgewebview2.exe
-                for (auto* name : {"msedge.exe", "msedgewebview2.exe"}) {
-                    std::string path = std::string(base) + "\\" + fd.cFileName + "\\" + name;
-                    if (GetFileAttributesA(path.c_str()) != INVALID_FILE_ATTRIBUTES) {
-                        best = path;
-                        break;
-                    }
+                std::string path = std::string(base) + "\\" + fd.cFileName + "\\msedge.exe";
+                if (GetFileAttributesA(path.c_str()) != INVALID_FILE_ATTRIBUTES) {
+                    best = path; break;
                 }
-                if (!best.empty()) break;
             } while (FindNextFileA(h, &fd));
             FindClose(h);
             if (!best.empty()) return best;
@@ -143,8 +173,6 @@ private:
         return "";
     }
 
-    struct HandleDeleter { void operator()(HANDLE h) const { if (h) CloseHandle(h); } };
-    std::unique_ptr<void, HandleDeleter> process_;
 };
 
 using NativeWindow = WinEdgeWindow;

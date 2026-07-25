@@ -4,7 +4,7 @@ LCSC Import Plugin — fetches from easyeda2kicad (bundled, MIT), merges symbol 
 Usage: python plugin.py import '{"source":"C37593","options":{"target_library":"/path/to/lib.kicad_sym"}}'
 """
 
-import json, os, re, subprocess, sys
+import json, os, re, shutil, subprocess, sys
 
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, PLUGIN_DIR)
@@ -145,15 +145,33 @@ def fetch_and_merge(lcsc_id: str, target_file: str, output_dir: str) -> dict:
             "footprints_copied": fp_copied, "output_dir": output_dir}
 
 
+def cleanup_fetched(keep: int = 5):
+    """Delete oldest fetched dirs, keeping the `keep` most recent ones."""
+    fetched_dir = os.path.join(PLUGIN_DIR, "fetched")
+    if not os.path.isdir(fetched_dir):
+        return
+    dirs = []
+    for d in os.listdir(fetched_dir):
+        full = os.path.join(fetched_dir, d)
+        if os.path.isdir(full):
+            dirs.append((os.path.getmtime(full), full))
+    dirs.sort(key=lambda x: x[0], reverse=True)  # newest first
+    for _, d in dirs[keep:]:
+        shutil.rmtree(d, ignore_errors=True)
+
+
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print(json.dumps({"ok": False, "error": "Usage: plugin.py <action> [args]"})); sys.exit(1)
     action, args = sys.argv[1], json.loads(sys.argv[2]) if len(sys.argv) > 2 else {}
     if action == "import":
         id = args.get("source") or args.get("lcsc_id", "")
-        tgt = args.get("options", {}).get("target_library", "")
+        # target_library can be top-level (new dynamic form) or nested in options (old format)
+        tgt = args.get("target_library", "") or args.get("options", {}).get("target_library", "")
         if not tgt: print(json.dumps({"ok": False, "error": "Missing target_library"})); sys.exit(1)
-        print(json.dumps(fetch_and_merge(id, tgt, os.path.join(PLUGIN_DIR, "fetched", id))))
+        result = fetch_and_merge(id, tgt, os.path.join(PLUGIN_DIR, "fetched", id))
+        cleanup_fetched(keep=5)
+        print(json.dumps(result))
     elif action == "info":
         print(open(os.path.join(PLUGIN_DIR, "manifest.json")).read())
     else:

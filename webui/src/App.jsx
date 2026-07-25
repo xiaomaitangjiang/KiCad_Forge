@@ -104,7 +104,13 @@ export default function App() {
     localStorage.setItem('kf-dark', next ? '1' : '0')
   }
 
-  useEffect(() => { loadStatus(); loadSymbols(); loadIssues(); loadMatches(); loadSettings(); loadLibraries(); loadPlugins() }, [])
+  useEffect(() => {
+    loadStatus(); loadSymbols(); loadIssues(); loadMatches();
+    loadSettings(); loadLibraries(); loadPlugins()
+    // Heartbeat: ping status every 500ms so server knows window is open
+    const beat = setInterval(() => fetch(`${API}/status`).catch(() => {}), 500)
+    return () => clearInterval(beat)
+  }, [])
 
   const filtered = filter ? symbols.filter(s => s.type === filter) : symbols
   const typeCounts = {}

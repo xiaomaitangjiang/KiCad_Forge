@@ -116,6 +116,13 @@ void ApiServer::stop() {
     db_.reset();
 }
 
+int64_t ApiServer::ms_since_heartbeat() const {
+    auto last = last_heartbeat_.load(std::memory_order_relaxed);
+    if (last == 0) return INT64_MAX;  // no heartbeat yet
+    auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+    return (now - last) / 1000000;  // ns → ms
+}
+
 void ApiServer::auto_import() {
     storage::SettingsRepository settings(db_->handle());
     services::LibraryService svc(db_.get());
@@ -297,6 +304,11 @@ void ApiServer::setup_routes() {
 
     // ======== Status ========
     srv_.Get("/api/status", [this](const httplib::Request&, httplib::Response& r) {
+        // Update heartbeat — main.cpp uses this to know a window is still open
+        last_heartbeat_.store(
+            std::chrono::steady_clock::now().time_since_epoch().count(),
+            std::memory_order_relaxed);
+
         services::LibraryService svc(db_.get());
         json j; j["symbols"] = svc.symbol_count();
         j["footprints"] = svc.footprint_count(); j["ok"] = true;
