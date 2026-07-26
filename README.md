@@ -2,6 +2,8 @@
 
 Desktop library manager for KiCad — browse, classify, and import symbols and footprints with a modern web UI and extensible plugin system.
 
+![alt text](resources/main_view.png)
+
 ## Quick Start
 
 ### Prerequisites
@@ -52,7 +54,7 @@ src/
 plugins/lcsc_import/  LCSC one-click import plugin (self-contained)
 webui/                React 19 + Vite frontend
 resources/            Windows resource file + auto-generated app icon
-scripts/              svg2ico.py — SVG → ICO converter (called by build)
+scripts/              svg2ico.py — SVG to ICO converter (called by build)
 ```
 
 ## Plugin System
@@ -99,6 +101,15 @@ Plugins live in `plugins/` as folders with `manifest.json` + Python scripts. The
 | `actions[].schema.fields` | Form field definitions for `trigger: "dialog"`. Types: `text`, `library_picker`, `select`, `file_picker` |
 
 Plugin icons (`icon.svg`, 24×24 SVG) are served via `/api/plugins/{id}/icon` and displayed in the toolbar and plugin panel.
+
+#### style：icon
+![alt text](resources/with_icon.png)
+
+#### style：both
+![alt text](resources/icon_and_text.png)
+
+#### style:text
+![alt text](resources/without_icon.png)
 
 ## API
 

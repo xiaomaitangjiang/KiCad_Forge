@@ -1,0 +1,19 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug KiCad Forge",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/mingw/x86_64/debug/KiCad_Forge.exe",
+            "args": [],
+            "cwd": "${workspaceFolder}/build/mingw/x86_64/debug",
+            "env": {
+                "PATH": "D:/msys64/mingw64/bin;D:/mingw64/bin;${env:PATH}"
+            },
+            "sourceMap": {
+                "/d/VScode/KiCad_Forge": "${workspaceFolder}"
+            }
+        }
+    ]
+}

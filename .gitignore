@@ -3,7 +3,6 @@
 build/
 
 # IDE
-.vscode/
 .idea/
 *.user
 *.pro.user*
@@ -32,10 +31,14 @@ plugins/**/*.dylib
 *.desktop~
 *.AppImage
 
+# Auto-generated resources
+resources/app.ico
+
 # Runtime data
 *.db
 *.db-journal
 *.db-wal
+*.db-shm
 
 # Logs
 *.log

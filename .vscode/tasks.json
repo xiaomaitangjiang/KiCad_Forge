@@ -1,0 +1,36 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "xmake build debug",
+            "type": "process",
+            "command": "cmd.exe",
+            "args": ["/d", "/c", "xmake f -m debug && xmake build"],
+            "options": {
+                "cwd": "${workspaceFolder}",
+                "env": {
+                    "PATH": "D:/msys64/mingw64/bin;D:/mingw64/bin;${env:PATH}"
+                }
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": "$gcc"
+        },
+        {
+            "label": "xmake build release",
+            "type": "process",
+            "command": "cmd.exe",
+            "args": ["/d", "/c", "xmake f -m release && xmake build"],
+            "options": {
+                "cwd": "${workspaceFolder}",
+                "env": {
+                    "PATH": "D:/msys64/mingw64/bin;D:/mingw64/bin;${env:PATH}"
+                }
+            },
+            "group": "build",
+            "problemMatcher": "$gcc"
+        }
+    ]
+}
