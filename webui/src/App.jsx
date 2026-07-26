@@ -50,8 +50,13 @@ export default function App() {
   // Loading callback
   useEffect(() => { setLoadingCallback(setLoading) }, [])
 
-  // Heartbeat
-  useEffect(() => { const beat = setInterval(() => fetch(`${API}/status`).catch(()=>{}), 500); return () => clearInterval(beat) }, [])
+  // Heartbeat + shutdown signal
+  useEffect(() => {
+    const beat = setInterval(() => fetch(`${API}/status`).catch(()=>{}), 1000)
+    const bye = () => { navigator.sendBeacon(`${API}/bye`, '{}') }
+    window.addEventListener('beforeunload', bye)
+    return () => { clearInterval(beat); window.removeEventListener('beforeunload', bye) }
+  }, [])
 
   // Classify / check / match
   async function classify() {

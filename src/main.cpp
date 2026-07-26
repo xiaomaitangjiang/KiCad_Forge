@@ -60,7 +60,7 @@ static int run_server() {
         return 1;
     }
     printf("Close browser window or press Ctrl+C to stop\n"); fflush(stdout);
-    win.monitor([&] { return server.ms_since_heartbeat() < 1500; });
+    win.monitor([&] { return !server.should_stop() && server.ms_since_heartbeat() < 10000; });
     return 0;
 }
 
