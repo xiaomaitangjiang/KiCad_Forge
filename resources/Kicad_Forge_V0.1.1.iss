@@ -20,6 +20,7 @@ PrivilegesRequired=admin
 OutputDir=D:\VScode\KiCad_Forge\install_file
 OutputBaseFilename=Kicad_Forge_Setup
 SetupIconFile=D:\VScode\KiCad_Forge\resources\app.ico
+Compression=lzma/ultra64
 SolidCompression=yes
 WizardStyle=modern dynamic
 UsedUserAreasWarning=no
