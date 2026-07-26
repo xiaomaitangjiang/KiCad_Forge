@@ -1,0 +1,113 @@
+{
+  "app": {
+    "title": "KiCad Forge",
+    "noSymbols": "暂无元件",
+    "noSymbolsHint": "点击侧栏的 Settings 配置元件库路径，然后点击 Save & Import。",
+    "selectComponent": "选择一个元件",
+    "selectComponentHint": "查看详细信息"
+  },
+  "sidebar": {
+    "library": "元件库",
+    "allSymbols": "全部元件",
+    "issues": "问题",
+    "match": "匹配",
+    "componentTypes": "元件类型",
+    "libraries": "元件库",
+    "newLibrary": "+ 新建库",
+    "tools": "工具",
+    "rules": "规则",
+    "plugins": "插件",
+    "componentTypesMenu": "元件类型",
+    "packageTypes": "封装类型",
+    "settings": "设置",
+    "lightMode": "浅色模式",
+    "darkMode": "深色模式"
+  },
+  "toolbar": {
+    "autoClassify": "自动分类",
+    "check": "检查",
+    "autoMatch": "自动匹配",
+    "searchPlaceholder": "搜索元件...",
+    "symbolsFootprints": "{{symbols}} 元件 · {{footprints}} 封装"
+  },
+  "inspector": {
+    "footprint": "封装",
+    "notAssigned": "未分配",
+    "3dModel": "3D 模型",
+    "linked": "已关联",
+    "notLinked": "未分配",
+    "pinCount": "引脚数",
+    "mpn": "型号",
+    "value": "值",
+    "quickActions": "快捷操作",
+    "findFootprint": "查找匹配封装",
+    "deleteSymbol": "删除元件",
+    "type": "类型"
+  },
+  "plugin": {
+    "cancel": "取消",
+    "execute": "执行",
+    "noPlugins": "未安装插件",
+    "pluginHint": "将 .kfplug 文件放入 plugins 目录",
+    "select": "-- 请选择 --"
+  },
+  "settings": {
+    "title": "设置",
+    "libraryPaths": "库路径",
+    "symbolPath": "元件库路径",
+    "symbolPathHint": "包含 .kicad_sym 文件的目录",
+    "footprintPath": "封装库路径",
+    "footprintPathHint": "包含 .kicad_mod 文件的目录",
+    "3dPath": "3D 模型路径",
+    "3dPathHint": "包含 .step / .wrl 文件的目录",
+    "saveImport": "保存并导入",
+    "utilities": "工具",
+    "resetDb": "重置数据库",
+    "resetDbHint": "删除所有导入的元数据。原始 .kicad_sym 文件不会被修改。重置后请重启应用。",
+    "resetDbButton": "重置数据库",
+    "reimportAll": "重新导入",
+    "reimportHint": "重新扫描配置的路径并导入所有元件和封装。",
+    "reimportButton": "重新导入",
+    "dbLocation": "数据库位置"
+  },
+  "rules": {
+    "title": "分类规则",
+    "noRules": "未配置规则",
+    "editHint": "编辑 config/classification_rules/*.toml 添加自定义规则"
+  },
+  "types": {
+    "add": "添加",
+    "componentTypes": "元件类型",
+    "packageTypes": "封装类型",
+    "newTypePlaceholder": "新类型名称...",
+    "saveHint": "类型保存至 config/*_types.json。修改即时生效。"
+  },
+  "confirm": {
+    "deleteSymbol": "删除 \"{{name}}\"？",
+    "deleteLibrary": "删除库 \"{{name}}\" 及其本地文件？",
+    "resetDb": "重置数据库？所有元数据将丢失。\n磁盘上的 .kicad_sym 文件是安全的。\n重置后请重启应用。"
+  },
+  "status": {
+    "filtered": "{{count}} 个元件{{filter}}",
+    "total": "共 {{count}} 个"
+  },
+  "toast": {
+    "classifying": "正在分类...",
+    "classified": "分类完成: {{matched}}/{{total}} 已匹配",
+    "noIssues": "未发现问题",
+    "issuesFound": "发现 {{count}} 个问题",
+    "matchSuggestions": "{{count}} 个匹配建议",
+    "saved": "已保存 — 导入 {{symbols}} 元件, {{footprints}} 封装",
+    "deleted": "已删除 {{name}}{{extra}}",
+    "networkError": "网络错误",
+    "added": "已添加 {{name}}",
+    "removed": "已移除 {{name}}",
+    "fetching": "正在获取 {{id}}...",
+    "imported": "已导入 {{id}}: {{count}} 到库",
+    "failed": "失败: {{error}}",
+    "failedUnknown": "失败: 未知错误",
+    "executing": "正在执行...",
+    "done": "完成: {{count}} 已导入",
+    "required": "{{label}} 为必填项"
+  }
+}
