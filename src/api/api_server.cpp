@@ -236,59 +236,22 @@ void ApiServer::setup_routes() {
                 if (lib_id.empty()) {
                     j["ok"] = false; j["error"] = "Missing library id";
                 } else {
-                    auto libs = lr.find_all();
-                    std::string file_path;
-                    if (libs) for (auto& l : *libs) if (l.id == lib_id) file_path = l.file_path.string();
-                    auto syms = sr.find_by_library(lib_id);
-                    if (syms) for (auto& s : *syms) { auto _ = sr.remove(s.id()); }
-                    if (!file_path.empty() && std::filesystem::exists(file_path)) {
-                        std::filesystem::remove(file_path);
-                        j["deleted_file"] = file_path;
+                    services::LibraryService svc(db_.get());
+                    auto result = svc.delete_library(lib_id);
+                    j["ok"] = result.has_value();
+                    if (result) {
+                        j["symbols_deleted"] = result->symbols_removed;
+                        if (!result->deleted_file.empty()) j["deleted_file"] = result->deleted_file;
+                    } else {
+                        j["error"] = result.error().message;
                     }
-                    j["ok"] = true; j["deleted"] = lib_id;
                 }
             } else if (action == "delete_symbol") {
                 std::string sym_id = body.value("id", "");
-                // Find symbol to get its name and library
-                auto sym = sr.find_by_id(sym_id);
-                if (!sym) { j["ok"] = false; j["error"] = "Symbol not found in DB"; }
-                else {
-                    std::string sym_name = sym->name();
-                    std::string lib_id = sym->library_id();
-                    // Delete from DB
-                    auto result = sr.remove(sym_id);
-                    j["ok"] = result.has_value();
-                    if (!result) j["error"] = result.error().message;
-                    // Remove from .kicad_sym file
-                    auto libs = lr.find_all();
-                    if (libs) for (auto& l : *libs) {
-                        if (l.id == lib_id && !l.file_path.empty() && std::filesystem::exists(l.file_path)) {
-                            std::ifstream f(l.file_path, std::ios::binary);
-                            std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-                            // Find and remove the (symbol "NAME" ...) block
-                            std::string search = "(symbol \"" + sym_name + "\"";
-                            size_t pos = text.find(search);
-                            if (pos != std::string::npos) {
-                                int depth = 0; bool in_s = false; size_t end = pos;
-                                while (end < text.size()) {
-                                    char c = text[end];
-                                    if (c == '"' && (end == 0 || text[end-1] != '\\')) in_s = !in_s;
-                                    else if (!in_s) {
-                                        if (c == '(') depth++;
-                                        else if (c == ')') { depth--; if (depth == 0) { end++; break; } }
-                                    }
-                                    end++;
-                                }
-                                if (end > pos) {
-                                    text.erase(pos, end - pos);
-                                    std::ofstream out(l.file_path, std::ios::binary);
-                                    out << text;
-                                    j["removed_from_file"] = l.file_path.string();
-                                }
-                            }
-                        }
-                    }
-                }
+                services::LibraryService svc(db_.get());
+                auto result = svc.delete_symbol(sym_id);
+                j["ok"] = result.has_value();
+                if (!result) j["error"] = result.error().message;
             } else {
                 core::LibraryMeta m;
                 m.name = body.value("name", "New Library");

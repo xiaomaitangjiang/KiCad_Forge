@@ -128,34 +128,7 @@ Plugin icons (`icon.svg`, 24×24 SVG) are served via `/api/plugins/{id}/icon` an
 
 ## Contributing
 
-<<<<<<< HEAD
 See [CONTRIBUTING.md](CONTRIBUTING.md) for code conventions, PR guidelines, and project architecture.
-=======
-### Code style
-- C++23, clang (MinGW target)
-- `printf` for output (not `std::println` — MinGW libstdc++ doesn't support it)
-- Use `util::Result<T>` for fallible operations (no exceptions in core logic)
-- `src/` code: `snake_case` files, PascalCase types, snake_case methods
-- Frontend: React functional components, `useState`/`useEffect` hooks
-
-### Before submitting
-1. Build passes both `debug` and `release` modes
-2. `npm run build` in `webui/` produces clean output
-3. Manual smoke test: launch exe, verify toolbar loads, LCSC import dialog opens
-4. No new compiler warnings
-
-### Project conventions
-- **Portable-first**: all runtime data goes in `./data/` next to the exe when available
-- **No Qt**: pure C++23 with httplib + SQLite3, web UI via React
-- **Plugin isolation**: plugins run as separate Python processes via `CreateProcess(CREATE_NO_WINDOW)`
-- **CRTP for platform**: `AppWindow<Derived>` pattern — zero virtual dispatch, compile-time dispatch
-
-### Adding a plugin
-1. Create `plugins/<name>/manifest.json` with `id`, `name`, `entry`, `actions[]`
-2. Add `icon.svg` (24×24) for the toolbar button
-3. Write the Python entry script (receives action + JSON from CLI)
-4. Rebuild — `after_build` copies plugins automatically
->>>>>>> 4ede7c7b5f58a47d3f6e373cba6a3ffb3b05b9f7
 
 ## Tech Stack
 

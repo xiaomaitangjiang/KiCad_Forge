@@ -1,0 +1,113 @@
+{
+  "app": {
+    "title": "KiCad Forge",
+    "noSymbols": "No symbols loaded",
+    "noSymbolsHint": "Click Settings in the sidebar to configure your symbol library path, then click Save & Import.",
+    "selectComponent": "Select a component",
+    "selectComponentHint": "to view details"
+  },
+  "sidebar": {
+    "library": "Library",
+    "allSymbols": "All Symbols",
+    "issues": "Issues",
+    "match": "Match",
+    "componentTypes": "Component Types",
+    "libraries": "Libraries",
+    "newLibrary": "+ New Library",
+    "tools": "Tools",
+    "rules": "Rules",
+    "plugins": "Plugins",
+    "componentTypesMenu": "Component Types",
+    "packageTypes": "Package Types",
+    "settings": "Settings",
+    "lightMode": "Light Mode",
+    "darkMode": "Dark Mode"
+  },
+  "toolbar": {
+    "autoClassify": "Auto Classify",
+    "check": "Check",
+    "autoMatch": "Auto Match",
+    "searchPlaceholder": "Search symbols...",
+    "symbolsFootprints": "{{symbols}} symbols · {{footprints}} footprints"
+  },
+  "inspector": {
+    "footprint": "Footprint",
+    "notAssigned": "Not assigned",
+    "3dModel": "3D Model",
+    "linked": "Linked",
+    "notLinked": "Not assigned",
+    "pinCount": "Pin Count",
+    "mpn": "MPN",
+    "value": "Value",
+    "quickActions": "Quick Actions",
+    "findFootprint": "Find Matching Footprint",
+    "deleteSymbol": "Delete Symbol",
+    "type": "Type"
+  },
+  "plugin": {
+    "cancel": "Cancel",
+    "execute": "Execute",
+    "noPlugins": "No plugins installed",
+    "pluginHint": "Place .kfplug files in the plugins directory",
+    "select": "-- Select --"
+  },
+  "settings": {
+    "title": "Settings",
+    "libraryPaths": "Library Paths",
+    "symbolPath": "Symbol Library Path",
+    "symbolPathHint": "Directory containing .kicad_sym files",
+    "footprintPath": "Footprint Library Path",
+    "footprintPathHint": "Directory containing .kicad_mod files",
+    "3dPath": "3D Model Path",
+    "3dPathHint": "Directory containing .step / .wrl files",
+    "saveImport": "Save & Import",
+    "utilities": "Utilities",
+    "resetDb": "Reset Database",
+    "resetDbHint": "Deletes all imported metadata. Original .kicad_sym files are NOT touched. Restart the app after reset.",
+    "resetDbButton": "Reset Database",
+    "reimportAll": "Reimport All",
+    "reimportHint": "Re-scan configured paths and reimport all symbols/footprints.",
+    "reimportButton": "Reimport",
+    "dbLocation": "Database Location"
+  },
+  "rules": {
+    "title": "Classification Rules",
+    "noRules": "No rules configured",
+    "editHint": "Edit config/classification_rules/*.toml to add custom rules"
+  },
+  "types": {
+    "add": "Add",
+    "componentTypes": "Component Types",
+    "packageTypes": "Package Types",
+    "newTypePlaceholder": "New type name...",
+    "saveHint": "Types are saved to config/*_types.json. Changes take effect immediately."
+  },
+  "confirm": {
+    "deleteSymbol": "Delete \"{{name}}\"?",
+    "deleteLibrary": "Delete library \"{{name}}\" and its local files?",
+    "resetDb": "Reset database? All metadata will be lost.\n.kicad_sym files on disk are safe.\nRestart the app after."
+  },
+  "status": {
+    "filtered": "{{count}} components{{filter}}",
+    "total": "{{count}} total"
+  },
+  "toast": {
+    "classifying": "Classifying...",
+    "classified": "Classified: {{matched}}/{{total}} matched",
+    "noIssues": "No issues found",
+    "issuesFound": "{{count}} issue(s) found",
+    "matchSuggestions": "{{count}} match suggestion(s)",
+    "saved": "Saved — imported {{symbols}} symbols, {{footprints}} footprints",
+    "deleted": "Deleted {{name}}{{extra}}",
+    "networkError": "Network error",
+    "added": "Added {{name}}",
+    "removed": "Removed {{name}}",
+    "fetching": "Fetching {{id}}...",
+    "imported": "Imported {{id}}: {{count}} in library",
+    "failed": "Failed: {{error}}",
+    "failedUnknown": "Failed: unknown",
+    "executing": "Executing...",
+    "done": "Done: {{count}} imported",
+    "required": "{{label}} is required"
+  }
+}

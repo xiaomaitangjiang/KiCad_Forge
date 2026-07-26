@@ -25,6 +25,7 @@ public:
 
     util::Result<core::LibraryMeta> insert(const core::LibraryMeta& lib);
     util::Result<std::vector<core::LibraryMeta>> find_all();
+    util::Result<void> remove(const core::Uuid& id);
     int count() const;
 
 private:
