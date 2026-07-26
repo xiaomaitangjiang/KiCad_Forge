@@ -91,11 +91,15 @@ bool ApiServer::start() {
 void ApiServer::init_plugins() {
     std::vector<std::filesystem::path> paths;
 
-    // Plugins live next to exe: exe_dir/plugins
-    auto plugin_dir = get_exe_dir() / "plugins";
-    if (std::filesystem::exists(plugin_dir)) {
-        paths.emplace_back(plugin_dir);
-    }
+    // 1. Bundled plugins (next to exe, after_build copies here)
+    auto bundled = get_exe_dir() / "plugins";
+    if (std::filesystem::exists(bundled)) paths.emplace_back(bundled);
+
+    // 2. User plugins (next to data dir: portable=exe_dir/plugins, installed=%APPDATA%/KiCad_Forge/plugins)
+    auto user_plugins = std::filesystem::path(get_data_dir()) / ".." / "plugins";
+    auto canonical = std::filesystem::weakly_canonical(user_plugins);
+    if (std::filesystem::exists(canonical) && canonical != std::filesystem::weakly_canonical(bundled))
+        paths.emplace_back(canonical);
 
     plugins_ = std::make_unique<plugin::PluginManager>(paths);
     plugins_->discover();
