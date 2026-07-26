@@ -282,6 +282,12 @@ void ApiServer::setup_routes() {
         r.set_content(j.dump(), "application/json");
     });
 
+    // Shutdown signal — frontend sends /api/bye on window close
+    srv_.Post("/api/bye", [this](const httplib::Request&, httplib::Response& r) {
+        shutting_down_.store(true, std::memory_order_relaxed);
+        r.set_content(R"({"ok":true})", "application/json");
+    });
+
     // ======== Symbols ========
     srv_.Get("/api/symbols", [this](const httplib::Request& req, httplib::Response& r) {
         storage::SymbolRepository repo(db_->handle());

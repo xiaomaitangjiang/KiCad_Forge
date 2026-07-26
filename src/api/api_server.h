@@ -23,8 +23,10 @@ public:
     void stop();
 
     // Heartbeat — frontend calls /api/status periodically.
-    // Returns milliseconds since last heartbeat. Used to decide when to shut down.
     int64_t ms_since_heartbeat() const;
+
+    // Shutdown signal — frontend sends /api/bye via sendBeacon on close.
+    bool should_stop() const { return shutting_down_.load(std::memory_order_relaxed); }
 
 private:
     void setup_routes();
@@ -39,6 +41,7 @@ private:
     std::unique_ptr<std::thread> thread_;
     std::unique_ptr<storage::Database> db_;
     std::unique_ptr<plugin::PluginManager> plugins_;
+    std::atomic<bool> shutting_down_{false};
     std::atomic<int64_t> last_heartbeat_{0};
 };
 
