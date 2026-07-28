@@ -416,6 +416,10 @@ util::Result<int> LibraryService::merge_into_library(
             insertion += write_property("Description", sym.description(), 0, -12.7, true);
         if (!sym.mpn().empty())
             insertion += write_property("MPN", sym.mpn(), 0, -17.78, true);
+        if (!sym.Kicad_Forge_ID().empty())
+            insertion += write_property("Kicad_Forge_ID", sym.Kicad_Forge_ID(), 0, -22.86, true);
+        if (!sym.Pre_Kicad_Forge_ID().empty())
+            insertion += write_property("Pre_Kicad_Forge_ID", sym.Pre_Kicad_Forge_ID(), 0, -25.4, true);
 
         // Graphical sub-symbol
         insertion += "\t\t(symbol " + atom_or_string(name + "_0_1") + "\n"

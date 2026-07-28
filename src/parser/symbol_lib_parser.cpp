@@ -119,6 +119,10 @@ void SymbolLibParser::parse_property(core::Symbol& sym,
             sym.set_mpn(value);
         } else if (key == "LCSC" || key == "LCSC Part") {
             sym.set_property("lcsc_id", value);
+        } else if (key == "Kicad_Forge_ID") {
+            sym.set_Kicad_Forge_ID(value);
+        } else if (key == "Pre_Kicad_Forge_ID") {
+            sym.set_Pre_Kicad_Forge_ID(value);
         } else if (key == "ki_keywords") {
             sym.set_property("keywords", value);
         } else {

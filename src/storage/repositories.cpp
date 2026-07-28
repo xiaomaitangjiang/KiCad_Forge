@@ -220,6 +220,7 @@ core::Symbol SymbolRepository::row_to_symbol(sqlite3_stmt* stmt) const {
     // 5:footprint_ref  6:datasheet  7:description  8:mpn
     // 9:reference_prefix  10:is_power  11:pin_count
     // 12:component_type  13:package_type  14:properties_json
+    // 15:Kicad_Forge_ID  16:Pre_Kicad_Forge_ID
     sym.set_id(col_text(stmt, 0));
     sym.set_library_id(col_text(stmt, 1));
     sym.set_name(col_text(stmt, 2));
@@ -255,6 +256,8 @@ core::Symbol SymbolRepository::row_to_symbol(sqlite3_stmt* stmt) const {
         props.erase(pins_json);
     }
     for (auto& [k, v] : props) sym.set_property(k, v);
+    sym.set_Kicad_Forge_ID(col_text(stmt, 15));
+    sym.set_Pre_Kicad_Forge_ID(col_text(stmt, 16));
     // Preserve pin_count from DB even if pins_ deserialization failed
     if (sym.pin_count() == 0 && db_pin_count > 0) {
         sym.set_property("_pin_count", std::to_string(db_pin_count));
@@ -267,7 +270,8 @@ void SymbolRepository::bind_symbol_params(sqlite3_stmt* stmt,
     // Params: id(1), library_id(2), name(3), lib_id(4), default_value(5),
     // footprint_ref(6), datasheet(7), description(8), mpn(9),
     // reference_prefix(10), is_power(11), pin_count(12),
-    // component_type(13), package_type(14), properties_json(15)
+    // component_type(13), package_type(14), properties_json(15),
+    // Kicad_Forge_ID(16), Pre_Kicad_Forge_ID(17)
     bind_text(stmt, 1,  sym.id());
     bind_text(stmt, 2,  sym.library_id());
     bind_text(stmt, 3,  sym.name());
@@ -298,6 +302,8 @@ void SymbolRepository::bind_symbol_params(sqlite3_stmt* stmt,
         props["_pins_json"] = pins_arr.dump();
     }
     bind_text(stmt, 15, properties_to_json(props));
+    bind_text(stmt, 16, sym.Kicad_Forge_ID());
+    bind_text(stmt, 17, sym.Pre_Kicad_Forge_ID());
 }
 
 util::Result<core::Symbol> SymbolRepository::insert(const core::Symbol& sym) {
@@ -307,12 +313,14 @@ util::Result<core::Symbol> SymbolRepository::insert(const core::Symbol& sym) {
     const char* sql =
         "INSERT OR IGNORE INTO symbols (id, library_id, name, lib_id, default_value, "
         "footprint_ref, datasheet, description, mpn, reference_prefix, "
-        "is_power, pin_count, component_type, package_type, properties_json) "
+        "is_power, pin_count, component_type, package_type, properties_json, "
+        "Kicad_Forge_ID, Pre_Kicad_Forge_ID) "
         "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, "
-        "?13, ?14, ?15)";
+        "?13, ?14, ?15, ?16, ?17)";
 
     core::Symbol s = sym;
     if (s.id().empty()) s.set_id(make_uuid());
+    if (s.Kicad_Forge_ID().empty()) s.set_Kicad_Forge_ID(core::Symbol::compute_hash(s));
 
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
@@ -336,7 +344,8 @@ util::Result<void> SymbolRepository::update(const core::Symbol& sym) {
         "UPDATE symbols SET name=?1, default_value=?2, footprint_ref=?3, "
         "datasheet=?4, description=?5, mpn=?6, reference_prefix=?7, "
         "is_power=?8, pin_count=?9, component_type=?10, package_type=?11, "
-        "properties_json=?12 WHERE id=?13";
+        "properties_json=?12, Kicad_Forge_ID=?13, Pre_Kicad_Forge_ID=?14 "
+        "WHERE id=?15";
 
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
@@ -357,7 +366,9 @@ util::Result<void> SymbolRepository::update(const core::Symbol& sym) {
     bind_text(stmt, 10, component_type_to_string(sym.component_type));
     bind_text(stmt, 11, package_type_to_string(sym.package_type));
     bind_text(stmt, 12, properties_to_json(sym.properties()));
-    bind_text(stmt, 13, sym.id());
+    bind_text(stmt, 13, sym.Kicad_Forge_ID());
+    bind_text(stmt, 14, sym.Pre_Kicad_Forge_ID());
+    bind_text(stmt, 15, sym.id());
 
     rc = sqlite3_step(stmt);
     if (rc != SQLITE_DONE) {
@@ -391,7 +402,7 @@ util::Result<core::Symbol> SymbolRepository::find_by_name(const std::string& nam
     const char* sql =
         "SELECT id, library_id, name, lib_id, default_value, footprint_ref, "
         "datasheet, description, mpn, reference_prefix, is_power, pin_count, "
-        "component_type, package_type, properties_json "
+        "component_type, package_type, properties_json, Kicad_Forge_ID, Pre_Kicad_Forge_ID "
         "FROM symbols WHERE name = ?1 LIMIT 1";
 
     ScopedStmt stmt;
@@ -418,7 +429,7 @@ util::Result<core::Symbol> SymbolRepository::find_by_id(const core::Uuid& id) {
     const char* sql =
         "SELECT id, library_id, name, lib_id, default_value, footprint_ref, "
         "datasheet, description, mpn, reference_prefix, is_power, pin_count, "
-        "component_type, package_type, properties_json "
+        "component_type, package_type, properties_json, Kicad_Forge_ID, Pre_Kicad_Forge_ID "
         "FROM symbols WHERE id = ?1";
 
     ScopedStmt stmt;
@@ -446,7 +457,7 @@ util::Result<std::vector<core::Symbol>> SymbolRepository::find_by_library(
     const char* sql =
         "SELECT id, library_id, name, lib_id, default_value, footprint_ref, "
         "datasheet, description, mpn, reference_prefix, is_power, pin_count, "
-        "component_type, package_type, properties_json "
+        "component_type, package_type, properties_json, Kicad_Forge_ID, Pre_Kicad_Forge_ID "
         "FROM symbols WHERE library_id = ?1 ORDER BY name";
 
     std::vector<core::Symbol> result;
@@ -474,7 +485,7 @@ util::Result<std::vector<core::Symbol>> SymbolRepository::find_all() {
     const char* sql =
         "SELECT id, library_id, name, lib_id, default_value, footprint_ref, "
         "datasheet, description, mpn, reference_prefix, is_power, pin_count, "
-        "component_type, package_type, properties_json "
+        "component_type, package_type, properties_json, Kicad_Forge_ID, Pre_Kicad_Forge_ID "
         "FROM symbols ORDER BY name";
 
     std::vector<core::Symbol> result;
@@ -501,7 +512,7 @@ util::Result<std::vector<core::Symbol>> SymbolRepository::search(
     const char* sql =
         "SELECT id, library_id, name, lib_id, default_value, footprint_ref, "
         "datasheet, description, mpn, reference_prefix, is_power, pin_count, "
-        "component_type, package_type, properties_json "
+        "component_type, package_type, properties_json, Kicad_Forge_ID, Pre_Kicad_Forge_ID "
         "FROM symbols "
         "WHERE name LIKE ?1 OR description LIKE ?2 OR mpn LIKE ?3 "
         "ORDER BY name";

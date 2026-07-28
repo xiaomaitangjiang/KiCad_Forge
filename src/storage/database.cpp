@@ -61,11 +61,13 @@ util::Result<void> Database::run_migrations() {
             reference_prefix TEXT DEFAULT 'U', is_power INTEGER DEFAULT 0,
             pin_count INTEGER DEFAULT 0, component_type TEXT DEFAULT 'Unknown',
             package_type TEXT DEFAULT 'Unknown', properties_json TEXT DEFAULT '{}',
+            Kicad_Forge_ID TEXT DEFAULT '', Pre_Kicad_Forge_ID TEXT DEFAULT '',
             created_at TEXT DEFAULT (datetime('now')),
             UNIQUE(library_id, name)
         );
         CREATE INDEX IF NOT EXISTS idx_symbols_library ON symbols(library_id);
         CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name);
+
 
         CREATE TABLE IF NOT EXISTS footprints (
             id TEXT PRIMARY KEY, name TEXT NOT NULL, library_path TEXT DEFAULT '',
@@ -153,6 +155,10 @@ util::Result<void> Database::run_migrations() {
         sqlite3_free(err);
         return std::unexpected(util::Error::db("Schema init: " + msg));
     }
+
+    // Migration: add Kicad_Forge_ID columns (ignore "duplicate column" error)
+    sqlite3_exec(db_, "ALTER TABLE symbols ADD COLUMN Kicad_Forge_ID TEXT DEFAULT ''", nullptr, nullptr, nullptr);
+    sqlite3_exec(db_, "ALTER TABLE symbols ADD COLUMN Pre_Kicad_Forge_ID TEXT DEFAULT ''", nullptr, nullptr, nullptr);
 
     // Insert default settings if missing
     sqlite3_exec(db_,

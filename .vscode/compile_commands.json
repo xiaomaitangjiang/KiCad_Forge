@@ -81,6 +81,11 @@
 },
 {
   "directory": "d:\\VScode\\KiCad_Forge",
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-g", "-O0", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\debug\\src\\core\\symbol.cpp.obj", "src\\core\\symbol.cpp"],
+  "file": "src\\core\\symbol.cpp"
+},
+{
+  "directory": "d:\\VScode\\KiCad_Forge",
   "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-g", "-O0", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\debug\\src\\core\\type_registry.cpp.obj", "src\\core\\type_registry.cpp"],
   "file": "src\\core\\type_registry.cpp"
 }]

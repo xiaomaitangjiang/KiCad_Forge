@@ -50,6 +50,19 @@ public:
     const std::string& mpn() const { return mpn_; }
     void set_mpn(std::string m) { mpn_ = std::move(m); }
 
+    // --- Kicad_Forge version tracking ---
+    const std::string& Kicad_Forge_ID() const { return kf_id_; }
+    void set_Kicad_Forge_ID(std::string id) { kf_id_ = std::move(id); }
+
+    const std::string& Pre_Kicad_Forge_ID() const { return pre_kf_id_; }
+    void set_Pre_Kicad_Forge_ID(std::string id) { pre_kf_id_ = std::move(id); }
+
+    /// Move current Kicad_Forge_ID to Pre_Kicad_Forge_ID, compute new from attributes.
+    void regenerate_Kicad_Forge_ID();
+
+    /// Compute a stable hash from symbol attributes (name, pins, footprint, value).
+    static std::string compute_hash(const Symbol& sym);
+
     // --- Pins ---
     const std::vector<PinDefinition>& pins() const { return pins_; }
     std::vector<PinDefinition>& pins() { return pins_; }
@@ -101,6 +114,8 @@ private:
     std::string mpn_;
     std::vector<PinDefinition> pins_;
     std::unordered_map<std::string, std::string> properties_;
+    std::string kf_id_;
+    std::string pre_kf_id_;
 };
 
 }  // namespace kforge::core

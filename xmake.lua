@@ -41,6 +41,7 @@ target("KiCad_Forge")
         end
     end)
     add_files("resources/app.rc")  -- Windows exe icon
+    add_files("src/core/symbol.cpp")
     add_files("src/core/type_registry.cpp")
 
     add_includedirs("src", "src/third_party", sys_inc)
