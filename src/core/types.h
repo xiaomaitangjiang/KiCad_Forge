@@ -101,6 +101,7 @@ struct LibraryMeta {
     std::string name;
     std::filesystem::path file_path;
     std::string description;
+    std::string component_library_id;
     int symbol_count{0};
     int footprint_count{0};
 };

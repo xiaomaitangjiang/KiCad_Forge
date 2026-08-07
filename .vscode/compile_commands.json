@@ -11,6 +11,11 @@
 },
 {
   "directory": "d:\\VScode\\KiCad_Forge",
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-g", "-O0", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\debug\\src\\api\\import_orchestrator.cpp.obj", "src\\api\\import_orchestrator.cpp"],
+  "file": "src\\api\\import_orchestrator.cpp"
+},
+{
+  "directory": "d:\\VScode\\KiCad_Forge",
   "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-g", "-O0", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\debug\\src\\services\\classification_service.cpp.obj", "src\\services\\classification_service.cpp"],
   "file": "src\\services\\classification_service.cpp"
 },
@@ -18,6 +23,11 @@
   "directory": "d:\\VScode\\KiCad_Forge",
   "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-g", "-O0", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\debug\\src\\services\\correspondence_service.cpp.obj", "src\\services\\correspondence_service.cpp"],
   "file": "src\\services\\correspondence_service.cpp"
+},
+{
+  "directory": "d:\\VScode\\KiCad_Forge",
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-g", "-O0", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\debug\\src\\services\\import_pipeline.cpp.obj", "src\\services\\import_pipeline.cpp"],
+  "file": "src\\services\\import_pipeline.cpp"
 },
 {
   "directory": "d:\\VScode\\KiCad_Forge",
@@ -33,6 +43,11 @@
   "directory": "d:\\VScode\\KiCad_Forge",
   "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-g", "-O0", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\debug\\src\\sexpr\\dom_writer.cpp.obj", "src\\sexpr\\dom_writer.cpp"],
   "file": "src\\sexpr\\dom_writer.cpp"
+},
+{
+  "directory": "d:\\VScode\\KiCad_Forge",
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-g", "-O0", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\debug\\src\\sexpr\\text_util.cpp.obj", "src\\sexpr\\text_util.cpp"],
+  "file": "src\\sexpr\\text_util.cpp"
 },
 {
   "directory": "d:\\VScode\\KiCad_Forge",
@@ -88,4 +103,84 @@
   "directory": "d:\\VScode\\KiCad_Forge",
   "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-g", "-O0", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\debug\\src\\core\\type_registry.cpp.obj", "src\\core\\type_registry.cpp"],
   "file": "src\\core\\type_registry.cpp"
+},
+{
+  "directory": "d:\\VScode\\KiCad_Forge",
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-g", "-O0", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-o", "build\\.objs\\bench_import\\mingw\\x86_64\\debug\\tests\\bench_import.cpp.obj", "tests\\bench_import.cpp"],
+  "file": "tests\\bench_import.cpp"
+},
+{
+  "directory": "d:\\VScode\\KiCad_Forge",
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-g", "-O0", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-o", "build\\.objs\\bench_import\\mingw\\x86_64\\debug\\src\\core\\symbol.cpp.obj", "src\\core\\symbol.cpp"],
+  "file": "src\\core\\symbol.cpp"
+},
+{
+  "directory": "d:\\VScode\\KiCad_Forge",
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-g", "-O0", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-o", "build\\.objs\\bench_import\\mingw\\x86_64\\debug\\src\\core\\type_registry.cpp.obj", "src\\core\\type_registry.cpp"],
+  "file": "src\\core\\type_registry.cpp"
+},
+{
+  "directory": "d:\\VScode\\KiCad_Forge",
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-g", "-O0", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-o", "build\\.objs\\bench_import\\mingw\\x86_64\\debug\\src\\sexpr\\dom_builder.cpp.obj", "src\\sexpr\\dom_builder.cpp"],
+  "file": "src\\sexpr\\dom_builder.cpp"
+},
+{
+  "directory": "d:\\VScode\\KiCad_Forge",
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-g", "-O0", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-o", "build\\.objs\\bench_import\\mingw\\x86_64\\debug\\src\\sexpr\\dom_writer.cpp.obj", "src\\sexpr\\dom_writer.cpp"],
+  "file": "src\\sexpr\\dom_writer.cpp"
+},
+{
+  "directory": "d:\\VScode\\KiCad_Forge",
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-g", "-O0", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-o", "build\\.objs\\bench_import\\mingw\\x86_64\\debug\\src\\sexpr\\text_util.cpp.obj", "src\\sexpr\\text_util.cpp"],
+  "file": "src\\sexpr\\text_util.cpp"
+},
+{
+  "directory": "d:\\VScode\\KiCad_Forge",
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-g", "-O0", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-o", "build\\.objs\\bench_import\\mingw\\x86_64\\debug\\src\\sexpr\\tokenizer.cpp.obj", "src\\sexpr\\tokenizer.cpp"],
+  "file": "src\\sexpr\\tokenizer.cpp"
+},
+{
+  "directory": "d:\\VScode\\KiCad_Forge",
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-g", "-O0", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-o", "build\\.objs\\bench_import\\mingw\\x86_64\\debug\\src\\parser\\footprint_parser.cpp.obj", "src\\parser\\footprint_parser.cpp"],
+  "file": "src\\parser\\footprint_parser.cpp"
+},
+{
+  "directory": "d:\\VScode\\KiCad_Forge",
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-g", "-O0", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-o", "build\\.objs\\bench_import\\mingw\\x86_64\\debug\\src\\parser\\symbol_lib_parser.cpp.obj", "src\\parser\\symbol_lib_parser.cpp"],
+  "file": "src\\parser\\symbol_lib_parser.cpp"
+},
+{
+  "directory": "d:\\VScode\\KiCad_Forge",
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-g", "-O0", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-o", "build\\.objs\\bench_import\\mingw\\x86_64\\debug\\src\\storage\\database.cpp.obj", "src\\storage\\database.cpp"],
+  "file": "src\\storage\\database.cpp"
+},
+{
+  "directory": "d:\\VScode\\KiCad_Forge",
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-g", "-O0", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-o", "build\\.objs\\bench_import\\mingw\\x86_64\\debug\\src\\storage\\repositories.cpp.obj", "src\\storage\\repositories.cpp"],
+  "file": "src\\storage\\repositories.cpp"
+},
+{
+  "directory": "d:\\VScode\\KiCad_Forge",
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-g", "-O0", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-o", "build\\.objs\\bench_import\\mingw\\x86_64\\debug\\src\\services\\library_service.cpp.obj", "src\\services\\library_service.cpp"],
+  "file": "src\\services\\library_service.cpp"
+},
+{
+  "directory": "d:\\VScode\\KiCad_Forge",
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-g", "-O0", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-o", "build\\.objs\\bench_import\\mingw\\x86_64\\debug\\src\\services\\import_pipeline.cpp.obj", "src\\services\\import_pipeline.cpp"],
+  "file": "src\\services\\import_pipeline.cpp"
+},
+{
+  "directory": "d:\\VScode\\KiCad_Forge",
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-g", "-O0", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-o", "build\\.objs\\bench_import\\mingw\\x86_64\\debug\\src\\classifier\\rule_engine.cpp.obj", "src\\classifier\\rule_engine.cpp"],
+  "file": "src\\classifier\\rule_engine.cpp"
+},
+{
+  "directory": "d:\\VScode\\KiCad_Forge",
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-g", "-O0", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-o", "build\\.objs\\bench_import\\mingw\\x86_64\\debug\\src\\classifier\\rule_loader.cpp.obj", "src\\classifier\\rule_loader.cpp"],
+  "file": "src\\classifier\\rule_loader.cpp"
+},
+{
+  "directory": "d:\\VScode\\KiCad_Forge",
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-g", "-O0", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-o", "build\\.objs\\bench_import\\mingw\\x86_64\\debug\\src\\correspondence\\checker.cpp.obj", "src\\correspondence\\checker.cpp"],
+  "file": "src\\correspondence\\checker.cpp"
 }]

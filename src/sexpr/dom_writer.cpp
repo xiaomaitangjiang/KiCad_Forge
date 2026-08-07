@@ -25,31 +25,34 @@ std::string DomWriter::escape_string(std::string_view s) {
     return out;
 }
 
+static bool is_atom_value(std::string_view value) {
+    return std::all_of(value.begin(), value.end(), [](char c) {
+        return std::isalnum(static_cast<unsigned char>(c)) ||
+               c == '_' || c == '-' || c == '.' || c == '/' || c == ':';
+    });
+}
+
 void DomWriter::write_node(std::string& out, const DomNode& node,
                            int depth, int indent) {
     if (depth > 0) {
         out += indent_str(depth, indent);
     }
 
-    out += '(' + node.type();
+    out += '(';
+    out += node.type();
 
     // Properties: write as (key value) on the same line or next
     bool first = true;
     for (const auto& [key, value] : node.properties()) {
         if (!first) {
-            // Multi-property nodes: each property on its own line
             out += '\n';
             out += indent_str(depth + 1, indent);
         }
-        out += ' ' + key;
+        out += ' ';
+        out += key;
         if (!value.empty()) {
             out += ' ';
-            // Heuristic: if value looks like a KiCAD identifier, write as atom
-            bool is_atom = std::all_of(value.begin(), value.end(), [](char c) {
-                return std::isalnum(static_cast<unsigned char>(c)) ||
-                       c == '_' || c == '-' || c == '.' || c == '/' || c == ':';
-            });
-            if (is_atom) {
+            if (is_atom_value(value)) {
                 out += value;
             } else {
                 out += escape_string(value);
@@ -69,8 +72,6 @@ void DomWriter::write_node(std::string& out, const DomNode& node,
         }
         out += '\n';
         out += indent_str(depth, indent);
-    } else if (!node.properties().empty()) {
-        // Single property — keep it tight
     }
 
     out += ')';
@@ -78,11 +79,10 @@ void DomWriter::write_node(std::string& out, const DomNode& node,
 
 std::string DomWriter::write(const DomNode& root, int indent) {
     std::string out;
-    // If root is a container (type == "__root__"), just write children
     if (root.type() == "__root__") {
         bool first = true;
         for (const auto& child : root.children()) {
-            if (!first) out += "\n\n";
+            if (!first) { out += "\n\n"; }
             write_node(out, *child, 0, indent);
             first = false;
         }
@@ -94,17 +94,18 @@ std::string DomWriter::write(const DomNode& root, int indent) {
 }
 
 std::string DomWriter::write_compact(const DomNode& root) {
-    // For compact mode, just call write_node without indentation
     std::string out;
-    write_node(out, root, 0, 0);
+    write_node_compact(out, root);
     return out;
 }
 
 void DomWriter::write_node_compact(std::string& out, const DomNode& node) {
-    out += '(' + node.type();
+    out += '(';
+    out += node.type();
     for (const auto& [key, value] : node.properties()) {
-        out += ' ' + key;
-        if (!value.empty()) out += ' ' + value;
+        out += ' ';
+        out += key;
+        if (!value.empty()) { out += ' '; out += value; }
     }
     for (const auto& child : node.children()) {
         out += ' ';

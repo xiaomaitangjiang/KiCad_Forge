@@ -27,6 +27,7 @@ struct PluginAction {
     std::string trigger;         // "dialog" | "inline" | "panel"
     bool button_show{true};      // show button in toolbar
     std::string button_style;    // "icon" | "text" | "both" (default "both")
+    std::string button_location; // "toolbar" | "sidebar" (default "toolbar")
     std::string button_tooltip;  // tooltip for icon-only buttons
     nlohmann::json schema;       // form fields for trigger=dialog
 };

@@ -1,6 +1,7 @@
 set_toolchains("clang")
 add_rules("mode.debug", "mode.release")
-set_defaultmode("release")
+local mode="DEBUG"
+set_defaultmode(mode)
 set_languages("cxx23")
 
 local msys2 = os.getenv("MSYS2_DIR") or "D:/msys64/mingw64"
@@ -49,7 +50,7 @@ target("KiCad_Forge")
     add_defines("_WIN32_WINNT=0x0A00")
 
     add_syslinks("pthread", "ws2_32", "ole32", "oleaut32", "uuid")
-    add_links(sys_lib .. "/libsqlite3.a")
+    add_links(sys_lib .. "/libsqlite3.a", sys_lib .. "/libfmt.dll.a")
 
     if is_mode("release") then
         add_ldflags("-mwindows")  -- no console window in release
@@ -70,5 +71,24 @@ target("KiCad_Forge")
         os.cp(path.join(msys2, "bin", "libstdc++-6.dll"), path.join(root, "libstdc++-6.dll"))
         os.cp(path.join(msys2, "bin", "libgcc_s_seh-1.dll"), path.join(root, "libgcc_s_seh-1.dll"))
         os.cp(path.join(msys2, "bin", "libwinpthread-1.dll"), path.join(root, "libwinpthread-1.dll"))
+        os.cp(path.join(msys2, "bin", "libfmt-12.dll"), path.join(root, "libfmt-12.dll"))
     end)
     add_runenvs("PATH", msys2 .. "/bin")
+
+target("bench_import")
+    set_kind("binary")
+    add_files("tests/bench_import.cpp")
+    add_files("src/core/symbol.cpp")
+    add_files("src/core/type_registry.cpp")
+    add_files("src/sexpr/**.cpp")
+    add_files("src/parser/**.cpp")
+    add_files("src/storage/**.cpp")
+    add_files("src/services/library_service.cpp")
+    add_files("src/services/import_pipeline.cpp")
+    add_files("src/classifier/**.cpp")
+    add_files("src/correspondence/**.cpp")
+    add_includedirs("src", "src/third_party", sys_inc)
+    add_linkdirs(sys_lib)
+    add_defines("_WIN32_WINNT=0x0A00")
+    add_syslinks("pthread", "ws2_32", "ole32", "oleaut32", "uuid")
+    add_links(sys_lib .. "/libsqlite3.a", sys_lib .. "/libfmt.dll.a")

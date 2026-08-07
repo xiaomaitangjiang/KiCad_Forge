@@ -1,4 +1,5 @@
 #include "plugin/plugin_manager.h"
+#include "util/logger.h"
 
 #include <fstream>
 #include <cstdio>
@@ -30,9 +31,8 @@ void PluginManager::discover() {
             auto m = PluginManifest::from_file(manifest_path.string());
             if (m && !m->id.empty() && !m->name.empty()) {
                 auto id = m->id;
-                printf("[plugin] Discovered: %s v%s (%s) at %s\n",
-                       m->name.c_str(), m->version.c_str(), id.c_str(),
-                       entry.path().string().c_str());
+                LOG_INFO("[plugin] Discovered: {} v{} ({}) at {}",
+                         m->name, m->version, id, entry.path().string());
                 available_[id] = std::move(*m);
                 plugin_dirs_[id] = entry.path();
             }
@@ -97,7 +97,7 @@ util::Result<void> PluginManager::load(const std::string& plugin_id, IPluginCont
     lp.initialized = true;
     loaded_[plugin_id] = std::move(lp);
 
-    printf("[plugin] Loaded: %s\n", plugin_id.c_str());
+    LOG_INFO("[plugin] Loaded: {}", plugin_id);
     return {};
 }
 
@@ -171,7 +171,7 @@ util::Result<std::string> PluginManager::execute(
     std::string cmd = "python \"" + script_path.string() + "\" " + action + " '" + json_args + "'";
 #endif
 
-    printf("[plugin] Execute: %s\n", cmd.c_str());
+    LOG_DEBUG("[plugin] Execute: {}", cmd);
 
 #ifdef _WIN32
     // CreateProcess + CREATE_NO_WINDOW: no console popup
@@ -249,6 +249,7 @@ util::Result<PluginManifest> PluginManifest::from_json(const nlohmann::json& doc
                 const auto& btn = a["button"];
                 act.button_show = btn.value("show", true);
                 act.button_style = btn.value("style", "both");
+                act.button_location = btn.value("location", "toolbar");
                 act.button_tooltip = btn.value("tooltip", "");
             }
             if (a.contains("schema")) act.schema = a["schema"];

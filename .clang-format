@@ -1,0 +1,84 @@
+# Based on Microsoft style, with lower visual density:
+# - Allman braces (if/for/while open on next line)
+# - More whitespace around operators and after comments
+# - Prefer vertical layout over horizontal density
+
+BasedOnStyle: Microsoft
+
+# ---- Braces: Allman style (open on next line) ----
+BreakBeforeBraces: Allman
+
+# ---- Line width ----
+ColumnLimit: 100
+PenaltyExcessCharacter: 10
+
+# ---- Indentation ----
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+IndentCaseLabels: true
+IndentGotoLabels: false
+
+# ---- Spacing: increase visual breathing room ----
+SpaceAfterCStyleCast: true
+SpaceAfterLogicalNot: false
+SpaceBeforeAssignmentOperators: true
+SpacesBeforeTrailingComments: 2
+SpacesInAngles: Never
+SpacesInContainerLiterals: false
+SpacesInParentheses: false
+SpaceBeforeParens: ControlStatementsExceptControlMacros
+
+# ---- Function declarations ----
+AllowShortFunctionsOnASingleLine: None
+AllowShortLambdasOnASingleLine: Empty
+AlwaysBreakAfterReturnType: None
+PenaltyReturnTypeOnItsOwnLine: 200
+
+# ---- Control flow ----
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortCaseLabelsOnASingleLine: false
+
+# ---- Empty lines for visual separation ----
+KeepEmptyLinesAtTheStartOfBlocks: true
+MaxEmptyLinesToKeep: 2
+
+# ---- Comments ----
+AlignTrailingComments:
+  Kind: Always
+  OverEmptyLines: 1
+CommentPragmas: '^ IWYU pragma:'
+ReflowComments: false
+
+# ---- Includes ----
+SortIncludes: CaseSensitive
+IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex: '^".*"'
+    Priority: 1
+  - Regex: '^<.*>'
+    Priority: 2
+
+# ---- Alignment ----
+AlignConsecutiveAssignments: None
+AlignConsecutiveDeclarations: false
+AlignOperands: AlignAfterOperator
+AlignAfterOpenBracket: Align
+PointerAlignment: Left
+ReferenceAlignment: Left
+
+# ---- Macros ----
+AlignConsecutiveMacros: None
+
+# ---- Misc ----
+AccessModifierOffset: -4
+AllowShortBlocksOnASingleLine: Never
+AllowShortEnumsOnASingleLine: false
+BreakBeforeTernaryOperators: true
+FixNamespaceComments: true
+NamespaceIndentation: None
+CompactNamespaces: false
+
+# ---- For headers ----
+SortUsingDeclarations: true

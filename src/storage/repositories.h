@@ -134,6 +134,35 @@ private:
 };
 
 // ============================================================
+// 元件库仓库 — 符号+封装+3D 路径的组合
+// ============================================================
+class ComponentLibraryRepository {
+public:
+    explicit ComponentLibraryRepository(sqlite3* db);
+
+    struct ComponentLibrary {
+        std::string id;
+        std::string name;
+        std::string symbol_path;
+        std::string footprint_path;
+        std::string model_3d_path;
+        bool enabled{true};
+        int sort_order{0};
+    };
+
+    util::Result<ComponentLibrary> insert(const ComponentLibrary& lib);
+    util::Result<void> update(const ComponentLibrary& lib);
+    util::Result<void> remove(const std::string& id);
+    util::Result<std::vector<ComponentLibrary>> find_all();
+    util::Result<std::vector<ComponentLibrary>> find_enabled();
+    int count() const;
+
+private:
+    ComponentLibrary row_to_library(sqlite3_stmt* stmt) const;
+    sqlite3* db_;
+};
+
+// ============================================================
 // SettingsRepository — key-value settings
 // ============================================================
 class SettingsRepository {

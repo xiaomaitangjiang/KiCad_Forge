@@ -163,28 +163,30 @@ util::Result<core::LibraryMeta> LibraryRepository::insert(const core::LibraryMet
     if (all) for (auto& existing : *all) {
         if (existing.name == lib.name) return existing;
     }
-    const char* sql = "INSERT OR IGNORE INTO libraries(id,name,file_path,description) VALUES(?1,?2,?3,?4)";
+    const char* sql = "INSERT OR IGNORE INTO libraries(id,name,file_path,component_library_id,description) VALUES(?1,?2,?3,?4,?5)";
     core::LibraryMeta l = lib;
     if (l.id.empty()) l.id = make_uuid();
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
     if (rc != SQLITE_OK) return std::unexpected(util::Error::db(sqlite3_errmsg(db_)));
     bind_text(stmt, 1, l.id); bind_text(stmt, 2, l.name);
-    bind_text(stmt, 3, l.file_path.string()); bind_text(stmt, 4, l.description);
+    bind_text(stmt, 3, l.file_path.string()); bind_text(stmt, 4, l.component_library_id);
+    bind_text(stmt, 5, l.description);
     rc = sqlite3_step(stmt);
     if (rc != SQLITE_DONE) return std::unexpected(util::Error::db(sqlite3_errmsg(db_)));
     return l;
 }
 
 util::Result<std::vector<core::LibraryMeta>> LibraryRepository::find_all() {
-    const char* sql = "SELECT id,name,file_path,description FROM libraries ORDER BY name";
+    const char* sql = "SELECT id,name,file_path,component_library_id,description FROM libraries ORDER BY name";
     std::vector<core::LibraryMeta> result;
     ScopedStmt stmt;
     if (sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr) != SQLITE_OK) return result;
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         core::LibraryMeta m;
         m.id = col_text(stmt, 0); m.name = col_text(stmt, 1);
-        m.file_path = col_text(stmt, 2); m.description = col_text(stmt, 3);
+        m.file_path = col_text(stmt, 2); m.component_library_id = col_text(stmt, 3);
+        m.description = col_text(stmt, 4);
         result.push_back(m);
     }
     return result;
@@ -1280,6 +1282,164 @@ RelationshipRepository::find_orphan_models() {
             "Find orphan models step: " + std::string(sqlite3_errmsg(db_))));
     }
     return result;
+}
+
+// ============================================================
+// ComponentLibraryRepository
+// ============================================================
+
+ComponentLibraryRepository::ComponentLibraryRepository(sqlite3* db) : db_(db) {}
+
+ComponentLibraryRepository::ComponentLibrary
+ComponentLibraryRepository::row_to_library(sqlite3_stmt* stmt) const {
+    ComponentLibrary lib;
+    lib.id = col_text(stmt, 0);
+    lib.name = col_text(stmt, 1);
+    lib.symbol_path = col_text(stmt, 2);
+    lib.footprint_path = col_text(stmt, 3);
+    lib.model_3d_path = col_text(stmt, 4);
+    lib.enabled = col_int(stmt, 5) != 0;
+    lib.sort_order = col_int(stmt, 6);
+    return lib;
+}
+
+util::Result<ComponentLibraryRepository::ComponentLibrary>
+ComponentLibraryRepository::insert(const ComponentLibrary& lib) {
+    const char* sql =
+        "INSERT INTO component_libraries (id, name, symbol_path, footprint_path, "
+        "model_3d_path, enabled, sort_order) "
+        "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";
+
+    ComponentLibrary l = lib;
+    if (l.id.empty()) l.id = make_uuid();
+
+    ScopedStmt stmt;
+    int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
+    if (rc != SQLITE_OK) {
+        return std::unexpected(util::Error::db(
+            "Insert component library prepare: " + std::string(sqlite3_errmsg(db_))));
+    }
+
+    bind_text(stmt, 1, l.id);
+    bind_text(stmt, 2, l.name);
+    bind_text(stmt, 3, l.symbol_path);
+    bind_text(stmt, 4, l.footprint_path);
+    bind_text(stmt, 5, l.model_3d_path);
+    sqlite3_bind_int(stmt, 6, l.enabled ? 1 : 0);
+    sqlite3_bind_int(stmt, 7, l.sort_order);
+
+    rc = sqlite3_step(stmt);
+    if (rc != SQLITE_DONE) {
+        return std::unexpected(util::Error::db(
+            "Insert component library step: " + std::string(sqlite3_errmsg(db_))));
+    }
+    return l;
+}
+
+util::Result<void> ComponentLibraryRepository::update(const ComponentLibrary& lib) {
+    const char* sql =
+        "UPDATE component_libraries SET name=?1, symbol_path=?2, footprint_path=?3, "
+        "model_3d_path=?4, enabled=?5, sort_order=?6 WHERE id=?7";
+
+    ScopedStmt stmt;
+    int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
+    if (rc != SQLITE_OK) {
+        return std::unexpected(util::Error::db(
+            "Update component library prepare: " + std::string(sqlite3_errmsg(db_))));
+    }
+
+    bind_text(stmt, 1, lib.name);
+    bind_text(stmt, 2, lib.symbol_path);
+    bind_text(stmt, 3, lib.footprint_path);
+    bind_text(stmt, 4, lib.model_3d_path);
+    sqlite3_bind_int(stmt, 5, lib.enabled ? 1 : 0);
+    sqlite3_bind_int(stmt, 6, lib.sort_order);
+    bind_text(stmt, 7, lib.id);
+
+    rc = sqlite3_step(stmt);
+    if (rc != SQLITE_DONE) {
+        return std::unexpected(util::Error::db(
+            "Update component library step: " + std::string(sqlite3_errmsg(db_))));
+    }
+    return {};
+}
+
+util::Result<void> ComponentLibraryRepository::remove(const std::string& id) {
+    const char* sql = "DELETE FROM component_libraries WHERE id = ?1";
+
+    ScopedStmt stmt;
+    int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
+    if (rc != SQLITE_OK) {
+        return std::unexpected(util::Error::db(
+            "Delete component library prepare: " + std::string(sqlite3_errmsg(db_))));
+    }
+
+    bind_text(stmt, 1, id);
+    rc = sqlite3_step(stmt);
+    if (rc != SQLITE_DONE) {
+        return std::unexpected(util::Error::db(
+            "Delete component library step: " + std::string(sqlite3_errmsg(db_))));
+    }
+    return {};
+}
+
+util::Result<std::vector<ComponentLibraryRepository::ComponentLibrary>>
+ComponentLibraryRepository::find_all() {
+    const char* sql =
+        "SELECT id, name, symbol_path, footprint_path, model_3d_path, "
+        "enabled, sort_order FROM component_libraries ORDER BY sort_order, name";
+
+    std::vector<ComponentLibrary> result;
+    ScopedStmt stmt;
+    int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
+    if (rc != SQLITE_OK) {
+        return std::unexpected(util::Error::db(
+            "Find all component libraries prepare: " + std::string(sqlite3_errmsg(db_))));
+    }
+
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        result.push_back(row_to_library(stmt));
+    }
+    if (rc != SQLITE_DONE) {
+        return std::unexpected(util::Error::db(
+            "Find all component libraries step: " + std::string(sqlite3_errmsg(db_))));
+    }
+    return result;
+}
+
+util::Result<std::vector<ComponentLibraryRepository::ComponentLibrary>>
+ComponentLibraryRepository::find_enabled() {
+    const char* sql =
+        "SELECT id, name, symbol_path, footprint_path, model_3d_path, "
+        "enabled, sort_order FROM component_libraries "
+        "WHERE enabled = 1 ORDER BY sort_order, name";
+
+    std::vector<ComponentLibrary> result;
+    ScopedStmt stmt;
+    int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
+    if (rc != SQLITE_OK) {
+        return std::unexpected(util::Error::db(
+            "Find enabled component libraries prepare: " + std::string(sqlite3_errmsg(db_))));
+    }
+
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        result.push_back(row_to_library(stmt));
+    }
+    if (rc != SQLITE_DONE) {
+        return std::unexpected(util::Error::db(
+            "Find enabled component libraries step: " + std::string(sqlite3_errmsg(db_))));
+    }
+    return result;
+}
+
+int ComponentLibraryRepository::count() const {
+    ScopedStmt stmt;
+    int rc = sqlite3_prepare_v2(db_,
+        "SELECT COUNT(*) FROM component_libraries", -1, stmt.ref(), nullptr);
+    if (rc != SQLITE_OK) return 0;
+    rc = sqlite3_step(stmt);
+    if (rc == SQLITE_ROW) return sqlite3_column_int(stmt, 0);
+    return 0;
 }
 
 // ============================================================

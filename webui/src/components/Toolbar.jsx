@@ -3,7 +3,7 @@ import { api } from '../api'
 
 const DEFAULT_ICON = <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
 
-export default function Toolbar({ plugins, loadLibraries, setPluginAction, setPluginFormData, classify, checkCorrespondence, autoMatch, status, search, setSearch, loadSymbols }) {
+export default function Toolbar({ plugins, loadLibraries, setPluginAction, setPluginFormData, classify, checkCorrespondence, autoMatch, targetLib, status, search, setSearch, loadSymbols }) {
   const { t } = useTranslation()
 
   return (
@@ -22,9 +22,9 @@ export default function Toolbar({ plugins, loadLibraries, setPluginAction, setPl
       </button>
       <span className="sep" />
 
-      {/* Dynamic plugin buttons */}
+      {/* Plugin buttons — only location="toolbar" */}
       {plugins.filter(p => p.actions?.length > 0).map(p =>
-        p.actions.filter(a => a.button?.show !== false).map(action => {
+        p.actions.filter(a => a.button?.show !== false && (a.button?.location || 'toolbar') === 'toolbar').map(action => {
           const btn = action.button || {}
           const style = btn.style || 'both'
           const iconSrc = action.icon_url || p.icon_url
@@ -35,7 +35,14 @@ export default function Toolbar({ plugins, loadLibraries, setPluginAction, setPl
             <button key={`${p.id}/${action.id}`}
               className={style === 'icon' ? 'btn-icon' : 'btn-primary'}
               title={btn.tooltip || action.description}
-              onClick={() => { loadLibraries(); setPluginAction({ plugin:p, action }); setPluginFormData({}) }}>
+              onClick={() => {
+                loadLibraries()
+                // Pre-fill target_library for inline actions
+                const prefill = action.trigger === 'inline'
+                  ? { target_library: targetLib || '' } : {}
+                setPluginAction({ plugin:p, action })
+                setPluginFormData(prefill)
+              }}>
               {(style === 'icon' || style === 'both') && iconEl}
               {style !== 'icon' && <span>{action.name}</span>}
             </button>

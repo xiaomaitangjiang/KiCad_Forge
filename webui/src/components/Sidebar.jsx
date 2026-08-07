@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 const TYPE_ICONS = {
@@ -11,13 +12,14 @@ const TYPE_ICONS = {
 export default function Sidebar({
   filter, setFilter, clearFilters, setSelected, setTargetLib, loadSymbols,
   status, issues, checkCorrespondence, matches, autoMatch, issueFilter,
-  typeList, targetLib, setTargetLibRaw, libraries, createLibrary,
+  typeList, targetLib, setTargetLibRaw, libraries,
   loadRules, setShowRules, loadPlugins, setShowPlugins,
   loadCompTypes, setShowCompTypes, loadPkgTypes, setShowPkgTypes,
   loadSettings, setShowSettings, dark, toggleDark, api,
-  loadLibraries, toastMsg,
+  loadLibraries, toastMsg, showConfirm,
 }) {
   const { t, i18n } = useTranslation()
+  const [expanded, setExpanded] = useState({})
 
   return (
     <nav className="sidebar">
@@ -43,35 +45,56 @@ export default function Sidebar({
       </div>
 
       <div className="section">
-        <div className="section-title">{t('sidebar.componentTypes')}</div>
-        {typeList.map(([t, n]) => (
+        <div className="section-title" onClick={() => setExpanded({...expanded, types: !expanded.types})}
+          style={{cursor:'pointer',userSelect:'none'}}>
+          {expanded.types ? '▾' : '▸'} {t('sidebar.componentTypes')}
+        </div>
+        {(expanded.types === true) && typeList.map(([t, n]) => (
           <div key={t} className={`nav-item ${filter === t ? 'active' : ''}`} onClick={() => { setFilter(t); setSelected(null) }}>
             <span className="type-dot">{TYPE_ICONS[t] || '○'}</span> {t} <span className="badge">{n}</span>
           </div>
         ))}
       </div>
 
-      <div className="section">
+      {/* Libraries — fills remaining sidebar space, scrolls internally */}
+      <div className="section" style={{ display:'flex', flexDirection:'column', flex:1, minHeight:0 }}>
         <div className="section-title">{t('sidebar.libraries')}</div>
-        <select value={targetLib} onChange={e => setTargetLibRaw(e.target.value)}
-          style={{ margin: '4px 10px', padding: '4px 6px', borderRadius: 6, border: '1px solid var(--sep)', background: 'var(--bg)', color: 'var(--text)', fontSize: 11, width: 'calc(100% - 20px)' }}>
-          {libraries.map(l => <option key={l.id} value={l.id}>{l.name} ({l.file_path||'local'})</option>)}
-        </select>
-        <div className="nav-item" onClick={createLibrary}>{t('sidebar.newLibrary')}</div>
-        {libraries.map(l => (
-          <div key={l.id} className={`nav-item ${targetLib === l.id ? 'active' : ''}`} style={{ display:'flex', justifyContent:'space-between' }}
-            onClick={() => { setFilter(''); setTargetLib(l.id); loadSymbols(null, l.id) }}>
-            <span><span className="dot dot-ok" /> {l.name}</span>
-            <span style={{ cursor:'pointer', color:'var(--red)', fontSize:14, padding:'0 4px' }}
-              onClick={e => { e.stopPropagation();
-                if (!confirm(t('confirm.deleteLibrary', { name: l.name }))) return;
-                api.deleteLibrary(l.id).then(x => {
-                  if (x?.ok) { toastMsg(t('toast.deleted', { name: l.name, extra: x.deleted_file ? ' + file' : '' })); loadLibraries(); loadSymbols(); setTargetLib('') }
-                  else toastMsg(x?.error || t('toast.failedUnknown'))
-                })
-              }}>×</span>
+        <div style={{ flex:1, overflowY:'auto', minHeight:0 }}>
+        {(() => {
+          const groups = {}
+          libraries.forEach(l => {
+            const g = l.group || ''
+            if (g) { if (!groups[g]) groups[g] = []; groups[g].push(l) }
+          })
+          return <div>
+            {Object.entries(groups).map(([gname, libs]) => {
+              const open = expanded[gname] || false
+              return (
+              <div key={gname}>
+                <div onClick={() => setExpanded({...expanded, [gname]: !open})}
+                  style={{fontSize:10,fontWeight:600,color:'var(--text3)',padding:'4px 10px 2px',marginTop:4,cursor:'pointer',userSelect:'none'}}>
+                  {open ? '▾' : '▸'} {gname} ({libs.length})
+                </div>
+                {open && libs.map(l => (
+                  <div key={l.id} className={`nav-item ${targetLib === l.id ? 'active' : ''}`}
+                    style={{ display:'flex', justifyContent:'space-between', padding:'3px 8px 3px 16px', fontSize:11 }}
+                    onClick={() => { setFilter(''); setTargetLib(l.id); loadSymbols(null, l.id) }}>
+                    <span style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}><span className="dot dot-ok" /> {l.name}</span>
+                    <span style={{ cursor:'pointer', color:'var(--red)', fontSize:12, padding:'0 2px' }}
+                      onClick={async e => { e.stopPropagation();
+                        if (!(await showConfirm(t('confirm.deleteLibrary', { name: l.name })))) return;
+                        api.deleteLibrary(l.id).then(x => {
+                          if (x?.ok) { toastMsg(t('toast.deleted', { name: l.name, extra: x.deleted_file ? ' + file' : '' })); loadLibraries(); loadSymbols(); setTargetLib('') }
+                          else toastMsg(x?.error || t('toast.failedUnknown'))
+                        })
+                      }}>×</span>
+                  </div>
+                ))}
+              </div>
+            )})}
           </div>
-        ))}
+        })()}
+        </div>
       </div>
 
       <div className="section">

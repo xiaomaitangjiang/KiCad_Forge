@@ -20,6 +20,7 @@
       "button": {
         "show": true,
         "style": "both",
+        "location": "toolbar",
         "tooltip": "Download from LCSC"
       },
       "schema": {

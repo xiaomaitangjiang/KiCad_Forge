@@ -37,7 +37,8 @@ util::Result<core::Library<core::Symbol>> SymbolLibParser::parse_buffer(
     // Verify it's a symbol library
     if (root->type() != "kicad_symbol_lib") {
         return std::unexpected(util::Error::parse(
-            "expected (kicad_symbol_lib ...), got (" + root->type() + ")"));
+            std::string("expected (kicad_symbol_lib ...), got (") +
+                std::string(root->type()) + ")"));
     }
 
     core::Library<core::Symbol> lib;
@@ -62,7 +63,7 @@ util::Result<core::Symbol> SymbolLibParser::parse_symbol(
 
     // Symbol name is stored as the node's atom value
     if (node.is_atom()) {
-        sym.set_name(node.atom_value());
+        sym.set_name(std::string(node.atom_value()));
     }
 
     // Parse children: (property ...) and (pin ...) nodes.
@@ -98,12 +99,17 @@ util::Result<core::Symbol> SymbolLibParser::parse_symbol(
 
 void SymbolLibParser::parse_property(core::Symbol& sym,
                                      const sexpr::DomNode& node) {
-    for (const auto& [key, value] : node.properties()) {
+    for (const auto& [k, v] : node.properties()) {
+        // Copy out of the zero-copy DOM into owned strings
+        std::string key(k);
+        std::string value(v);
         if (key == "Reference") {
             std::string ref = value;
             while (!ref.empty() && (ref.back() == '?' || std::isdigit(ref.back())))
+            {
                 ref.pop_back();
-            if (!ref.empty()) sym.set_reference_prefix(ref);
+            }
+            if (!ref.empty()) { sym.set_reference_prefix(ref); }
             sym.set_property("reference", value);
         } else if (key == "Value") {
             sym.set_default_value(value);
@@ -135,23 +141,23 @@ void SymbolLibParser::parse_pin(core::Symbol& sym, const sexpr::DomNode& node) {
     core::PinDefinition pin;
 
     // Pin number is the node's atom value (set by DomBuilder::parse_node for "pin" type)
-    if (node.is_atom()) pin.number = node.atom_value();
+    if (node.is_atom()) { pin.number = std::string(node.atom_value()); }
 
     // Find name and type from child sub-nodes and properties
     for (const auto& child : node.children()) {
         // Child sub-nodes like (name "~") store their value as property
-        std::string child_type = child->type();
+        std::string child_type = std::string(child->type());
         // Strip any prefix like "1:name" -> "name"
         auto colon = child_type.find(':');
         if (colon != std::string::npos) child_type = child_type.substr(colon + 1);
 
         if (child_type == "name") {
             // Get the first atom/property as the name value
-            if (child->is_atom()) pin.name = child->atom_value();
-            for (const auto& [k, v] : child->properties()) { pin.name = v; break; }
+            if (child->is_atom()) { pin.name = std::string(child->atom_value()); }
+            for (const auto& [k, v] : child->properties()) { pin.name = std::string(v); break; }
         } else if (child_type == "type") {
-            if (child->is_atom()) pin.electrical_type = child->atom_value();
-            for (const auto& [k, v] : child->properties()) { pin.electrical_type = v; break; }
+            if (child->is_atom()) { pin.electrical_type = std::string(child->atom_value()); }
+            for (const auto& [k, v] : child->properties()) { pin.electrical_type = std::string(v); break; }
         }
     }
 

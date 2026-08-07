@@ -60,3 +60,8 @@ export function useRules() {
   const { data: rules, load: loadRules } = useRequest(api.rules)
   return { rules: Array.isArray(rules) ? rules : [], loadRules }
 }
+
+export function useComponentLibraries() {
+  const { data: libs, load: loadCompLibraries, setData: setCompLibraries } = useRequest(api.compLibraries)
+  return { compLibraries: Array.isArray(libs) ? libs : [], loadCompLibraries, setCompLibraries }
+}

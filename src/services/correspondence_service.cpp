@@ -51,7 +51,16 @@ CorrespondenceService::suggest_matches() {
     auto fps = fr.find_all();
     if (!syms || !fps) return std::vector<correspondence::MatchSuggestion>{};
 
-    return correspondence::CorrespondenceChecker::suggest_matches(*syms, *fps);
+    // Cap to avoid O(n*m) explosion (22K syms × 2K fps = 44M comparisons)
+    const int MAX_SYMS = 2000;
+    const int MAX_FPS = 1000;
+    std::vector<core::Symbol> capped_syms;
+    std::vector<core::Footprint> capped_fps;
+    for (int i = 0; i < static_cast<int>(syms->size()) && i < MAX_SYMS; i++)
+        capped_syms.push_back((*syms)[i]);
+    for (int i = 0; i < static_cast<int>(fps->size()) && i < MAX_FPS; i++)
+        capped_fps.push_back((*fps)[i]);
+    return correspondence::CorrespondenceChecker::suggest_matches(capped_syms, capped_fps);
 }
 
 util::Result<int> CorrespondenceService::auto_link() {
