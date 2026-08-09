@@ -30,7 +30,9 @@ static int run_server()
 
     //等待服务器响应
     {
-        using namespace std::chrono;
+        using std::chrono::milliseconds;
+        using std::chrono::seconds;
+        using std::chrono::steady_clock;
         auto deadline = steady_clock::now() + seconds(8);
         bool ready = false;
         while (steady_clock::now() < deadline)

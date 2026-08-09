@@ -92,7 +92,7 @@ int main() {
         sexpr::DomBuilder builder;
         auto root = builder.build(content);
         if (!root) {
-            printf("  PARSE ERROR: %s\n", root.error().message.c_str());
+            printf("  PARSE ERROR: %s\n", root.error().message().c_str());
         } else {
             // Count nodes
             std::function<int(const sexpr::DomNode&)> count_nodes =
@@ -114,7 +114,7 @@ int main() {
         Timer t;
         auto result = parser::SymbolLibParser::parse(test_file);
         if (!result) {
-            printf("  PARSE ERROR: %s\n", result.error().message.c_str());
+            printf("  PARSE ERROR: %s\n", result.error().message().c_str());
         } else {
             sym_count = (int)result->items.size();
             printf("  %d symbols: %.1f ms\n", sym_count, t.ms());
@@ -156,7 +156,7 @@ int main() {
         fs::remove(tmp_path, ec);
         auto db_result = storage::Database::open(tmp_path);
         if (!db_result) {
-            printf("  Cannot open DB: %s\n", db_result.error().message.c_str());
+            printf("  Cannot open DB: %s\n", db_result.error().message().c_str());
         } else {
             auto& db = *db_result;
             storage::SymbolRepository repo(db->handle());
@@ -173,7 +173,7 @@ int main() {
                 if (!result->items.empty()) {
                     auto s = result->items[0];
                     s.set_library_id("default");
-                    repo.insert(s);
+                    (void)repo.insert(s);  // warm-up, ignore result
                 }
 
                 Timer t;

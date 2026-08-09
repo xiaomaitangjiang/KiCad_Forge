@@ -2,12 +2,13 @@
 
 #include <random>
 
-#include <sqlite3.h>
 #include <nlohmann/json.hpp>
+#include <sqlite3.h>
 
 #include "core/type_registry.h"
 
 namespace kforge::storage {
+using Kind = util::Error::Kind;
 
 // ============================================================
 // Internal helpers
@@ -35,7 +36,7 @@ public:
     explicit operator bool() const { return stmt_ != nullptr; }
 
 private:
-    void reset() { if (stmt_) { sqlite3_finalize(stmt_); stmt_ = nullptr; } }
+    void reset() { if (stmt_ != nullptr) { sqlite3_finalize(stmt_); stmt_ = nullptr; } }
     sqlite3_stmt* stmt_ = nullptr;
 };
 
@@ -168,12 +169,12 @@ util::Result<core::LibraryMeta> LibraryRepository::insert(const core::LibraryMet
     if (l.id.empty()) l.id = make_uuid();
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
-    if (rc != SQLITE_OK) return std::unexpected(util::Error::db(sqlite3_errmsg(db_)));
+    if (rc != SQLITE_OK) return std::unexpected(util::Error::make<Kind::DbError>(sqlite3_errmsg(db_)));
     bind_text(stmt, 1, l.id); bind_text(stmt, 2, l.name);
     bind_text(stmt, 3, l.file_path.string()); bind_text(stmt, 4, l.component_library_id);
     bind_text(stmt, 5, l.description);
     rc = sqlite3_step(stmt);
-    if (rc != SQLITE_DONE) return std::unexpected(util::Error::db(sqlite3_errmsg(db_)));
+    if (rc != SQLITE_DONE) return std::unexpected(util::Error::make<Kind::DbError>(sqlite3_errmsg(db_)));
     return l;
 }
 
@@ -202,10 +203,10 @@ int LibraryRepository::count() const {
 util::Result<void> LibraryRepository::remove(const core::Uuid& id) {
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_, "DELETE FROM libraries WHERE id = ?", -1, stmt.ref(), nullptr);
-    if (rc != SQLITE_OK) return std::unexpected(util::Error::db(sqlite3_errmsg(db_)));
+    if (rc != SQLITE_OK) return std::unexpected(util::Error::make<Kind::DbError>(sqlite3_errmsg(db_)));
     sqlite3_bind_text(stmt, 1, id.c_str(), -1, SQLITE_STATIC);
     if (sqlite3_step(stmt) != SQLITE_DONE)
-        return std::unexpected(util::Error::db(sqlite3_errmsg(db_)));
+        return std::unexpected(util::Error::make<Kind::DbError>(sqlite3_errmsg(db_)));
     return {};
 }
 
@@ -327,7 +328,7 @@ util::Result<core::Symbol> SymbolRepository::insert(const core::Symbol& sym) {
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
     if (rc != SQLITE_OK) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Insert symbol prepare: " + std::string(sqlite3_errmsg(db_))));
     }
 
@@ -335,7 +336,7 @@ util::Result<core::Symbol> SymbolRepository::insert(const core::Symbol& sym) {
 
     rc = sqlite3_step(stmt);
     if (rc != SQLITE_DONE) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Insert symbol step: " + std::string(sqlite3_errmsg(db_))));
     }
     return s;
@@ -352,7 +353,7 @@ util::Result<void> SymbolRepository::update(const core::Symbol& sym) {
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
     if (rc != SQLITE_OK) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Update symbol prepare: " + std::string(sqlite3_errmsg(db_))));
     }
 
@@ -374,7 +375,7 @@ util::Result<void> SymbolRepository::update(const core::Symbol& sym) {
 
     rc = sqlite3_step(stmt);
     if (rc != SQLITE_DONE) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Update symbol step: " + std::string(sqlite3_errmsg(db_))));
     }
     return {};
@@ -386,7 +387,7 @@ util::Result<void> SymbolRepository::remove(const core::Uuid& id) {
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
     if (rc != SQLITE_OK) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Delete symbol prepare: " + std::string(sqlite3_errmsg(db_))));
     }
 
@@ -394,7 +395,7 @@ util::Result<void> SymbolRepository::remove(const core::Uuid& id) {
 
     rc = sqlite3_step(stmt);
     if (rc != SQLITE_DONE) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Delete symbol step: " + std::string(sqlite3_errmsg(db_))));
     }
     return {};
@@ -410,7 +411,7 @@ util::Result<core::Symbol> SymbolRepository::find_by_name(const std::string& nam
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
     if (rc != SQLITE_OK) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Find symbol by name prepare: " + std::string(sqlite3_errmsg(db_))));
     }
 
@@ -421,9 +422,9 @@ util::Result<core::Symbol> SymbolRepository::find_by_name(const std::string& nam
         return row_to_symbol(stmt);
     }
     if (rc == SQLITE_DONE) {
-        return std::unexpected(util::Error::not_found("Symbol not found: " + name));
+        return std::unexpected(util::Error::make<Kind::NotFound>("Symbol not found: " + name));
     }
-    return std::unexpected(util::Error::db(
+    return std::unexpected(util::Error::make<Kind::DbError>(
         "Find symbol by name step: " + std::string(sqlite3_errmsg(db_))));
 }
 
@@ -437,7 +438,7 @@ util::Result<core::Symbol> SymbolRepository::find_by_id(const core::Uuid& id) {
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
     if (rc != SQLITE_OK) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Find symbol by id prepare: " + std::string(sqlite3_errmsg(db_))));
     }
 
@@ -448,9 +449,9 @@ util::Result<core::Symbol> SymbolRepository::find_by_id(const core::Uuid& id) {
         return row_to_symbol(stmt);
     }
     if (rc == SQLITE_DONE) {
-        return std::unexpected(util::Error::not_found("Symbol not found: " + id));
+        return std::unexpected(util::Error::make<Kind::NotFound>("Symbol not found: " + id));
     }
-    return std::unexpected(util::Error::db(
+    return std::unexpected(util::Error::make<Kind::DbError>(
         "Find symbol by id step: " + std::string(sqlite3_errmsg(db_))));
 }
 
@@ -467,7 +468,7 @@ util::Result<std::vector<core::Symbol>> SymbolRepository::find_by_library(
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
     if (rc != SQLITE_OK) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Find symbols by library prepare: " + std::string(sqlite3_errmsg(db_))));
     }
 
@@ -477,7 +478,7 @@ util::Result<std::vector<core::Symbol>> SymbolRepository::find_by_library(
         result.push_back(row_to_symbol(stmt));
     }
     if (rc != SQLITE_DONE) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Find symbols by library step: " + std::string(sqlite3_errmsg(db_))));
     }
     return result;
@@ -495,7 +496,7 @@ util::Result<std::vector<core::Symbol>> SymbolRepository::find_all() {
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
     if (rc != SQLITE_OK) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Find all symbols prepare: " + std::string(sqlite3_errmsg(db_))));
     }
 
@@ -503,7 +504,7 @@ util::Result<std::vector<core::Symbol>> SymbolRepository::find_all() {
         result.push_back(row_to_symbol(stmt));
     }
     if (rc != SQLITE_DONE) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Find all symbols step: " + std::string(sqlite3_errmsg(db_))));
     }
     return result;
@@ -524,7 +525,7 @@ util::Result<std::vector<core::Symbol>> SymbolRepository::search(
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
     if (rc != SQLITE_OK) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Search symbols prepare: " + std::string(sqlite3_errmsg(db_))));
     }
 
@@ -537,7 +538,7 @@ util::Result<std::vector<core::Symbol>> SymbolRepository::search(
         result.push_back(row_to_symbol(stmt));
     }
     if (rc != SQLITE_DONE) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Search symbols step: " + std::string(sqlite3_errmsg(db_))));
     }
     return result;
@@ -593,7 +594,7 @@ util::Result<core::Footprint> FootprintRepository::insert(
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
     if (rc != SQLITE_OK) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Insert footprint prepare: " + std::string(sqlite3_errmsg(db_))));
     }
 
@@ -610,7 +611,7 @@ util::Result<core::Footprint> FootprintRepository::insert(
 
     rc = sqlite3_step(stmt);
     if (rc != SQLITE_DONE) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Insert footprint step: " + std::string(sqlite3_errmsg(db_))));
     }
     return f;
@@ -624,7 +625,7 @@ util::Result<void> FootprintRepository::update(const core::Footprint& fp) {
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
     if (rc != SQLITE_OK) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Update footprint prepare: " + std::string(sqlite3_errmsg(db_))));
     }
 
@@ -638,7 +639,7 @@ util::Result<void> FootprintRepository::update(const core::Footprint& fp) {
 
     rc = sqlite3_step(stmt);
     if (rc != SQLITE_DONE) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Update footprint step: " + std::string(sqlite3_errmsg(db_))));
     }
     return {};
@@ -650,7 +651,7 @@ util::Result<void> FootprintRepository::remove(const core::Uuid& id) {
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
     if (rc != SQLITE_OK) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Delete footprint prepare: " + std::string(sqlite3_errmsg(db_))));
     }
 
@@ -658,7 +659,7 @@ util::Result<void> FootprintRepository::remove(const core::Uuid& id) {
 
     rc = sqlite3_step(stmt);
     if (rc != SQLITE_DONE) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Delete footprint step: " + std::string(sqlite3_errmsg(db_))));
     }
     return {};
@@ -674,7 +675,7 @@ util::Result<core::Footprint> FootprintRepository::find_by_id(
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
     if (rc != SQLITE_OK) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Find footprint by id prepare: " + std::string(sqlite3_errmsg(db_))));
     }
 
@@ -686,9 +687,9 @@ util::Result<core::Footprint> FootprintRepository::find_by_id(
     }
     if (rc == SQLITE_DONE) {
         return std::unexpected(
-            util::Error::not_found("Footprint not found: " + id));
+            util::Error::make<Kind::NotFound>("Footprint not found: " + id));
     }
-    return std::unexpected(util::Error::db(
+    return std::unexpected(util::Error::make<Kind::DbError>(
         "Find footprint by id step: " + std::string(sqlite3_errmsg(db_))));
 }
 
@@ -702,7 +703,7 @@ util::Result<core::Footprint> FootprintRepository::find_by_name(
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
     if (rc != SQLITE_OK) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Find footprint by name prepare: " + std::string(sqlite3_errmsg(db_))));
     }
 
@@ -714,9 +715,9 @@ util::Result<core::Footprint> FootprintRepository::find_by_name(
     }
     if (rc == SQLITE_DONE) {
         return std::unexpected(
-            util::Error::not_found("Footprint not found: " + name));
+            util::Error::make<Kind::NotFound>("Footprint not found: " + name));
     }
-    return std::unexpected(util::Error::db(
+    return std::unexpected(util::Error::make<Kind::DbError>(
         "Find footprint by name step: " + std::string(sqlite3_errmsg(db_))));
 }
 
@@ -731,7 +732,7 @@ util::Result<std::vector<core::Footprint>> FootprintRepository::find_all() {
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
     if (rc != SQLITE_OK) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Find all footprints prepare: " + std::string(sqlite3_errmsg(db_))));
     }
 
@@ -739,7 +740,7 @@ util::Result<std::vector<core::Footprint>> FootprintRepository::find_all() {
         result.push_back(row_to_footprint(stmt));
     }
     if (rc != SQLITE_DONE) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Find all footprints step: " + std::string(sqlite3_errmsg(db_))));
     }
     return result;
@@ -759,7 +760,7 @@ util::Result<std::vector<core::Footprint>> FootprintRepository::search(
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
     if (rc != SQLITE_OK) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Search footprints prepare: " + std::string(sqlite3_errmsg(db_))));
     }
 
@@ -772,7 +773,7 @@ util::Result<std::vector<core::Footprint>> FootprintRepository::search(
         result.push_back(row_to_footprint(stmt));
     }
     if (rc != SQLITE_DONE) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Search footprints step: " + std::string(sqlite3_errmsg(db_))));
     }
     return result;
@@ -823,7 +824,7 @@ util::Result<core::Model3D> Model3DRepository::insert(const core::Model3D& m) {
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
     if (rc != SQLITE_OK) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Insert 3D model prepare: " + std::string(sqlite3_errmsg(db_))));
     }
 
@@ -838,7 +839,7 @@ util::Result<core::Model3D> Model3DRepository::insert(const core::Model3D& m) {
 
     rc = sqlite3_step(stmt);
     if (rc != SQLITE_DONE) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Insert 3D model step: " + std::string(sqlite3_errmsg(db_))));
     }
     return model;
@@ -850,7 +851,7 @@ util::Result<void> Model3DRepository::remove(const core::Uuid& id) {
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
     if (rc != SQLITE_OK) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Delete 3D model prepare: " + std::string(sqlite3_errmsg(db_))));
     }
 
@@ -858,7 +859,7 @@ util::Result<void> Model3DRepository::remove(const core::Uuid& id) {
 
     rc = sqlite3_step(stmt);
     if (rc != SQLITE_DONE) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Delete 3D model step: " + std::string(sqlite3_errmsg(db_))));
     }
     return {};
@@ -873,7 +874,7 @@ util::Result<core::Model3D> Model3DRepository::find_by_id(
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
     if (rc != SQLITE_OK) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Find 3D model by id prepare: " + std::string(sqlite3_errmsg(db_))));
     }
 
@@ -885,9 +886,9 @@ util::Result<core::Model3D> Model3DRepository::find_by_id(
     }
     if (rc == SQLITE_DONE) {
         return std::unexpected(
-            util::Error::not_found("3D model not found: " + id));
+            util::Error::make<Kind::NotFound>("3D model not found: " + id));
     }
-    return std::unexpected(util::Error::db(
+    return std::unexpected(util::Error::make<Kind::DbError>(
         "Find 3D model by id step: " + std::string(sqlite3_errmsg(db_))));
 }
 
@@ -900,7 +901,7 @@ util::Result<core::Model3D> Model3DRepository::find_by_path(
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
     if (rc != SQLITE_OK) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Find 3D model by path prepare: " + std::string(sqlite3_errmsg(db_))));
     }
 
@@ -912,9 +913,9 @@ util::Result<core::Model3D> Model3DRepository::find_by_path(
     }
     if (rc == SQLITE_DONE) {
         return std::unexpected(
-            util::Error::not_found("3D model not found: " + path));
+            util::Error::make<Kind::NotFound>("3D model not found: " + path));
     }
-    return std::unexpected(util::Error::db(
+    return std::unexpected(util::Error::make<Kind::DbError>(
         "Find 3D model by path step: " + std::string(sqlite3_errmsg(db_))));
 }
 
@@ -928,7 +929,7 @@ util::Result<std::vector<core::Model3D>> Model3DRepository::find_all() {
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
     if (rc != SQLITE_OK) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Find all 3D models prepare: " + std::string(sqlite3_errmsg(db_))));
     }
 
@@ -936,7 +937,7 @@ util::Result<std::vector<core::Model3D>> Model3DRepository::find_all() {
         result.push_back(row_to_model(stmt));
     }
     if (rc != SQLITE_DONE) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Find all 3D models step: " + std::string(sqlite3_errmsg(db_))));
     }
     return result;
@@ -955,7 +956,7 @@ util::Result<std::vector<core::Model3D>> Model3DRepository::find_orphans() {
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
     if (rc != SQLITE_OK) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Find orphan 3D models prepare: " + std::string(sqlite3_errmsg(db_))));
     }
 
@@ -963,7 +964,7 @@ util::Result<std::vector<core::Model3D>> Model3DRepository::find_orphans() {
         result.push_back(row_to_model(stmt));
     }
     if (rc != SQLITE_DONE) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Find orphan 3D models step: " + std::string(sqlite3_errmsg(db_))));
     }
     return result;
@@ -1000,7 +1001,7 @@ util::Result<void> RelationshipRepository::link_symbol_to_footprint(
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
     if (rc != SQLITE_OK) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Link symbol-footprint prepare: " + std::string(sqlite3_errmsg(db_))));
     }
 
@@ -1012,7 +1013,7 @@ util::Result<void> RelationshipRepository::link_symbol_to_footprint(
 
     rc = sqlite3_step(stmt);
     if (rc != SQLITE_DONE) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Link symbol-footprint step: " + std::string(sqlite3_errmsg(db_))));
     }
     return {};
@@ -1027,7 +1028,7 @@ util::Result<void> RelationshipRepository::unlink_symbol_footprint(
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
     if (rc != SQLITE_OK) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Unlink symbol-footprint prepare: " + std::string(sqlite3_errmsg(db_))));
     }
 
@@ -1036,7 +1037,7 @@ util::Result<void> RelationshipRepository::unlink_symbol_footprint(
 
     rc = sqlite3_step(stmt);
     if (rc != SQLITE_DONE) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Unlink symbol-footprint step: " + std::string(sqlite3_errmsg(db_))));
     }
     return {};
@@ -1050,7 +1051,7 @@ RelationshipRepository::find_footprint_for_symbol(const core::Uuid& sym_id) {
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
     if (rc != SQLITE_OK) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Find footprint for symbol prepare: " + std::string(sqlite3_errmsg(db_))));
     }
 
@@ -1063,7 +1064,7 @@ RelationshipRepository::find_footprint_for_symbol(const core::Uuid& sym_id) {
     if (rc == SQLITE_DONE) {
         return std::nullopt;
     }
-    return std::unexpected(util::Error::db(
+    return std::unexpected(util::Error::make<Kind::DbError>(
         "Find footprint for symbol step: " + std::string(sqlite3_errmsg(db_))));
 }
 
@@ -1077,7 +1078,7 @@ RelationshipRepository::find_symbols_for_footprint(const core::Uuid& fp_id) {
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
     if (rc != SQLITE_OK) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Find symbols for footprint prepare: " + std::string(sqlite3_errmsg(db_))));
     }
 
@@ -1087,7 +1088,7 @@ RelationshipRepository::find_symbols_for_footprint(const core::Uuid& fp_id) {
         result.push_back(col_text(stmt, 0));
     }
     if (rc != SQLITE_DONE) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Find symbols for footprint step: " + std::string(sqlite3_errmsg(db_))));
     }
     return result;
@@ -1105,7 +1106,7 @@ util::Result<void> RelationshipRepository::link_footprint_to_model(
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
     if (rc != SQLITE_OK) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Link footprint-model prepare: " + std::string(sqlite3_errmsg(db_))));
     }
 
@@ -1116,7 +1117,7 @@ util::Result<void> RelationshipRepository::link_footprint_to_model(
 
     rc = sqlite3_step(stmt);
     if (rc != SQLITE_DONE) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Link footprint-model step: " + std::string(sqlite3_errmsg(db_))));
     }
     return {};
@@ -1131,7 +1132,7 @@ util::Result<void> RelationshipRepository::unlink_footprint_model(
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
     if (rc != SQLITE_OK) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Unlink footprint-model prepare: " + std::string(sqlite3_errmsg(db_))));
     }
 
@@ -1140,7 +1141,7 @@ util::Result<void> RelationshipRepository::unlink_footprint_model(
 
     rc = sqlite3_step(stmt);
     if (rc != SQLITE_DONE) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Unlink footprint-model step: " + std::string(sqlite3_errmsg(db_))));
     }
     return {};
@@ -1156,7 +1157,7 @@ RelationshipRepository::find_models_for_footprint(const core::Uuid& fp_id) {
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
     if (rc != SQLITE_OK) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Find models for footprint prepare: " + std::string(sqlite3_errmsg(db_))));
     }
 
@@ -1166,7 +1167,7 @@ RelationshipRepository::find_models_for_footprint(const core::Uuid& fp_id) {
         result.push_back(col_text(stmt, 0));
     }
     if (rc != SQLITE_DONE) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Find models for footprint step: " + std::string(sqlite3_errmsg(db_))));
     }
     return result;
@@ -1186,7 +1187,7 @@ RelationshipRepository::find_symbols_without_footprints() {
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
     if (rc != SQLITE_OK) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Find symbols without footprints prepare: "
             + std::string(sqlite3_errmsg(db_))));
     }
@@ -1195,7 +1196,7 @@ RelationshipRepository::find_symbols_without_footprints() {
         result.push_back(col_text(stmt, 0));
     }
     if (rc != SQLITE_DONE) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Find symbols without footprints step: "
             + std::string(sqlite3_errmsg(db_))));
     }
@@ -1214,7 +1215,7 @@ RelationshipRepository::find_footprints_without_symbols() {
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
     if (rc != SQLITE_OK) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Find footprints without symbols prepare: "
             + std::string(sqlite3_errmsg(db_))));
     }
@@ -1223,7 +1224,7 @@ RelationshipRepository::find_footprints_without_symbols() {
         result.push_back(col_text(stmt, 0));
     }
     if (rc != SQLITE_DONE) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Find footprints without symbols step: "
             + std::string(sqlite3_errmsg(db_))));
     }
@@ -1242,7 +1243,7 @@ RelationshipRepository::find_footprints_without_3d_models() {
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
     if (rc != SQLITE_OK) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Find footprints without 3D models prepare: "
             + std::string(sqlite3_errmsg(db_))));
     }
@@ -1251,7 +1252,7 @@ RelationshipRepository::find_footprints_without_3d_models() {
         result.push_back(col_text(stmt, 0));
     }
     if (rc != SQLITE_DONE) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Find footprints without 3D models step: "
             + std::string(sqlite3_errmsg(db_))));
     }
@@ -1270,7 +1271,7 @@ RelationshipRepository::find_orphan_models() {
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
     if (rc != SQLITE_OK) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Find orphan models prepare: " + std::string(sqlite3_errmsg(db_))));
     }
 
@@ -1278,7 +1279,7 @@ RelationshipRepository::find_orphan_models() {
         result.push_back(col_text(stmt, 0));
     }
     if (rc != SQLITE_DONE) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Find orphan models step: " + std::string(sqlite3_errmsg(db_))));
     }
     return result;
@@ -1316,7 +1317,7 @@ ComponentLibraryRepository::insert(const ComponentLibrary& lib) {
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
     if (rc != SQLITE_OK) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Insert component library prepare: " + std::string(sqlite3_errmsg(db_))));
     }
 
@@ -1330,7 +1331,7 @@ ComponentLibraryRepository::insert(const ComponentLibrary& lib) {
 
     rc = sqlite3_step(stmt);
     if (rc != SQLITE_DONE) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Insert component library step: " + std::string(sqlite3_errmsg(db_))));
     }
     return l;
@@ -1344,7 +1345,7 @@ util::Result<void> ComponentLibraryRepository::update(const ComponentLibrary& li
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
     if (rc != SQLITE_OK) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Update component library prepare: " + std::string(sqlite3_errmsg(db_))));
     }
 
@@ -1358,7 +1359,7 @@ util::Result<void> ComponentLibraryRepository::update(const ComponentLibrary& li
 
     rc = sqlite3_step(stmt);
     if (rc != SQLITE_DONE) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Update component library step: " + std::string(sqlite3_errmsg(db_))));
     }
     return {};
@@ -1370,14 +1371,14 @@ util::Result<void> ComponentLibraryRepository::remove(const std::string& id) {
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
     if (rc != SQLITE_OK) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Delete component library prepare: " + std::string(sqlite3_errmsg(db_))));
     }
 
     bind_text(stmt, 1, id);
     rc = sqlite3_step(stmt);
     if (rc != SQLITE_DONE) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Delete component library step: " + std::string(sqlite3_errmsg(db_))));
     }
     return {};
@@ -1393,7 +1394,7 @@ ComponentLibraryRepository::find_all() {
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
     if (rc != SQLITE_OK) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Find all component libraries prepare: " + std::string(sqlite3_errmsg(db_))));
     }
 
@@ -1401,7 +1402,7 @@ ComponentLibraryRepository::find_all() {
         result.push_back(row_to_library(stmt));
     }
     if (rc != SQLITE_DONE) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Find all component libraries step: " + std::string(sqlite3_errmsg(db_))));
     }
     return result;
@@ -1418,7 +1419,7 @@ ComponentLibraryRepository::find_enabled() {
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
     if (rc != SQLITE_OK) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Find enabled component libraries prepare: " + std::string(sqlite3_errmsg(db_))));
     }
 
@@ -1426,7 +1427,7 @@ ComponentLibraryRepository::find_enabled() {
         result.push_back(row_to_library(stmt));
     }
     if (rc != SQLITE_DONE) {
-        return std::unexpected(util::Error::db(
+        return std::unexpected(util::Error::make<Kind::DbError>(
             "Find enabled component libraries step: " + std::string(sqlite3_errmsg(db_))));
     }
     return result;
@@ -1454,7 +1455,7 @@ util::Result<std::string> SettingsRepository::get(const std::string& key) {
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_,
         "SELECT value FROM settings WHERE key=?", -1, stmt.ref(), nullptr);
-    if (rc != SQLITE_OK) return std::unexpected(util::Error::db(sqlite3_errmsg(db_)));
+    if (rc != SQLITE_OK) return std::unexpected(util::Error::make<Kind::DbError>(sqlite3_errmsg(db_)));
     bind_text(stmt, 1, key);
     if (sqlite3_step(stmt) == SQLITE_ROW) return col_text(stmt, 0);
     return "";  // key not found → empty string
@@ -1467,11 +1468,11 @@ util::Result<void> SettingsRepository::set(const std::string& key, const std::st
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_,
         "INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)", -1, stmt.ref(), nullptr);
-    if (rc != SQLITE_OK) return std::unexpected(util::Error::db(sqlite3_errmsg(db_)));
+    if (rc != SQLITE_OK) return std::unexpected(util::Error::make<Kind::DbError>(sqlite3_errmsg(db_)));
     bind_text(stmt, 1, key);
     bind_text(stmt, 2, value);
     rc = sqlite3_step(stmt);
-    if (rc != SQLITE_DONE) return std::unexpected(util::Error::db(sqlite3_errmsg(db_)));
+    if (rc != SQLITE_DONE) return std::unexpected(util::Error::make<Kind::DbError>(sqlite3_errmsg(db_)));
     return {};
 }
 
@@ -1480,7 +1481,7 @@ util::Result<std::unordered_map<std::string, std::string>> SettingsRepository::a
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_,
         "SELECT key, value FROM settings", -1, stmt.ref(), nullptr);
-    if (rc != SQLITE_OK) return std::unexpected(util::Error::db(sqlite3_errmsg(db_)));
+    if (rc != SQLITE_OK) return std::unexpected(util::Error::make<Kind::DbError>(sqlite3_errmsg(db_)));
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         map[col_text(stmt, 0)] = col_text(stmt, 1);
     }

@@ -13,47 +13,35 @@
 #include <thread>
 #include <vector>
 
-
 #ifdef _WIN32
+#include <propkey.h>
+#include <shellapi.h>
+#include <shlobj.h>
 #include <windows.h>
 #endif
 
-namespace kforge::platform
-{
+namespace kforge::platform {
 
-struct WindowConfig
-{
+struct WindowConfig {
     std::string url;
-    std::string title{"KiCad Forge"};  //useless
+    std::string title{"KiCad Forge"};
     int width{1280};
     int height{800};
 };
 
-// CRTP base — derived must implement: open()
-template <typename Derived> class AppWindow
-{
+template <typename Derived>
+class AppWindow {
 public:
-    explicit AppWindow(const WindowConfig& cfg) : cfg_(cfg)
-    {
-    }
+    explicit AppWindow(const WindowConfig& cfg) : cfg_(cfg) {}
 
-    // Block until the heartbeat stops (frontend window closed).
-    // `is_alive` returns true while the frontend is still connected.
-    template <typename F> void monitor(F&& is_alive)
-    {
+    template <typename F>
+    void monitor(F&& is_alive) {
         using namespace std::chrono;
-        // Wait up to 1s for the first heartbeat
-        auto deadline = steady_clock::now() + seconds(1);
+        auto deadline = steady_clock::now() + seconds(30);
         while (steady_clock::now() < deadline && !is_alive())
-        {
             std::this_thread::sleep_for(milliseconds(500));
-        }
-        // Keep running while heartbeat is alive
         while (is_alive())
-        {
             std::this_thread::sleep_for(seconds(1));
-        }
-        // Heartbeat stopped — window closed, time to exit
     }
 
 protected:
@@ -61,27 +49,20 @@ protected:
 };
 
 // ============================================================
-// Windows: Edge --app mode
-// ============================================================
-// ============================================================
-// macOS / Linux: fork+exec browser, monitor child process
+// macOS / Linux
 // ============================================================
 #if defined(__APPLE__) || defined(__linux__)
 
 #include <sys/wait.h>
 #include <unistd.h>
 
-
-class UnixBrowserWindow : public AppWindow<UnixBrowserWindow>
-{
+class UnixBrowserWindow : public AppWindow<UnixBrowserWindow> {
 public:
     using AppWindow::AppWindow;
 
-    bool open()
-    {
+    bool open() {
         pid_ = fork();
-        if (pid_ == 0)
-        {
+        if (pid_ == 0) {
 #ifdef __APPLE__
             execlp("open", "open", cfg_.url.c_str(), nullptr);
 #else
@@ -92,20 +73,8 @@ public:
         return pid_ > 0;
     }
 
-    void monitor()
-    {
-        if (pid_ > 0)
-            waitpid(pid_, nullptr, 0);
-    }
-
-    void close()
-    {
-        if (pid_ > 0)
-        {
-            kill(pid_, SIGTERM);
-            pid_ = 0;
-        }
-    }
+    void monitor() { if (pid_ > 0) waitpid(pid_, nullptr, 0); }
+    void close() { if (pid_ > 0) { kill(pid_, SIGTERM); pid_ = 0; } }
 
 private:
     pid_t pid_{-1};
@@ -113,91 +82,105 @@ private:
 
 using NativeWindow = UnixBrowserWindow;
 
-#endif  // __APPLE__ || __linux__
+#endif
 
 // ============================================================
-// Windows: Edge --app mode
+// Windows: Edge --app mode via .lnk shortcut (独立任务栏图标)
 // ============================================================
 #ifdef _WIN32
 
-class WinEdgeWindow : public AppWindow<WinEdgeWindow>
-{
+class WinEdgeWindow : public AppWindow<WinEdgeWindow> {
 public:
     using AppWindow::AppWindow;
 
-    bool open()
-    {
+    bool open() {
         std::string exe = find_edge();
-        if (exe.empty())
-        {
+        if (exe.empty()) {
             LOG_ERROR("FATAL: Could not find msedge.exe. Is Edge installed?");
             return false;
         }
         LOG_DEBUG("AppWindow: {}", exe);
-        LOG_DEBUG("AppWindow: launching: {}", cfg_.url);
 
-        std::string cmd = "\"" + exe + "\" --app=" + cfg_.url +
-                          " --window-size=" + std::to_string(cfg_.width) + "," +
-                          std::to_string(cfg_.height);
+        auto data_dir = std::filesystem::temp_directory_path() / "KiCad_Forge_Edge";
+        std::filesystem::create_directories(data_dir);
 
-        // CreateProcessA may modify the command line — copy to mutable buffer
-        std::vector<char> cmd_buf(cmd.begin(), cmd.end());
-        cmd_buf.push_back('\0');
+        std::string args = "--app=" + cfg_.url +
+                           " --window-size=" + std::to_string(cfg_.width) + "," +
+                           std::to_string(cfg_.height) +
+                           " --user-data-dir=\"" + data_dir.string() + "\"";
 
-        STARTUPINFOA si{.cb = sizeof(si)};
-        si.dwFlags = STARTF_USESHOWWINDOW;
-        si.wShowWindow = SW_SHOW;
-        PROCESS_INFORMATION pi{};
+        // .lnk with AppUserModelID — the only way Windows taskbar respects the ID
+        auto lnk_path = std::filesystem::temp_directory_path() / "KiCad_Forge.lnk";
 
-        if (CreateProcessA(nullptr, cmd_buf.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr,
-                           &si, &pi) == 0)
-        {
+        CoInitialize(nullptr);
+        IShellLinkW* psl = nullptr;
+        if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+                                     IID_IShellLinkW, (void**)&psl))) {
+            CoUninitialize();
             return false;
         }
 
-        CloseHandle(pi.hThread);
-        CloseHandle(pi.hProcess);
-        return true;
+        auto w_exe = std::wstring(exe.begin(), exe.end());
+        auto w_args = std::wstring(args.begin(), args.end());
+        psl->SetPath(w_exe.c_str());
+        psl->SetArguments(w_args.c_str());
+
+        // Set AppUserModelID
+        IPropertyStore* pps = nullptr;
+        if (SUCCEEDED(psl->QueryInterface(IID_IPropertyStore, (void**)&pps))) {
+            PROPVARIANT pv{};
+            pv.vt = VT_LPWSTR;
+            pv.pwszVal = (LPWSTR)L"Kicad_Forge.App";
+            pps->SetValue(PKEY_AppUserModel_ID, pv);
+            pps->Commit();
+            pps->Release();
+        }
+
+        IPersistFile* ppf = nullptr;
+        bool ok = false;
+        if (SUCCEEDED(psl->QueryInterface(IID_IPersistFile, (void**)&ppf))) {
+            ppf->Save(lnk_path.wstring().c_str(), TRUE);
+            ppf->Release();
+            ok = true;
+        }
+        psl->Release();
+
+        if (!ok) { CoUninitialize(); return false; }
+
+        SHELLEXECUTEINFOW sei{sizeof(sei)};
+        sei.fMask = SEE_MASK_FLAG_NO_UI;
+        sei.lpVerb = L"open";
+        auto lnk_wstr = lnk_path.wstring();
+        sei.lpFile = lnk_wstr.c_str();
+        sei.nShow = SW_SHOW;
+        BOOL result = ShellExecuteExW(&sei);
+        CoUninitialize();
+        return result == TRUE;
     }
 
 private:
-    static std::string find_edge()
-    {
+    static std::string find_edge() {
         namespace fs = std::filesystem;
 
-        // 1. Try registry (Win32 only — std::filesystem has no registry API)
-        for (const auto* key :
-             {R"(SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe)",
-              R"(SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe)"})
-        {
+        for (auto* key : {R"(SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe)",
+                          R"(SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe)"}) {
             char path[MAX_PATH];
             DWORD len = sizeof(path);
-            if (ERROR_SUCCESS ==
-                RegGetValueA(HKEY_LOCAL_MACHINE, key, "", RRF_RT_REG_SZ, nullptr, path, &len))
-            {
-                if (fs::exists(path))
-                    return path;
-            }
-            if (ERROR_SUCCESS ==
-                RegGetValueA(HKEY_CURRENT_USER, key, "", RRF_RT_REG_SZ, nullptr, path, &len))
-            {
-                if (fs::exists(path))
-                    return path;
-            }
+            if (ERROR_SUCCESS == RegGetValueA(HKEY_LOCAL_MACHINE, key, "", RRF_RT_REG_SZ,
+                                              nullptr, path, &len))
+                if (fs::exists(path)) return path;
+            if (ERROR_SUCCESS == RegGetValueA(HKEY_CURRENT_USER, key, "", RRF_RT_REG_SZ,
+                                              nullptr, path, &len))
+                if (fs::exists(path)) return path;
         }
 
-        // 2. Scan version folders under known install dirs
-        for (const auto* base : {R"(C:\Program Files (x86)\Microsoft\Edge\Application)",
-                                 R"(C:\Program Files\Microsoft\Edge\Application)"})
-        {
+        for (auto* base : {R"(C:\Program Files (x86)\Microsoft\Edge\Application)",
+                           R"(C:\Program Files\Microsoft\Edge\Application)"}) {
             std::error_code ec;
-            for (const auto& entry : fs::directory_iterator(base, ec))
-            {
-                if (!entry.is_directory())
-                    continue;
+            for (const auto& entry : fs::directory_iterator(base, ec)) {
+                if (!entry.is_directory()) continue;
                 auto exe = entry.path() / "msedge.exe";
-                if (fs::exists(exe))
-                    return exe.string();
+                if (fs::exists(exe)) return exe.string();
             }
         }
         return "";
@@ -206,6 +189,6 @@ private:
 
 using NativeWindow = WinEdgeWindow;
 
-#endif  // _WIN32
+#endif
 
 }  // namespace kforge::platform

@@ -1,4 +1,4 @@
-// Background import controller — owns the thread and atomic counters
+// Background import controller — owns import + link threads and atomic counters
 #pragma once
 
 #include <atomic>
@@ -17,21 +17,27 @@ public:
     // Start background import. Safe to call multiple times — skips if already running.
     void start();
 
-    // Signal stop and wait for thread to finish
+    // Signal stop and wait for threads to finish
     void stop();
 
     bool is_running() const { return running_.load(std::memory_order_relaxed); }
+    bool is_linking() const { return linking_.load(std::memory_order_relaxed); }
     int sym_count() const { return sym_count_.load(std::memory_order_relaxed); }
     int fp_count() const { return fp_count_.load(std::memory_order_relaxed); }
     bool cancel_requested() const { return cancel_.load(std::memory_order_relaxed); }
 
-    // Synchronous import (for manual "Reimport" button)
+    // Synchronous import, async post-processing (for manual "Reimport" button)
     services::ImportPipeline::Result run_now();
+
+    // Async auto-link + 3D linking (runs in background thread, non-blocking)
+    void async_link();
 
 private:
     sqlite3* db_;
-    std::thread thread_;
+    std::thread import_thread_;
+    std::thread link_thread_;
     std::atomic<bool> running_{false};
+    std::atomic<bool> linking_{false};
     std::atomic<bool> cancel_{false};
     std::atomic<int> sym_count_{0};
     std::atomic<int> fp_count_{0};

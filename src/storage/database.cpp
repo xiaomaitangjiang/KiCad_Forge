@@ -7,6 +7,7 @@
 #include "util/logger.h"
 
 namespace kforge::storage {
+using Kind = util::Error::Kind;
 
 Database::~Database() {
     if (db_) {
@@ -22,8 +23,10 @@ util::Result<std::unique_ptr<Database>> Database::open(
     std::filesystem::create_directories(path.parent_path());
 
     int rc = sqlite3_open(path.string().c_str(), &db->db_);
-    if (rc != SQLITE_OK) {
-        return std::unexpected(util::Error::db(
+    if (rc == SQLITE_OK) {
+        sqlite3_busy_timeout(db->db_, 5000);  // 5s timeout for concurrent access
+    } else {
+        return std::unexpected(util::Error::make<Kind::DbError>(
             std::string("sqlite3_open: ") + sqlite3_errmsg(db->db_)));
     }
 
@@ -42,7 +45,7 @@ util::Result<void> Database::execute(const std::string& sql) {
     if (rc != SQLITE_OK) {
         std::string msg(err ? err : "unknown");
         sqlite3_free(err);
-        return std::unexpected(util::Error::db("SQL: " + msg));
+        return std::unexpected(util::Error::make<Kind::DbError>("SQL: " + msg));
     }
     return {};
 }
@@ -173,7 +176,7 @@ util::Result<void> Database::run_migrations() {
         {
             std::string msg(err ? err : "unknown");
             sqlite3_free(err);
-            return std::unexpected(util::Error::db("Schema init: " + msg));
+            return std::unexpected(util::Error::make<Kind::DbError>("Schema init: " + msg));
         }
     }
 
@@ -232,6 +235,9 @@ util::Result<void> Database::run_migrations() {
         std::string fp_path  = share.empty() ? "" : share + "/footprints";
         std::string m3d_path = share.empty() ? "" : share + "/3dmodels";
 
+        // Remove stale default row (old migration may have symbol_path but empty fp/m3d)
+        sqlite3_exec(db_, "DELETE FROM component_libraries WHERE id='default'", nullptr, nullptr, nullptr);
+
         char* sql = sqlite3_mprintf(
             "INSERT OR IGNORE INTO component_libraries(id,name,symbol_path,footprint_path,model_3d_path) "
             "SELECT 'default','KiCad Libraries',%Q,%Q,%Q "
@@ -241,16 +247,6 @@ util::Result<void> Database::run_migrations() {
         sqlite3_free(sql);
 
         if (!sym_path.empty()) LOG_INFO("DB: default component library -> {}", share);
-
-        // Also update existing default library if paths are empty (upgrade from older migration)
-        if (!sym_path.empty()) {
-            char* upd = sqlite3_mprintf(
-                "UPDATE component_libraries SET symbol_path=%Q, footprint_path=%Q, model_3d_path=%Q "
-                "WHERE id='default' AND symbol_path='' AND footprint_path='' AND model_3d_path='';",
-                sym_path.c_str(), fp_path.c_str(), m3d_path.c_str());
-            sqlite3_exec(db_, upd, nullptr, nullptr, nullptr);
-            sqlite3_free(upd);
-        }
     }
 
     // Mark migrations as applied

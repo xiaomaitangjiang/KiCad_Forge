@@ -8,6 +8,7 @@
 #include "sexpr/dom_builder.h"
 
 namespace kforge::parser {
+using Kind = util::Error::Kind;
 
 util::Result<core::Library<core::Symbol>> SymbolLibParser::parse(
     const std::filesystem::path& path) {
@@ -15,7 +16,7 @@ util::Result<core::Library<core::Symbol>> SymbolLibParser::parse(
     std::ifstream file(path.string(), std::ios::binary);
     if (!file.is_open()) {
         return std::unexpected(
-            util::Error::io("Cannot open file: " + path.string()));
+            util::Error::make<Kind::IoError>("Cannot open file: " + path.string()));
     }
     std::stringstream buffer;
     buffer << file.rdbuf();
@@ -36,7 +37,7 @@ util::Result<core::Library<core::Symbol>> SymbolLibParser::parse_buffer(
 
     // Verify it's a symbol library
     if (root->type() != "kicad_symbol_lib") {
-        return std::unexpected(util::Error::parse(
+        return std::unexpected(util::Error::make<Kind::ParseError>(
             std::string("expected (kicad_symbol_lib ...), got (") +
                 std::string(root->type()) + ")"));
     }

@@ -10,6 +10,7 @@
 #include "services/library_service.h"
 #include "storage/repositories.h"
 #include "util/logger.h"
+#include "util/result.h"
 
 #include <cstdio>
 #include <filesystem>
@@ -111,7 +112,7 @@ bool ApiServer::start()
     auto db = storage::Database::open(db_path);
     if (!db)
     {
-        LOG_ERROR("Database open failed: {}", db.error().message);
+        LOG_ERROR("Database open failed: {}", util::error_formatter(db.error()));
         return false;
     }
     db_ = std::move(*db);
@@ -248,7 +249,7 @@ int64_t ApiServer::ms_since_heartbeat() const
 {
     auto last = last_heartbeat_.load(std::memory_order_relaxed);
     if (last == 0)
-        return INT64_MAX;           // no heartbeat yet
+        return 0;  // no heartbeat yet → treat as fresh (give browser time to connect)
     auto now = std::chrono::steady_clock::now().time_since_epoch().count();
     return (now - last) / 1000000;  // ns → ms
 }
@@ -342,7 +343,7 @@ void ApiServer::setup_routes()  // NOLINT(readability-function-cognitive-complex
         services::ClassificationService svc(db_.get());
         auto summary = svc.classify_all();
         json j;
-        if (!summary) { j["error"] = summary.error().message; }
+        if (!summary) { j["error"] = util::error_formatter(summary.error()); }
         else {
             j["total"] = summary->total; j["matched"] = summary->matched;
             j["type_updated"] = summary->type_updated;
@@ -373,7 +374,6 @@ void ApiServer::setup_routes()  // NOLINT(readability-function-cognitive-complex
 
     srv_.Post("/api/automatch", [this](const httplib::Request&, httplib::Response& r) {
         services::CorrespondenceService svc(db_.get());
-        auto _ = svc.auto_link();
         auto sug = svc.suggest_matches();
         json arr = json::array();
         if (sug) {

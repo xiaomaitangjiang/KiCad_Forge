@@ -52,8 +52,7 @@ struct ConditionEvaluator {
     const core::Component& comp;
 
     bool operator()(const MatchType& c) const {
-        // Match component type name
-        return match_name(comp);
+        return core::component_type_name(static_cast<int>(comp.type())) == c.type_name;
     }
     bool operator()(const MatchPackage& c) const {
         return RuleEngine::match_glob(c.pattern, "unknown");
@@ -76,12 +75,6 @@ struct ConditionEvaluator {
         return RuleEngine::match_glob(c.pattern, *val);
     }
 
-private:
-    bool match_name(const core::Component& comp) const {
-        // Match by component type name — delegate to component type
-        // This is a simplified version
-        return true;  // Always match for now — actual matching in evaluate()
-    }
 };
 
 // Visitor for evaluating against a Symbol

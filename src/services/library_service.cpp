@@ -16,6 +16,7 @@
 #include <unordered_set>
 
 namespace kforge::services {
+using Kind = util::Error::Kind;
 
 LibraryService::LibraryService(storage::Database* db) : db_(db) {}
 
@@ -74,7 +75,7 @@ util::Result<LibraryService::DeleteLibResult> LibraryService::delete_library(
         for (auto& l : *libs)
             if (l.id == lib_id) file_path = l.file_path.string();
     if (file_path.empty())
-        return std::unexpected(util::Error::not_found("Library not found: " + lib_id));
+        return std::unexpected(util::Error::make<Kind::NotFound>("Library not found: " + lib_id));
 
     int removed = 0;
     auto syms = sr.find_by_library(lib_id);
@@ -103,13 +104,13 @@ util::Result<void> LibraryService::delete_symbol(const core::Uuid& sym_id) {
     storage::SymbolRepository sr(db_->handle());
 
     auto sym = sr.find_by_id(sym_id);
-    if (!sym) return std::unexpected(util::Error::not_found("Symbol not found"));
+    if (!sym) return std::unexpected(util::Error::make<Kind::NotFound>("Symbol not found"));
 
     std::string sym_name = sym->name();
     std::string lib_id = sym->library_id();
 
     if (!sr.remove(sym_id))
-        return std::unexpected(util::Error::db("Failed to remove symbol"));
+        return std::unexpected(util::Error::make<Kind::DbError>("Failed to remove symbol"));
 
     auto libs = lr.find_all();
     if (libs)
@@ -180,7 +181,7 @@ util::Result<int> LibraryService::merge_into_library(const std::filesystem::path
     if (std::filesystem::exists(target_sym)) {
         std::ifstream tf(target_sym, std::ios::binary);
         if (!tf.is_open())
-            return std::unexpected(util::Error::io("Cannot open: " + target_sym.string()));
+            return std::unexpected(util::Error::make<Kind::IoError>("Cannot open: " + target_sym.string()));
         std::stringstream buf;
         buf << tf.rdbuf();
         target_text = buf.str();
@@ -254,7 +255,7 @@ util::Result<int> LibraryService::merge_into_library(const std::filesystem::path
     target_text.insert(last_paren, insertion);
     std::ofstream out(target_sym, std::ios::binary);
     if (!out.is_open())
-        return std::unexpected(util::Error::io("Cannot write: " + target_sym.string()));
+        return std::unexpected(util::Error::make<Kind::IoError>("Cannot write: " + target_sym.string()));
     out << target_text;
     LOG_INFO("MERGED: {} symbols into {}", src->items.size(), target_sym.string());
     return (int)src->items.size();

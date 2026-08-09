@@ -24,7 +24,7 @@ public:
     util::Result<int> import_symbol_library(const std::filesystem::path& path,
                                              const std::string& component_library_id = "");
     util::Result<int> import_footprint(const std::filesystem::path& path);
-    struct ImportStats { int symbols, footprints, errors, models_3d; std::vector<std::string> messages; };
+    struct ImportStats { int symbols = 0, footprints = 0, errors = 0, models_3d = 0; std::vector<std::string> messages; };
     util::Result<ImportStats> import_directory(const std::filesystem::path& dir,
                                                const std::string& component_library_id = "");
     util::Result<int> scan_3d_models(const std::filesystem::path& dir);

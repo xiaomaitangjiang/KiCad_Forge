@@ -29,6 +29,10 @@ SpacesInContainerLiterals: false
 SpacesInParentheses: false
 SpaceBeforeParens: ControlStatementsExceptControlMacros
 
+# ---- Templates ----
+BreakTemplateDeclarations: Yes
+IndentRequiresClause: false
+
 # ---- Function declarations ----
 AllowShortFunctionsOnASingleLine: None
 AllowShortLambdasOnASingleLine: Empty

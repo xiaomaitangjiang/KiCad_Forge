@@ -63,21 +63,4 @@ CorrespondenceService::suggest_matches() {
     return correspondence::CorrespondenceChecker::suggest_matches(capped_syms, capped_fps);
 }
 
-util::Result<int> CorrespondenceService::auto_link() {
-    storage::RelationshipRepository rr(db_->handle());
-    auto suggestions = suggest_matches();
-    if (!suggestions) return 0;
-
-    int linked = 0;
-    const double MIN_SCORE = 0.7;
-    for (auto& sug : *suggestions) {
-        if (sug.score >= MIN_SCORE) {
-            auto result = rr.link_symbol_to_footprint(
-                sug.symbol_id, sug.footprint_id, "heuristic", sug.score);
-            if (result) linked++;
-        }
-    }
-    return linked;
-}
-
 }  // namespace kforge::services

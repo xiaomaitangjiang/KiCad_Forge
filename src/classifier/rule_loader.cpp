@@ -6,6 +6,7 @@
 #include <toml++/toml.h>
 
 namespace kforge::classifier {
+using Kind = util::Error::Kind;
 
 util::Result<std::vector<Rule>> RuleLoader::load_directory(
     const std::filesystem::path& rules_dir) {
@@ -98,7 +99,7 @@ util::Result<std::vector<Rule>> RuleLoader::load_file(
             }
         }
     } catch (const toml::parse_error& err) {
-        return std::unexpected(util::Error::parse(
+        return std::unexpected(util::Error::make<Kind::ParseError>(
             "TOML parse error in " + path.string() + ": " +
             std::string(err.what())));
     }

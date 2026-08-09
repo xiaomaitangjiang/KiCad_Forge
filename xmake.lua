@@ -1,4 +1,6 @@
-set_toolchains("clang")
+set_toolchains("clang", {target = "x86_64-w64-windows-gnu"})
+set_plat("mingw")
+add_ldflags("-fuse-ld=lld")
 add_rules("mode.debug", "mode.release")
 local mode="DEBUG"
 set_defaultmode(mode)
@@ -49,7 +51,7 @@ target("KiCad_Forge")
     add_linkdirs(sys_lib)
     add_defines("_WIN32_WINNT=0x0A00")
 
-    add_syslinks("pthread", "ws2_32", "ole32", "oleaut32", "uuid")
+    add_syslinks("pthread", "ws2_32", "ole32", "oleaut32", "shell32", "uuid")
     add_links(sys_lib .. "/libsqlite3.a", sys_lib .. "/libfmt.dll.a")
 
     if is_mode("release") then
@@ -90,5 +92,5 @@ target("bench_import")
     add_includedirs("src", "src/third_party", sys_inc)
     add_linkdirs(sys_lib)
     add_defines("_WIN32_WINNT=0x0A00")
-    add_syslinks("pthread", "ws2_32", "ole32", "oleaut32", "uuid")
+    add_syslinks("pthread", "ws2_32", "ole32", "oleaut32", "shell32", "uuid")
     add_links(sys_lib .. "/libsqlite3.a", sys_lib .. "/libfmt.dll.a")
