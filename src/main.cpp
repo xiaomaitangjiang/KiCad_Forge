@@ -1,4 +1,4 @@
-#include "../third_party/httplib.h"
+#include "httplib.h"
 #include "api/api_server.h"
 #include "platform/app_window.h"
 #include "util/logger.h"
@@ -79,10 +79,20 @@ static int run_server()
 #ifdef _WIN32
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
 {
-    return run_server();
+    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    int ret = run_server();
+    CoUninitialize();
+    return ret;
 }
 #endif
 int main()
 {
+#ifdef _WIN32
+    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    int ret = run_server();
+    CoUninitialize();
+    return ret;
+#else
     return run_server();
+#endif
 }

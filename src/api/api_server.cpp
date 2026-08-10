@@ -138,6 +138,26 @@ bool ApiServer::start()
     setup_routes();
     srv_.set_mount_point("/", find_webui_dir());
 
+    // CORS: crossorigin attribute in <script> requires Access-Control-Allow-Origin
+    srv_.set_pre_routing_handler(
+        [](const httplib::Request& req, httplib::Response& res)
+        {
+            if (req.method == "OPTIONS")
+            {
+                res.set_header("Access-Control-Allow-Origin", "*");
+                res.set_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+                res.set_header("Access-Control-Allow-Headers", "*");
+                res.status = 204;
+                return httplib::Server::HandlerResponse::Handled;
+            }
+            return httplib::Server::HandlerResponse::Unhandled;
+        });
+    srv_.set_post_routing_handler(
+        [](const httplib::Request&, httplib::Response& res)
+        {
+            res.set_header("Access-Control-Allow-Origin", "*");
+        });
+
     // port 0 = auto-assign
     if (port_ == 0)
     {

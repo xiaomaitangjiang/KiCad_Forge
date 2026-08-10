@@ -4,11 +4,11 @@
 #pragma once
 
 #define SPDLOG_HEADER_ONLY
-#include <spdlog/spdlog.h>
-#include <spdlog/sinks/daily_file_sink.h>
 #include <chrono>
 #include <filesystem>
+#include <spdlog/sinks/daily_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
+#include <spdlog/spdlog.h>
 
 namespace kforge::util {
 

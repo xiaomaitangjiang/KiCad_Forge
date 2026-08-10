@@ -1,5 +1,5 @@
 // Cross-platform app window — CRTP for compile-time dispatch.
-// Windows: Edge --app mode | macOS: WKWebView | Linux: GTK WebKit
+// Windows: WebView2 via webview library | macOS: WKWebView | Linux: GTK WebKit
 #pragma once
 
 #include "../util/logger.h"
@@ -15,17 +15,14 @@
 #include <vector>
 
 #ifdef _WIN32
+// Prevent MinGW's eventtoken.h from defining EventRegistrationToken
+// inside extern "C" — webview library needs it in global C++ namespace.
+#define __eventtoken_h__
+struct EventRegistrationToken { INT64 value; };
+
+#include <windows.h>
 #include <shellapi.h>
 #include <shlobj.h>
-#include <windows.h>
-
-// PKEY_AppUserModel_ID GUID — not in MinGW's propkey.h
-const PROPERTYKEY PKEY_AppUserModel_ID = {
-    .fmtid = {.Data1 = 0x9F4C2855,
-              .Data2 = 0x9F79,
-              .Data3 = 0x4B39,
-              .Data4 = {0xA8, 0xD0, 0xE1, 0xD4, 0x2D, 0xE1, 0xD5, 0xF3}},
-    .pid = 5};
 #endif
 
 namespace kforge::platform
@@ -122,90 +119,96 @@ using NativeWindow = UnixBrowserWindow;
 #endif
 
 // ============================================================
-// Windows: Edge --app mode via .lnk shortcut (独立任务栏图标)
+// Windows: WebView2 via webview library
 // ============================================================
 #ifdef _WIN32
 
-class WinEdgeWindow : public AppWindow<WinEdgeWindow>
+#include "webview/webview.h"
+
+class WinWebView2Window : public AppWindow<WinWebView2Window>
 {
 public:
-    using AppWindow::AppWindow;
+    explicit WinWebView2Window(WindowConfig cfg) : AppWindow(std::move(cfg)) {}
+
+    ~WinWebView2Window()
+    {
+        close();
+    }
 
     bool open()
     {
-        std::string exe = find_edge();
-        if (exe.empty())
+        w_ = webview_create(0, nullptr);
+        if (!w_)
         {
-            LOG_ERROR("FATAL: Could not find msedge.exe. Is Edge installed?");
+            LOG_ERROR("webview: creation failed — WebView2 Runtime may be missing");
             return false;
         }
-        LOG_DEBUG("AppWindow: {}", exe);
+        webview_set_title(w_, cfg_.title.c_str());
+        webview_set_size(w_, cfg_.width, cfg_.height, WEBVIEW_HINT_NONE);
+        webview_navigate(w_, cfg_.url.c_str());
+        LOG_INFO("webview: navigating to {}", cfg_.url);
 
-        auto data_dir = std::filesystem::temp_directory_path() / "KiCad_Forge_Edge";
-        std::filesystem::create_directories(data_dir);
-
-        std::string args = "--app=" + cfg_.url + " --app-id=Kicad_Forge.App" +
-                           " --window-size=" + std::to_string(cfg_.width) + "," +
-                           std::to_string(cfg_.height) + " --user-data-dir=\"" + data_dir.string() +
-                           "\"";
-
-        std::string cmd = "\"" + exe + "\" " + args;
-        std::vector<char> cmd_buf(cmd.begin(), cmd.end());
-        cmd_buf.push_back('\0');
-
-        STARTUPINFOA si{.cb = sizeof(si)};
-        si.dwFlags = STARTF_USESHOWWINDOW;
-        si.wShowWindow = SW_SHOW;
-        PROCESS_INFORMATION pi{};
-
-        if (CreateProcessA(nullptr, cmd_buf.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr,
-                           &si, &pi) == 0)
-            return false;
-
-        CloseHandle(pi.hThread);
-        CloseHandle(pi.hProcess);
+        // Set window icon — webview uses IDI_APPLICATION by default
+        webview_dispatch(
+            w_,
+            [](webview_t w, void*)
+            {
+                HWND hwnd = static_cast<HWND>(webview_get_window(w));
+                HICON icon = LoadIconW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(101)); // IDI_ICON1
+                if (icon)
+                {
+                    SendMessageW(hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(icon));
+                    SendMessageW(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(icon));
+                }
+            },
+            nullptr);
         return true;
     }
 
-private:
-    static std::string find_edge()
+    void close()
     {
-        namespace fs = std::filesystem;
-
-        for (auto* key :
-             {R"(SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe)",
-              R"(SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe)"})
+        if (w_)
         {
-            char path[MAX_PATH];
-            DWORD len = sizeof(path);
-            if (ERROR_SUCCESS ==
-                RegGetValueA(HKEY_LOCAL_MACHINE, key, "", RRF_RT_REG_SZ, nullptr, path, &len))
-                if (fs::exists(path))
-                    return path;
-            if (ERROR_SUCCESS ==
-                RegGetValueA(HKEY_CURRENT_USER, key, "", RRF_RT_REG_SZ, nullptr, path, &len))
-                if (fs::exists(path))
-                    return path;
+            webview_destroy(w_);
+            w_ = nullptr;
         }
-
-        for (auto* base : {R"(C:\Program Files (x86)\Microsoft\Edge\Application)",
-                           R"(C:\Program Files\Microsoft\Edge\Application)"})
-        {
-            std::error_code ec;
-            for (const auto& entry : fs::directory_iterator(base, ec))
-            {
-                if (!entry.is_directory())
-                    continue;
-                auto exe = entry.path() / "msedge.exe";
-                if (fs::exists(exe))
-                    return exe.string();
-            }
-        }
-        return "";
     }
+
+    template <typename F>
+    void monitor(F&& is_alive)
+    {
+        using namespace std::chrono;
+
+        // Heartbeat monitor runs on a background thread — webview_run() blocks
+        std::thread monitor_thread(
+            [this](F is_alive_copy)
+            {
+                auto deadline = steady_clock::now() + seconds(30);
+                while (steady_clock::now() < deadline && !is_alive_copy())
+                {
+                    std::this_thread::sleep_for(milliseconds(500));
+                }
+                while (is_alive_copy())
+                {
+                    std::this_thread::sleep_for(seconds(1));
+                }
+                LOG_INFO("webview: heartbeat lost, terminating...");
+                webview_terminate(w_);
+            },
+            std::forward<F>(is_alive));
+
+        webview_run(w_);  // blocks until webview_terminate() is called
+        if (monitor_thread.joinable())
+        {
+            monitor_thread.join();
+        }
+    }
+
+private:
+    webview_t w_ = nullptr;
 };
 
-using NativeWindow = WinEdgeWindow;
+using NativeWindow = WinWebView2Window;
 
 #endif
 

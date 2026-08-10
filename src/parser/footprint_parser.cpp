@@ -134,22 +134,28 @@ void FootprintParser::parse_model_3d(core::Footprint& fp, const sexpr::DomNode& 
 
     // Path is the first string in the model node — may be atom, child atom, or property
     if (node.is_atom())
+    {
         model.path = std::string(node.atom_value());
+    }
     else if (!node.children().empty() && node.children()[0]->is_atom())
+    {
         model.path = std::string(node.children()[0]->atom_value());
+    }
     else if (auto path_opt = node.property("path"))
+    {
         model.path = *path_opt;
+    }
 
-    auto* off_node = node.find_child("offset");
-    if (off_node && off_node->children().size() >= 3)
+    const auto* off_node = node.find_child("offset");
+    if ((off_node != nullptr) && off_node->children().size() >= 3)
     {
         model.offset_x = sv_to_double(off_node->children()[0]->atom_value());
         model.offset_y = sv_to_double(off_node->children()[1]->atom_value());
         model.offset_z = sv_to_double(off_node->children()[2]->atom_value());
     }
 
-    auto* scale_node = node.find_child("scale");
-    if (scale_node && scale_node->children().size() >= 3)
+    const auto* scale_node = node.find_child("scale");
+    if ((scale_node != nullptr) && scale_node->children().size() >= 3)
     {
         model.scale_x = sv_to_double(scale_node->children()[0]->atom_value());
         model.scale_y = sv_to_double(scale_node->children()[1]->atom_value());
@@ -157,7 +163,9 @@ void FootprintParser::parse_model_3d(core::Footprint& fp, const sexpr::DomNode& 
     }
 
     if (!model.path.empty())
+    {
         fp.add_model_3d(std::move(model));
+    }
 }
 
 }  // namespace kforge::parser
