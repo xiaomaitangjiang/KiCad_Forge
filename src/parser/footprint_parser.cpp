@@ -60,14 +60,20 @@ util::Result<core::Footprint> FootprintParser::parse_buffer(std::string_view buf
     for (const auto& child : root->children())
     {
         if (child->type() == "pad")
+        {
             parse_pad(fp, *child);
+        }
         else if (child->type() == "model" || child->type() == "model_3d")
+        {
             parse_model_3d(fp, *child);
+        }
         else if (child->type() == "attr")
         {
             auto type_opt = child->property("type");
             if (type_opt)
+            {
                 fp.set_property("attr_type", std::string(*type_opt));
+            }
         }
     }
     return fp;
@@ -81,9 +87,11 @@ void FootprintParser::parse_pad(core::Footprint& fp, const sexpr::DomNode& node)
     if (node.is_atom())
         pad.number = std::string(node.atom_value());
     // Fallback: property "number" or first atom child
-    if (pad.number.empty()) {
+    if (pad.number.empty())
+    {
         auto num = node.property("number");
-        if (num) pad.number = *num;
+        if (num)
+            pad.number = *num;
     }
     if (pad.number.empty() && !node.children().empty() && node.children()[0]->is_atom())
         pad.number = std::string(node.children()[0]->atom_value());
@@ -124,14 +132,13 @@ void FootprintParser::parse_model_3d(core::Footprint& fp, const sexpr::DomNode& 
 {
     core::Model3DRef model;
 
-    if (!node.children().empty() && node.children()[0]->is_atom())
+    // Path is the first string in the model node — may be atom, child atom, or property
+    if (node.is_atom())
+        model.path = std::string(node.atom_value());
+    else if (!node.children().empty() && node.children()[0]->is_atom())
         model.path = std::string(node.children()[0]->atom_value());
-    else
-    {
-        auto path_opt = node.property("path");
-        if (path_opt)
-            model.path = *path_opt;
-    }
+    else if (auto path_opt = node.property("path"))
+        model.path = *path_opt;
 
     auto* off_node = node.find_child("offset");
     if (off_node && off_node->children().size() >= 3)

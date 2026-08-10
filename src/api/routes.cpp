@@ -1,5 +1,6 @@
 // Route handlers extracted from setup_routes()
 #include "api/api_server.h"
+#include "api/import_orchestrator.h"
 #include "api/routes.h"
 #include "classifier/rule_engine.h"
 #include "classifier/rule_loader.h"
@@ -456,7 +457,7 @@ void register_plugin_routes(httplib::Server& srv, plugin::PluginManager* plugins
 // Settings / Component libraries / DB reset
 // ============================================================
 
-void register_settings_routes(httplib::Server& srv, sqlite3* db)
+void register_settings_routes(httplib::Server& srv, sqlite3* db, ImportOrchestrator* orch)
 {
     srv.Get("/api/settings",
             [db](const httplib::Request&, httplib::Response& r)
@@ -649,8 +650,10 @@ void register_settings_routes(httplib::Server& srv, sqlite3* db)
              });
 
     srv.Post("/api/db/reset",
-             [db](const httplib::Request&, httplib::Response& r)
+             [db, orch](const httplib::Request&, httplib::Response& r)
              {
+                 // Stop import thread before clearing to avoid race
+                 if (orch) orch->stop();
                  json j;
                  sqlite3_exec(db, "DELETE FROM symbols", nullptr, nullptr, nullptr);
                  sqlite3_exec(db, "DELETE FROM footprints", nullptr, nullptr, nullptr);
@@ -658,9 +661,13 @@ void register_settings_routes(httplib::Server& srv, sqlite3* db)
                  sqlite3_exec(db, "DELETE FROM libraries", nullptr, nullptr, nullptr);
                  sqlite3_exec(db, "DELETE FROM symbol_footprint_links", nullptr, nullptr, nullptr);
                  sqlite3_exec(db, "DELETE FROM footprint_model_links", nullptr, nullptr, nullptr);
+                 sqlite3_exec(db, "DELETE FROM settings", nullptr, nullptr, nullptr);
+                 sqlite3_exec(db, "VACUUM", nullptr, nullptr, nullptr);
                  j["ok"] = true;
                  j["message"] = "All data cleared. Reimport or restart.";
                  r.set_content(j.dump(), "application/json");
+                 // Restart import
+                 if (orch) orch->start();
              });
 }
 
@@ -680,6 +687,7 @@ void register_type_routes(httplib::Server& srv, sqlite3* /*db*/)
                     json o;
                     o["name"] = ct.name;
                     o["icon"] = ct.icon;
+                    o["color"] = ct.color;
                     arr.push_back(o);
                 }
                 r.set_content(arr.dump(), "application/json");

@@ -63,7 +63,7 @@ std::string find_webui_dir()
     }
 
     LOG_ERROR("FATAL: webui/index.html not found next to exe at {}", exe_dir.string());
-    std::exit(1);
+    std::abort();
 }
 
 // Portable: exe_dir/data/ if exists, otherwise AppData (installer mode)
@@ -96,9 +96,13 @@ ApiServer::~ApiServer()
     {
         stop();
     }
+    catch (const std::exception& e)
+    {
+        LOG_ERROR("Shutdown error in destructor: {}", e.what());
+    }
     catch (...)
     {
-        // Must not throw from destructor
+        LOG_ERROR("Shutdown error in destructor: unknown exception");
     }
 }
 
@@ -118,8 +122,14 @@ bool ApiServer::start()
     db_ = std::move(*db);
     LOG_INFO("Server initialized (data: {})", data_dir);
 
-    core::TypeRegistry::instance().load_component_types("config/component_types.json");
-    core::TypeRegistry::instance().load_package_types("config/package_types.json");
+    if (!core::TypeRegistry::instance().load_component_types("config/component_types.json"))
+    {
+        LOG_WARN("config/component_types.json not found — using defaults");
+    }
+    if (!core::TypeRegistry::instance().load_package_types("config/package_types.json"))
+    {
+        LOG_WARN("config/package_types.json not found — using defaults");
+    }
 
     init_plugins();
     orchestrator_ = std::make_unique<ImportOrchestrator>(db_->handle());
@@ -128,7 +138,7 @@ bool ApiServer::start()
     setup_routes();
     srv_.set_mount_point("/", find_webui_dir());
 
-    // port 0 = let OS auto-assign
+    // port 0 = auto-assign
     if (port_ == 0)
     {
         port_ = srv_.bind_to_any_port("127.0.0.1");
@@ -159,7 +169,7 @@ void ApiServer::init_plugins()
 {
     std::vector<std::filesystem::path> paths;
 
-    // 1. Bundled plugins 
+    // 1. Bundled plugins
     auto bundled = get_exe_dir() / "plugins";
     if (std::filesystem::exists(bundled))
     {
@@ -237,7 +247,10 @@ void ApiServer::stop()
     }
 
     // Signal import to stop and wait
-    if (orchestrator_) orchestrator_->stop();
+    if (orchestrator_)
+    {
+        orchestrator_->stop();
+    }
 
     LOG_INFO("Shutdown: closing database...");
     db_.reset();
@@ -249,7 +262,9 @@ int64_t ApiServer::ms_since_heartbeat() const
 {
     auto last = last_heartbeat_.load(std::memory_order_relaxed);
     if (last == 0)
+    {
         return 0;  // no heartbeat yet → treat as fresh (give browser time to connect)
+    }
     auto now = std::chrono::steady_clock::now().time_since_epoch().count();
     return (now - last) / 1000000;  // ns → ms
 }
@@ -265,7 +280,9 @@ std::string read_file_str(const std::string& path)
 {
     std::ifstream f(path, std::ios::binary);
     if (!f.is_open())
+    {
         return {};
+    }
     std::ostringstream ss;
     ss << f.rdbuf();
     return ss.str();
@@ -302,92 +319,116 @@ void ApiServer::setup_routes()  // NOLINT(readability-function-cognitive-complex
     register_library_routes(srv_, db_->handle());
     register_symbol_routes(srv_, db_->handle());
     register_plugin_routes(srv_, plugins_.get());
-    register_settings_routes(srv_, db_->handle());
+    register_settings_routes(srv_, db_->handle(), orchestrator_.get());
     register_type_routes(srv_, db_->handle());
     register_status_routes(srv_, db_->handle());
     register_classify_routes(srv_, db_->handle());
 
     // ---- Heartbeat + import status (need ApiServer internals) ----
-    srv_.Get("/api/status", [this](const httplib::Request&, httplib::Response& r) {
-        last_heartbeat_.store(
-            std::chrono::steady_clock::now().time_since_epoch().count(),
-            std::memory_order_relaxed);
-        json j;
-        storage::SymbolRepository sr(db_->handle());
-        j["symbols"] = sr.count();
-        storage::FootprintRepository fr(db_->handle());
-        j["footprints"] = fr.count();
-        j["ok"] = true;
-        r.set_content(j.dump(), "application/json");
-    });
+    srv_.Get("/api/status",
+             [this](const httplib::Request&, httplib::Response& r)
+             {
+                 last_heartbeat_.store(std::chrono::steady_clock::now().time_since_epoch().count(),
+                                       std::memory_order_relaxed);
+                 json j;
+                 storage::SymbolRepository sr(db_->handle());
+                 j["symbols"] = sr.count();
+                 storage::FootprintRepository fr(db_->handle());
+                 j["footprints"] = fr.count();
+                 j["ok"] = true;
+                 r.set_content(j.dump(), "application/json");
+             });
 
-    srv_.Get("/api/import-status", [this](const httplib::Request&, httplib::Response& r) {
-        json j;
-        j["importing"] = orchestrator_ ? orchestrator_->is_running() : false;
-        storage::SymbolRepository sr(db_->handle());
-        j["symbols"] = sr.count();
-        storage::FootprintRepository fr(db_->handle());
-        j["footprints"] = fr.count();
-        storage::Model3DRepository mr(db_->handle());
-        j["models"] = mr.count();
-        r.set_content(j.dump(), "application/json");
-    });
+    srv_.Get("/api/import-status",
+             [this](const httplib::Request&, httplib::Response& r)
+             {
+                 json j;
+                 j["importing"] = orchestrator_ ? orchestrator_->is_running() : false;
+                 storage::SymbolRepository sr(db_->handle());
+                 j["symbols"] = sr.count();
+                 storage::FootprintRepository fr(db_->handle());
+                 j["footprints"] = fr.count();
+                 storage::Model3DRepository mr(db_->handle());
+                 j["models"] = mr.count();
+                 r.set_content(j.dump(), "application/json");
+             });
 
-    srv_.Post("/api/bye", [this](const httplib::Request&, httplib::Response& r) {
-        shutting_down_.store(true, std::memory_order_relaxed);
-        r.set_content(R"({"ok":true})", "application/json");
-    });
+    srv_.Post("/api/bye",
+              [this](const httplib::Request&, httplib::Response& r)
+              {
+                  shutting_down_.store(true, std::memory_order_relaxed);
+                  r.set_content(R"({"ok":true})", "application/json");
+              });
 
     // ---- Classify / Check / Automatch (need Database*) ----
-    srv_.Post("/api/classify", [this](const httplib::Request&, httplib::Response& r) {
-        services::ClassificationService svc(db_.get());
-        auto summary = svc.classify_all();
-        json j;
-        if (!summary) { j["error"] = util::error_formatter(summary.error()); }
-        else {
-            j["total"] = summary->total; j["matched"] = summary->matched;
-            j["type_updated"] = summary->type_updated;
-            json arr = json::array();
-            for (auto& res : summary->results) {
-                json o;
-                o["name"] = res.symbol_name; o["library"] = res.target_library;
-                o["type"] = res.type_name; o["confidence"] = res.confidence;
-                arr.push_back(o);
-            }
-            j["results"] = arr;
-        }
-        r.set_content(j.dump(), "application/json");
-    });
+    srv_.Post("/api/classify",
+              [this](const httplib::Request&, httplib::Response& r)
+              {
+                  services::ClassificationService svc(db_.get());
+                  auto summary = svc.classify_all();
+                  json j;
+                  if (!summary)
+                  {
+                      j["error"] = util::error_formatter(summary.error());
+                  }
+                  else
+                  {
+                      j["total"] = summary->total;
+                      j["matched"] = summary->matched;
+                      j["type_updated"] = summary->type_updated;
+                      json arr = json::array();
+                      for (auto& res : summary->results)
+                      {
+                          json o;
+                          o["name"] = res.symbol_name;
+                          o["library"] = res.target_library;
+                          o["type"] = res.type_name;
+                          o["confidence"] = res.confidence;
+                          arr.push_back(o);
+                      }
+                      j["results"] = arr;
+                  }
+                  r.set_content(j.dump(), "application/json");
+              });
 
-    srv_.Post("/api/check", [this](const httplib::Request&, httplib::Response& r) {
-        services::CorrespondenceService svc(db_.get());
-        auto issues = svc.check_all();
-        json arr = json::array();
-        if (issues) for (auto& iss : *issues) {
-            json o;
-            o["symbol"] = iss.entity_name; o["issue"] = iss.message;
-            o["severity"] = issue_severity_to_string(iss.severity);
-            arr.push_back(o);
-        }
-        r.set_content(arr.dump(), "application/json");
-    });
+    srv_.Post("/api/check",
+              [this](const httplib::Request&, httplib::Response& r)
+              {
+                  services::CorrespondenceService svc(db_.get());
+                  auto issues = svc.check_all();
+                  json arr = json::array();
+                  if (issues)
+                      for (auto& iss : *issues)
+                      {
+                          json o;
+                          o["symbol"] = iss.entity_name;
+                          o["issue"] = iss.message;
+                          o["severity"] = issue_severity_to_string(iss.severity);
+                          arr.push_back(o);
+                      }
+                  r.set_content(arr.dump(), "application/json");
+              });
 
-    srv_.Post("/api/automatch", [this](const httplib::Request&, httplib::Response& r) {
-        services::CorrespondenceService svc(db_.get());
-        auto sug = svc.suggest_matches();
-        json arr = json::array();
-        if (sug) {
-            int n = std::min(50, (int)sug->size());
-            for (int i = 0; i < n; i++) {
-                json m;
-                m["symbol"] = sug->at(i).symbol_name;
-                m["footprint"] = sug->at(i).footprint_name;
-                m["score"] = (int)(sug->at(i).score * 100);
-                arr.push_back(m);
-            }
-        }
-        r.set_content(arr.dump(), "application/json");
-    });
+    srv_.Post("/api/automatch",
+              [this](const httplib::Request&, httplib::Response& r)
+              {
+                  services::CorrespondenceService svc(db_.get());
+                  auto sug = svc.suggest_matches();
+                  json arr = json::array();
+                  if (sug)
+                  {
+                      int n = std::min(50, (int) sug->size());
+                      for (int i = 0; i < n; i++)
+                      {
+                          json m;
+                          m["symbol"] = sug->at(i).symbol_name;
+                          m["footprint"] = sug->at(i).footprint_name;
+                          m["score"] = (int) (sug->at(i).score * 100);
+                          arr.push_back(m);
+                      }
+                  }
+                  r.set_content(arr.dump(), "application/json");
+              });
 }
 
 }  // namespace kforge::api

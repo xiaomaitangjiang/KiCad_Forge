@@ -12,9 +12,11 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <future>
 #include <sqlite3.h>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
 namespace fs = std::filesystem;
 
@@ -47,7 +49,7 @@ ImportPipeline& ImportPipeline::operator|(with_3d_linking /*unused*/)
 }
 ImportPipeline& ImportPipeline::operator|(progress p)
 {
-    progress_fn_ = p;
+    progress_fn_ = std::move(p);
     return *this;
 }
 
@@ -55,7 +57,7 @@ ImportPipeline& ImportPipeline::operator|(progress p)
 // execute — run all accumulated steps in order
 // ============================================================
 
-ImportPipeline::Result ImportPipeline::operator|(execute_t)
+ImportPipeline::Result ImportPipeline::operator|(execute_t /*unused*/)
 {
     Result r;
 
@@ -99,7 +101,9 @@ int ImportPipeline::import_symbol_library(const std::string& path_str, const std
     fs::path path(path_str);
     auto result = parser::SymbolLibParser::parse(path);
     if (!result)
+    {
         return 0;
+    }
 
     LOG_INFO("IMPORT: {} -> {} items", path_str, result->items.size());
 
@@ -125,19 +129,27 @@ int ImportPipeline::import_symbol_library(const std::string& path_str, const std
     {
         auto existing = repo.find_by_library(lib_id);
         if (existing)
+        {
             for (auto& s : *existing)
+            {
                 seen.insert(s.name());
+            }
+        }
     }
 
     sqlite3_exec(db_, "BEGIN", nullptr, nullptr, nullptr);
     int imported = 0;
     for (auto& sym : result->items)
     {
-        if (seen.count(sym.name()))
+        if (seen.contains(sym.name()))
+        {
             continue;
+        }
         seen.insert(sym.name());
         if (sym.component_type == core::ComponentType::Unknown)
+        {
             sym.component_type = classifier::guess_type_from_name(sym.name());
+        }
         sym.set_library_id(lib_id);
         auto ins = repo.insert(sym);
         if (ins)
@@ -155,17 +167,47 @@ IMP_Result ImportPipeline::import_footprint(const std::string& path_str)
     fs::path path(path_str);
     auto result = parser::FootprintParser::parse(path);
     if (!result)
+    {
         return imp_failed(util::error_formatter(result.error()));
+    }
 
     storage::FootprintRepository repo(db_);
     auto existing = repo.find_by_name(result->name());
     if (existing)
+    {
         return imp_skipped();
+    }
 
     auto ins = repo.insert(*result);
     if (ins)
     {
         LOG_INFO("FP: {} -> {}", path.filename().string(), ins->name());
+
+        // Link explicit 3D models — lazy-build model filename hash pool
+        if (model_name_index_.empty())
+        {
+            storage::Model3DRepository mr(db_);
+            if (auto models = mr.find_all())
+            {
+                for (auto& m : *models)
+                {
+                    model_name_index_[m.file_path().stem().string()] = m.id();
+                }
+            }
+        }
+        storage::RelationshipRepository rr(db_);
+        for (auto& m : ins->models_3d())
+        {
+            if (m.path.empty())
+                continue;
+            auto slash = m.path.find_last_of("/\\");
+            auto stem = (slash != std::string::npos)
+                          ? m.path.substr(slash + 1, m.path.find_last_of('.') - slash - 1)
+                          : m.path.substr(0, m.path.find_last_of('.'));
+            auto it = model_name_index_.find(stem);
+            if (it != model_name_index_.end())
+                auto _ = rr.link_footprint_to_model(ins->id(), it->second, "explicit");
+        }
         return imp_added();
     }
     return imp_failed("Insert failed");
@@ -177,65 +219,107 @@ ImportPipeline::ImportStats ImportPipeline::import_directory(const std::string& 
     ImportStats stats;
     fs::path dir(dir_str);
     if (!fs::exists(dir))
+    {
         return stats;
+    }
 
+    // Collect files
+    std::vector<std::string> sym_files;
+    std::vector<std::string> mod_files;
+    std::vector<std::string> pretty_dirs;
     std::error_code ec;
     for (const auto& entry : fs::directory_iterator(dir, ec))
     {
         if (ec)
+        {
             break;
-        const auto& p = entry.path();
-        auto name = p.filename().string();
-
-        // .pretty folders (KiCad footprint libraries)
-        LOG_DEBUG("DIR ENTRY: {} is_dir={} ext='{}'", name, entry.is_directory(), p.extension().string());
-        if (entry.is_directory() && p.extension() == ".pretty")
+        }
+        if (entry.is_directory() && entry.path().extension() == ".pretty")
         {
-            int fp_count = 0;
-            std::error_code ec2;
-            for (const auto& pf : fs::directory_iterator(p, ec2))
+            pretty_dirs.push_back(entry.path().string());
+        }
+        else if (entry.is_regular_file())
+        {
+            auto ext = entry.path().extension().string();
+            if (ext == ".kicad_sym")
             {
-                if (ec2)
-                    break;
-                if (pf.is_regular_file() && pf.path().extension() == ".kicad_mod")
-                {
-                    auto r = import_footprint(pf.path().string());
-                    if (r.is(ImportStatus::Added))
-                    {
-                        stats.footprints++;
-                        fp_count++;
-                    }
-                    else if (r.is(ImportStatus::Failed))
-                    {
-                        stats.errors++;
-                    }
-                }
+                sym_files.push_back(entry.path().string());
             }
-            LOG_INFO("FP DIR: {} -> {} footprints", p.string(), fp_count);
-            continue;
-        }
-        if (!entry.is_regular_file())
-            continue;
-
-        auto ext = p.extension().string();
-        stats.messages.push_back(name);
-        if (ext == ".kicad_sym")
-        {
-            auto r = import_symbol_library(p.string(), comp_lib_id);
-            if (r > 0)
-                stats.symbols += r;
-            else
-                stats.errors++;
-        }
-        else if (ext == ".kicad_mod")
-        {
-            auto r = import_footprint(p.string());
-            if (r.is(ImportStatus::Added))
-                stats.footprints++;
-            else if (r.is(ImportStatus::Failed))
-                stats.errors++;
+            else if (ext == ".kicad_mod")
+            {
+                mod_files.push_back(entry.path().string());
+            }
         }
     }
+
+    // Parallel parse symbol files (pure CPU, no DB)
+    if (!sym_files.empty())
+    {
+        unsigned n_threads = std::max(1u, std::thread::hardware_concurrency());
+        std::vector<std::future<int>> futures;
+        futures.reserve(sym_files.size());
+        for (auto& f : sym_files)
+        {
+            futures.push_back(std::async(std::launch::async,
+                                         [this, f, &comp_lib_id]
+                                         {
+                                             return import_symbol_library(f, comp_lib_id);
+                                         }));
+        }
+        for (auto& fut : futures)
+        {
+            int n = fut.get();
+            if (n > 0)
+            {
+                stats.symbols += n;
+            }
+            else
+            {
+                stats.errors++;
+            }
+        }
+    }
+
+    // Serial .pretty and standalone .kicad_mod
+    for (auto& pd : pretty_dirs)
+    {
+        int fp_count = 0;
+        std::error_code ec2;
+        for (const auto& pf : fs::directory_iterator(pd, ec2))
+        {
+            if (ec2)
+            {
+                break;
+            }
+            if (pf.is_regular_file() && pf.path().extension() == ".kicad_mod")
+            {
+                auto r = import_footprint(pf.path().string());
+                if (r.is(ImportStatus::Added))
+                {
+                    stats.footprints++;
+                    fp_count++;
+                }
+                else if (r.is(ImportStatus::Failed))
+                {
+                    stats.errors++;
+                }
+            }
+        }
+        LOG_INFO("FP DIR: {} -> {} footprints", pd, fp_count);
+    }
+    for (auto& mf : mod_files)
+    {
+        auto r = import_footprint(mf);
+        if (r.is(ImportStatus::Added))
+        {
+            stats.footprints++;
+        }
+        else if (r.is(ImportStatus::Failed))
+        {
+            stats.errors++;
+        }
+    }
+
     LOG_INFO("DIR SCAN: {} -> {} symbols, {} footprints, {} errors", dir_str, stats.symbols,
              stats.footprints, stats.errors);
     return stats;
@@ -252,21 +336,35 @@ int ImportPipeline::scan_3d_models(const std::string& dir_str)
     storage::Model3DRepository repo(db_);
     int imported = 0;
     int skipped = 0;
-    for (auto& entry : fs::recursive_directory_iterator(dir))
+    for (const auto& entry : fs::recursive_directory_iterator(dir))
     {
         if (!entry.is_regular_file())
+        {
             continue;
+        }
         auto ext = entry.path().extension().string();
-        std::ranges::transform(ext, ext.begin(), [](unsigned char c) { return std::tolower(c); });
+        std::ranges::transform(ext, ext.begin(),
+                               [](unsigned char c)
+                               {
+                                   return std::tolower(c);
+                               });
         std::string format;
         if (ext == ".step" || ext == ".stp")
+        {
             format = "step";
+        }
         else if (ext == ".wrl")
+        {
             format = "wrl";
+        }
         else if (ext == ".iges" || ext == ".igs")
+        {
             format = "iges";
+        }
         else
+        {
             continue;
+        }
         auto existing = repo.find_by_path(entry.path().string());
         if (existing)
         {
@@ -280,7 +378,9 @@ int ImportPipeline::scan_3d_models(const std::string& dir_str)
         m.set_source("filesystem");
         auto ins = repo.insert(m);
         if (ins)
+        {
             imported++;
+        }
     }
     LOG_INFO("3D SCAN: {} -> {} imported, {} already in DB", dir_str, imported, skipped);
     return imported;
@@ -289,7 +389,9 @@ int ImportPipeline::scan_3d_models(const std::string& dir_str)
 void ImportPipeline::try_link_symbol_footprint(const std::string& sym_id, const std::string& fp_ref)
 {
     if (fp_ref.empty())
+    {
         return;
+    }
     // Strip library prefix: "Package_SO:SOIC-8" → "SOIC-8"
     auto colon = fp_ref.find(':');
     std::string short_name = (colon != std::string::npos) ? fp_ref.substr(colon + 1) : fp_ref;
@@ -298,7 +400,9 @@ void ImportPipeline::try_link_symbol_footprint(const std::string& sym_id, const 
     storage::RelationshipRepository rr(db_);
     auto fp = fr.find_by_name(short_name);
     if (!fp)
+    {
         fp = fr.find_by_name(fp_ref);
+    }
     if (fp)
     {
         auto _ = rr.link_symbol_to_footprint(sym_id, fp->id(), "imported", 1.0);
@@ -314,22 +418,30 @@ int ImportPipeline::do_link_3d_models()
     auto syms = sr.find_all();
     auto models = mr.find_all();
     if (!syms || !models)
+    {
         return 0;
+    }
 
     // Build model stem → id index (O(N))
     std::unordered_map<std::string, core::Uuid> model_index;
     for (auto& m : *models)
     {
         std::string stem = m.file_path().stem().string();
-        if (!model_index.count(stem))
+        if (!model_index.contains(stem))
+        {
             model_index[stem] = m.id();
+        }
     }
 
-    int linked = 0, skipped = 0, count = 0;
+    int linked = 0;
+    int skipped = 0;
+    int count = 0;
     for (auto& sym : *syms)
     {
-        if (cancel_ && cancel_->load(std::memory_order_relaxed))
+        if ((cancel_ != nullptr) && cancel_->load(std::memory_order_relaxed))
+        {
             break;
+        }
         if (sym.footprint().empty())
         {
             skipped++;
@@ -350,8 +462,7 @@ int ImportPipeline::do_link_3d_models()
             // Substring match
             for (auto& [stem, id] : model_index)
             {
-                if (stem.find(short_fp) != std::string::npos ||
-                    short_fp.find(stem) != std::string::npos)
+                if (stem.contains(short_fp) || short_fp.contains(stem))
                 {
                     model_id = id;
                     break;
@@ -359,7 +470,9 @@ int ImportPipeline::do_link_3d_models()
             }
         }
         if (model_id.empty())
+        {
             continue;
+        }
 
         core::Uuid fp_id;
         auto existing_fp = rr.find_footprint_for_symbol(sym.id());
@@ -381,7 +494,9 @@ int ImportPipeline::do_link_3d_models()
                 fp.set_description("Auto-created from symbol footprint_ref");
                 auto ins = fr.insert(fp);
                 if (!ins)
+                {
                     continue;
+                }
                 fp_id = ins->id();
             }
             auto _ = rr.link_symbol_to_footprint(sym.id(), fp_id, "imported", 1.0);

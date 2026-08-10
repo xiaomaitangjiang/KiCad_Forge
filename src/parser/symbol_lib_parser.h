@@ -23,6 +23,7 @@ private:
     static util::Result<core::Symbol> parse_symbol(const sexpr::DomNode& node);
     static void parse_property(core::Symbol& sym, const sexpr::DomNode& node);
     static void parse_pin(core::Symbol& sym, const sexpr::DomNode& node);
+    static void resolve_extends(core::Library<core::Symbol>& lib);
 };
 
 }  // namespace kforge::parser

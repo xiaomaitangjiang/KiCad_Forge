@@ -148,11 +148,17 @@ services::ImportPipeline::Result ImportOrchestrator::run_now()
         auto fp = settings.get("footprint_lib_path");
         auto m3d = settings.get("model_3d_path");
         if (sym && !sym->empty())
+        {
             pipe | services::symbols_from{*sym, ""};
+        }
         if (fp && !fp->empty())
+        {
             pipe | services::footprints_from{*fp};
+        }
         if (m3d && !m3d->empty())
+        {
             pipe | services::models_from{*m3d};
+        }
     }
 
     auto result = pipe | services::execute;
@@ -174,9 +180,13 @@ services::ImportPipeline::Result ImportOrchestrator::run_now()
 void ImportOrchestrator::async_link()
 {
     if (cancel_.load(std::memory_order_relaxed))
+    {
         return;
+    }
     if (link_thread_.joinable())
+    {
         link_thread_.join();
+    }
 
     linking_ = true;
     link_thread_ = std::thread(

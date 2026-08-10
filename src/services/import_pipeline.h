@@ -31,7 +31,7 @@ enum class ImportStatus : int8_t
 };
 using IMP_Result = util::StatusResult<ImportStatus>;
 
-inline IMP_Result imp_added(int = 1)
+inline IMP_Result imp_added()
 {
     return {.status = ImportStatus::Added, .error = {}};
 }
@@ -71,6 +71,7 @@ public:
 private:
     sqlite3* db_;
     std::atomic<bool>* cancel_ = nullptr;
+    std::unordered_map<std::string, std::string> model_name_index_;
 
     // Pending steps
     std::vector<symbols_from> pending_symbols_;
