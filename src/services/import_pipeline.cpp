@@ -64,18 +64,40 @@ ImportPipeline::Result ImportPipeline::operator|(execute_t /*unused*/)
         r.footprints += stats.footprints;
     }
 
-    // Phase 2: Import footprints (separate from symbols to handle .pretty)
+    // Phase 2: Scan 3D models BEFORE importing footprints,
+    // so model_name_index_ is populated for inline 3D linking
+    for (auto& m : pending_models_)
+    {
+        int count = scan_3d_models(m.dir);
+        r.models_3d += count;
+    }
+
+    // Pre-build model name index for inline 3D linking during footprint import
+    storage::Model3DRepository mr3d(db_);
+    if (auto models = mr3d.find_all())
+    {
+        for (auto& m : *models)
+        {
+            model_name_index_[m.file_path().stem().string()] = m.id();
+        }
+    }
+    LOG_INFO("3D INDEX: {} models loaded", model_name_index_.size());
+
+    // Phase 3: Import footprints (links models inline via pre-built index)
     for (auto& f : pending_footprints_)
     {
         auto stats = import_directory(f.dir);
         r.footprints += stats.footprints;
     }
 
-    // Phase 3: Scan 3D models
-    for (auto& m : pending_models_)
+    // Phase 4: Link symbols → footprints (footprints now exist in DB)
+    storage::SymbolRepository sym_repo(db_);
+    if (auto syms = sym_repo.find_all())
     {
-        int count = scan_3d_models(m.dir);
-        r.models_3d += count;
+        for (auto& sym : *syms)
+        {
+            try_link_symbol_footprint(sym.id(), sym.footprint());
+        }
     }
 
     return r;
@@ -172,31 +194,28 @@ IMP_Result ImportPipeline::import_footprint(const std::string& path_str)
     {
         LOG_INFO("FP: {} -> {}", path.filename().string(), ins->name());
 
-        // Link explicit 3D models — lazy-build model filename hash pool
-        if (model_name_index_.empty())
-        {
-            storage::Model3DRepository mr(db_);
-            if (auto models = mr.find_all())
-            {
-                for (auto& m : *models)
-                {
-                    model_name_index_[m.file_path().stem().string()] = m.id();
-                }
-            }
-        }
+        // Link explicit 3D models via pre-built model_name_index_
+        int model_refs = 0;
+        int model_linked = 0;
         storage::RelationshipRepository rr(db_);
         for (auto& m : ins->models_3d())
         {
             if (m.path.empty())
                 continue;
+            model_refs++;
             auto slash = m.path.find_last_of("/\\");
             auto stem = (slash != std::string::npos)
                           ? m.path.substr(slash + 1, m.path.find_last_of('.') - slash - 1)
                           : m.path.substr(0, m.path.find_last_of('.'));
             auto it = model_name_index_.find(stem);
             if (it != model_name_index_.end())
+            {
                 auto _ = rr.link_footprint_to_model(ins->id(), it->second, "explicit");
+                model_linked++;
+            }
         }
+        if (model_refs > 0)
+            LOG_INFO("FP 3D: {} refs, {} linked for {}", model_refs, model_linked, ins->name());
         return imp_added();
     }
     return imp_failed("Insert failed");
