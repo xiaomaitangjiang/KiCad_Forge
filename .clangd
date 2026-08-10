@@ -1,28 +1,3 @@
-# Tell clangd to use the same compiler as the build system.
-# This file must exist BEFORE clangd starts.
-# After editing, run: Ctrl+Shift+P → "clangd: Restart language server"
-
-CompileFlags:
-  Compiler: D:/msys64/mingw64/bin/g++.exe
-  Add:
-    - "-std=c++23"
-    - "-target"
-    - "x86_64-w64-mingw32"
-    - "-Id:/msys64/mingw64/include/c++/16.1.0"
-    - "-Id:/msys64/mingw64/include/c++/16.1.0/x86_64-w64-mingw32"
-    - "-Id:/msys64/mingw64/include"
-    - "-Id:/msys64/mingw64/include/wx-3.2"
-    - "-Id:/msys64/mingw64/lib/wx/include/msw-unicode-3.2"
-    - "-Isrc"
-    - "-DUNICODE"
-    - "-D_UNICODE"
-    - "-D__WXMSW__"
-  Remove:
-    - "-std=c++*"
-
 Diagnostics:
   Suppress:
-    - "pp_file_not_found"
-    - "drv_unknown_argument"
-  UnusedIncludes: None
-  MissingIncludes: None
+    - "src/third_party/*"

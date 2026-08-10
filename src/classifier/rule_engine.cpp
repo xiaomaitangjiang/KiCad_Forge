@@ -52,8 +52,7 @@ struct ConditionEvaluator {
     const core::Component& comp;
 
     bool operator()(const MatchType& c) const {
-        // Match component type name
-        return match_name(comp);
+        return core::component_type_name(static_cast<int>(comp.type())) == c.type_name;
     }
     bool operator()(const MatchPackage& c) const {
         return RuleEngine::match_glob(c.pattern, "unknown");
@@ -76,12 +75,6 @@ struct ConditionEvaluator {
         return RuleEngine::match_glob(c.pattern, *val);
     }
 
-private:
-    bool match_name(const core::Component& comp) const {
-        // Match by component type name — delegate to component type
-        // This is a simplified version
-        return true;  // Always match for now — actual matching in evaluate()
-    }
 };
 
 // Visitor for evaluating against a Symbol
@@ -152,7 +145,20 @@ core::ComponentType guess_type_from_name(const std::string& name) {
     case 'U': return core::ComponentType::Microcontroller;
     case 'J': return core::ComponentType::Connector;
     case 'X':
-    case 'Y': return core::ComponentType::Crystal;
+    case 'Y':
+    {
+        // Only classify as crystal if name looks like a crystal/oscillator,
+        // not an IC (Xilinx, XC3S400) or connector (XLR-3)
+        constexpr size_t MAX_CRYSTAL_LEN = 6;
+        if (name.size() <= MAX_CRYSTAL_LEN
+            || name.contains("MHz") || name.contains("kHz")
+            || name.contains("TAL") || name.contains("tal")
+            || name.contains("OSC") || name.contains("Osc"))
+        {
+            return core::ComponentType::Crystal;
+        }
+        return core::ComponentType::Unknown;
+    }
     case 'F': return core::ComponentType::Fuse;
     case 'K': return core::ComponentType::Relay;
     case 'T': return core::ComponentType::Transformer;

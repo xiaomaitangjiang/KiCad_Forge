@@ -1,86 +1,191 @@
 [
 {
   "directory": "d:\\VScode\\KiCad_Forge",
-  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-g", "-O0", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\debug\\src\\main.cpp.obj", "src\\main.cpp"],
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-O3", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-Isrc\\third_party\\webview", "-Isrc\\third_party\\webview2", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-DWEBVIEW_EDGE", "--target=x86_64-w64-windows-gnu", "-DNDEBUG", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\release\\src\\main.cpp.obj", "src\\main.cpp"],
   "file": "src\\main.cpp"
 },
 {
   "directory": "d:\\VScode\\KiCad_Forge",
-  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-g", "-O0", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\debug\\src\\api\\api_server.cpp.obj", "src\\api\\api_server.cpp"],
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-O3", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-Isrc\\third_party\\webview", "-Isrc\\third_party\\webview2", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-DWEBVIEW_EDGE", "--target=x86_64-w64-windows-gnu", "-DNDEBUG", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\release\\src\\api\\api_server.cpp.obj", "src\\api\\api_server.cpp"],
   "file": "src\\api\\api_server.cpp"
 },
 {
   "directory": "d:\\VScode\\KiCad_Forge",
-  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-g", "-O0", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\debug\\src\\services\\classification_service.cpp.obj", "src\\services\\classification_service.cpp"],
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-O3", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-Isrc\\third_party\\webview", "-Isrc\\third_party\\webview2", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-DWEBVIEW_EDGE", "--target=x86_64-w64-windows-gnu", "-DNDEBUG", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\release\\src\\api\\import_orchestrator.cpp.obj", "src\\api\\import_orchestrator.cpp"],
+  "file": "src\\api\\import_orchestrator.cpp"
+},
+{
+  "directory": "d:\\VScode\\KiCad_Forge",
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-O3", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-Isrc\\third_party\\webview", "-Isrc\\third_party\\webview2", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-DWEBVIEW_EDGE", "--target=x86_64-w64-windows-gnu", "-DNDEBUG", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\release\\src\\api\\routes.cpp.obj", "src\\api\\routes.cpp"],
+  "file": "src\\api\\routes.cpp"
+},
+{
+  "directory": "d:\\VScode\\KiCad_Forge",
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-O3", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-Isrc\\third_party\\webview", "-Isrc\\third_party\\webview2", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-DWEBVIEW_EDGE", "--target=x86_64-w64-windows-gnu", "-DNDEBUG", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\release\\src\\services\\classification_service.cpp.obj", "src\\services\\classification_service.cpp"],
   "file": "src\\services\\classification_service.cpp"
 },
 {
   "directory": "d:\\VScode\\KiCad_Forge",
-  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-g", "-O0", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\debug\\src\\services\\correspondence_service.cpp.obj", "src\\services\\correspondence_service.cpp"],
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-O3", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-Isrc\\third_party\\webview", "-Isrc\\third_party\\webview2", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-DWEBVIEW_EDGE", "--target=x86_64-w64-windows-gnu", "-DNDEBUG", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\release\\src\\services\\correspondence_service.cpp.obj", "src\\services\\correspondence_service.cpp"],
   "file": "src\\services\\correspondence_service.cpp"
 },
 {
   "directory": "d:\\VScode\\KiCad_Forge",
-  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-g", "-O0", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\debug\\src\\services\\library_service.cpp.obj", "src\\services\\library_service.cpp"],
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-O3", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-Isrc\\third_party\\webview", "-Isrc\\third_party\\webview2", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-DWEBVIEW_EDGE", "--target=x86_64-w64-windows-gnu", "-DNDEBUG", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\release\\src\\services\\import_pipeline.cpp.obj", "src\\services\\import_pipeline.cpp"],
+  "file": "src\\services\\import_pipeline.cpp"
+},
+{
+  "directory": "d:\\VScode\\KiCad_Forge",
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-O3", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-Isrc\\third_party\\webview", "-Isrc\\third_party\\webview2", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-DWEBVIEW_EDGE", "--target=x86_64-w64-windows-gnu", "-DNDEBUG", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\release\\src\\services\\library_service.cpp.obj", "src\\services\\library_service.cpp"],
   "file": "src\\services\\library_service.cpp"
 },
 {
   "directory": "d:\\VScode\\KiCad_Forge",
-  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-g", "-O0", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\debug\\src\\sexpr\\dom_builder.cpp.obj", "src\\sexpr\\dom_builder.cpp"],
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-O3", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-Isrc\\third_party\\webview", "-Isrc\\third_party\\webview2", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-DWEBVIEW_EDGE", "--target=x86_64-w64-windows-gnu", "-DNDEBUG", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\release\\src\\sexpr\\dom_builder.cpp.obj", "src\\sexpr\\dom_builder.cpp"],
   "file": "src\\sexpr\\dom_builder.cpp"
 },
 {
   "directory": "d:\\VScode\\KiCad_Forge",
-  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-g", "-O0", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\debug\\src\\sexpr\\dom_writer.cpp.obj", "src\\sexpr\\dom_writer.cpp"],
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-O3", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-Isrc\\third_party\\webview", "-Isrc\\third_party\\webview2", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-DWEBVIEW_EDGE", "--target=x86_64-w64-windows-gnu", "-DNDEBUG", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\release\\src\\sexpr\\dom_writer.cpp.obj", "src\\sexpr\\dom_writer.cpp"],
   "file": "src\\sexpr\\dom_writer.cpp"
 },
 {
   "directory": "d:\\VScode\\KiCad_Forge",
-  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-g", "-O0", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\debug\\src\\sexpr\\tokenizer.cpp.obj", "src\\sexpr\\tokenizer.cpp"],
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-O3", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-Isrc\\third_party\\webview", "-Isrc\\third_party\\webview2", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-DWEBVIEW_EDGE", "--target=x86_64-w64-windows-gnu", "-DNDEBUG", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\release\\src\\sexpr\\text_util.cpp.obj", "src\\sexpr\\text_util.cpp"],
+  "file": "src\\sexpr\\text_util.cpp"
+},
+{
+  "directory": "d:\\VScode\\KiCad_Forge",
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-O3", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-Isrc\\third_party\\webview", "-Isrc\\third_party\\webview2", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-DWEBVIEW_EDGE", "--target=x86_64-w64-windows-gnu", "-DNDEBUG", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\release\\src\\sexpr\\tokenizer.cpp.obj", "src\\sexpr\\tokenizer.cpp"],
   "file": "src\\sexpr\\tokenizer.cpp"
 },
 {
   "directory": "d:\\VScode\\KiCad_Forge",
-  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-g", "-O0", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\debug\\src\\parser\\footprint_parser.cpp.obj", "src\\parser\\footprint_parser.cpp"],
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-O3", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-Isrc\\third_party\\webview", "-Isrc\\third_party\\webview2", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-DWEBVIEW_EDGE", "--target=x86_64-w64-windows-gnu", "-DNDEBUG", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\release\\src\\parser\\footprint_parser.cpp.obj", "src\\parser\\footprint_parser.cpp"],
   "file": "src\\parser\\footprint_parser.cpp"
 },
 {
   "directory": "d:\\VScode\\KiCad_Forge",
-  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-g", "-O0", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\debug\\src\\parser\\symbol_lib_parser.cpp.obj", "src\\parser\\symbol_lib_parser.cpp"],
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-O3", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-Isrc\\third_party\\webview", "-Isrc\\third_party\\webview2", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-DWEBVIEW_EDGE", "--target=x86_64-w64-windows-gnu", "-DNDEBUG", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\release\\src\\parser\\symbol_lib_parser.cpp.obj", "src\\parser\\symbol_lib_parser.cpp"],
   "file": "src\\parser\\symbol_lib_parser.cpp"
 },
 {
   "directory": "d:\\VScode\\KiCad_Forge",
-  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-g", "-O0", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\debug\\src\\storage\\database.cpp.obj", "src\\storage\\database.cpp"],
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-O3", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-Isrc\\third_party\\webview", "-Isrc\\third_party\\webview2", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-DWEBVIEW_EDGE", "--target=x86_64-w64-windows-gnu", "-DNDEBUG", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\release\\src\\storage\\database.cpp.obj", "src\\storage\\database.cpp"],
   "file": "src\\storage\\database.cpp"
 },
 {
   "directory": "d:\\VScode\\KiCad_Forge",
-  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-g", "-O0", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\debug\\src\\storage\\repositories.cpp.obj", "src\\storage\\repositories.cpp"],
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-O3", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-Isrc\\third_party\\webview", "-Isrc\\third_party\\webview2", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-DWEBVIEW_EDGE", "--target=x86_64-w64-windows-gnu", "-DNDEBUG", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\release\\src\\storage\\repositories.cpp.obj", "src\\storage\\repositories.cpp"],
   "file": "src\\storage\\repositories.cpp"
 },
 {
   "directory": "d:\\VScode\\KiCad_Forge",
-  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-g", "-O0", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\debug\\src\\classifier\\rule_engine.cpp.obj", "src\\classifier\\rule_engine.cpp"],
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-O3", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-Isrc\\third_party\\webview", "-Isrc\\third_party\\webview2", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-DWEBVIEW_EDGE", "--target=x86_64-w64-windows-gnu", "-DNDEBUG", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\release\\src\\classifier\\rule_engine.cpp.obj", "src\\classifier\\rule_engine.cpp"],
   "file": "src\\classifier\\rule_engine.cpp"
 },
 {
   "directory": "d:\\VScode\\KiCad_Forge",
-  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-g", "-O0", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\debug\\src\\classifier\\rule_loader.cpp.obj", "src\\classifier\\rule_loader.cpp"],
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-O3", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-Isrc\\third_party\\webview", "-Isrc\\third_party\\webview2", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-DWEBVIEW_EDGE", "--target=x86_64-w64-windows-gnu", "-DNDEBUG", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\release\\src\\classifier\\rule_loader.cpp.obj", "src\\classifier\\rule_loader.cpp"],
   "file": "src\\classifier\\rule_loader.cpp"
 },
 {
   "directory": "d:\\VScode\\KiCad_Forge",
-  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-g", "-O0", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\debug\\src\\correspondence\\checker.cpp.obj", "src\\correspondence\\checker.cpp"],
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-O3", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-Isrc\\third_party\\webview", "-Isrc\\third_party\\webview2", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-DWEBVIEW_EDGE", "--target=x86_64-w64-windows-gnu", "-DNDEBUG", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\release\\src\\correspondence\\checker.cpp.obj", "src\\correspondence\\checker.cpp"],
   "file": "src\\correspondence\\checker.cpp"
 },
 {
   "directory": "d:\\VScode\\KiCad_Forge",
-  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-g", "-O0", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\debug\\src\\plugin\\plugin_manager.cpp.obj", "src\\plugin\\plugin_manager.cpp"],
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-O3", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-Isrc\\third_party\\webview", "-Isrc\\third_party\\webview2", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-DWEBVIEW_EDGE", "--target=x86_64-w64-windows-gnu", "-DNDEBUG", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\release\\src\\plugin\\plugin_manager.cpp.obj", "src\\plugin\\plugin_manager.cpp"],
   "file": "src\\plugin\\plugin_manager.cpp"
 },
 {
   "directory": "d:\\VScode\\KiCad_Forge",
-  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-g", "-O0", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\debug\\src\\core\\type_registry.cpp.obj", "src\\core\\type_registry.cpp"],
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-O3", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-Isrc\\third_party\\webview", "-Isrc\\third_party\\webview2", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-DWEBVIEW_EDGE", "--target=x86_64-w64-windows-gnu", "-DNDEBUG", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\release\\src\\core\\symbol.cpp.obj", "src\\core\\symbol.cpp"],
+  "file": "src\\core\\symbol.cpp"
+},
+{
+  "directory": "d:\\VScode\\KiCad_Forge",
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-O3", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-Isrc\\third_party\\webview", "-Isrc\\third_party\\webview2", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-DWEBVIEW_EDGE", "--target=x86_64-w64-windows-gnu", "-DNDEBUG", "-o", "build\\.objs\\KiCad_Forge\\mingw\\x86_64\\release\\src\\core\\type_registry.cpp.obj", "src\\core\\type_registry.cpp"],
   "file": "src\\core\\type_registry.cpp"
+},
+{
+  "directory": "d:\\VScode\\KiCad_Forge",
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-O3", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-DNDEBUG", "-o", "build\\.objs\\bench_import\\mingw\\x86_64\\release\\tests\\bench_import.cpp.obj", "tests\\bench_import.cpp"],
+  "file": "tests\\bench_import.cpp"
+},
+{
+  "directory": "d:\\VScode\\KiCad_Forge",
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-O3", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-DNDEBUG", "-o", "build\\.objs\\bench_import\\mingw\\x86_64\\release\\src\\core\\symbol.cpp.obj", "src\\core\\symbol.cpp"],
+  "file": "src\\core\\symbol.cpp"
+},
+{
+  "directory": "d:\\VScode\\KiCad_Forge",
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-O3", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-DNDEBUG", "-o", "build\\.objs\\bench_import\\mingw\\x86_64\\release\\src\\core\\type_registry.cpp.obj", "src\\core\\type_registry.cpp"],
+  "file": "src\\core\\type_registry.cpp"
+},
+{
+  "directory": "d:\\VScode\\KiCad_Forge",
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-O3", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-DNDEBUG", "-o", "build\\.objs\\bench_import\\mingw\\x86_64\\release\\src\\sexpr\\dom_builder.cpp.obj", "src\\sexpr\\dom_builder.cpp"],
+  "file": "src\\sexpr\\dom_builder.cpp"
+},
+{
+  "directory": "d:\\VScode\\KiCad_Forge",
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-O3", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-DNDEBUG", "-o", "build\\.objs\\bench_import\\mingw\\x86_64\\release\\src\\sexpr\\dom_writer.cpp.obj", "src\\sexpr\\dom_writer.cpp"],
+  "file": "src\\sexpr\\dom_writer.cpp"
+},
+{
+  "directory": "d:\\VScode\\KiCad_Forge",
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-O3", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-DNDEBUG", "-o", "build\\.objs\\bench_import\\mingw\\x86_64\\release\\src\\sexpr\\text_util.cpp.obj", "src\\sexpr\\text_util.cpp"],
+  "file": "src\\sexpr\\text_util.cpp"
+},
+{
+  "directory": "d:\\VScode\\KiCad_Forge",
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-O3", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-DNDEBUG", "-o", "build\\.objs\\bench_import\\mingw\\x86_64\\release\\src\\sexpr\\tokenizer.cpp.obj", "src\\sexpr\\tokenizer.cpp"],
+  "file": "src\\sexpr\\tokenizer.cpp"
+},
+{
+  "directory": "d:\\VScode\\KiCad_Forge",
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-O3", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-DNDEBUG", "-o", "build\\.objs\\bench_import\\mingw\\x86_64\\release\\src\\parser\\footprint_parser.cpp.obj", "src\\parser\\footprint_parser.cpp"],
+  "file": "src\\parser\\footprint_parser.cpp"
+},
+{
+  "directory": "d:\\VScode\\KiCad_Forge",
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-O3", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-DNDEBUG", "-o", "build\\.objs\\bench_import\\mingw\\x86_64\\release\\src\\parser\\symbol_lib_parser.cpp.obj", "src\\parser\\symbol_lib_parser.cpp"],
+  "file": "src\\parser\\symbol_lib_parser.cpp"
+},
+{
+  "directory": "d:\\VScode\\KiCad_Forge",
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-O3", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-DNDEBUG", "-o", "build\\.objs\\bench_import\\mingw\\x86_64\\release\\src\\storage\\database.cpp.obj", "src\\storage\\database.cpp"],
+  "file": "src\\storage\\database.cpp"
+},
+{
+  "directory": "d:\\VScode\\KiCad_Forge",
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-O3", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-DNDEBUG", "-o", "build\\.objs\\bench_import\\mingw\\x86_64\\release\\src\\storage\\repositories.cpp.obj", "src\\storage\\repositories.cpp"],
+  "file": "src\\storage\\repositories.cpp"
+},
+{
+  "directory": "d:\\VScode\\KiCad_Forge",
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-O3", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-DNDEBUG", "-o", "build\\.objs\\bench_import\\mingw\\x86_64\\release\\src\\services\\library_service.cpp.obj", "src\\services\\library_service.cpp"],
+  "file": "src\\services\\library_service.cpp"
+},
+{
+  "directory": "d:\\VScode\\KiCad_Forge",
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-O3", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-DNDEBUG", "-o", "build\\.objs\\bench_import\\mingw\\x86_64\\release\\src\\services\\import_pipeline.cpp.obj", "src\\services\\import_pipeline.cpp"],
+  "file": "src\\services\\import_pipeline.cpp"
+},
+{
+  "directory": "d:\\VScode\\KiCad_Forge",
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-O3", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-DNDEBUG", "-o", "build\\.objs\\bench_import\\mingw\\x86_64\\release\\src\\classifier\\rule_engine.cpp.obj", "src\\classifier\\rule_engine.cpp"],
+  "file": "src\\classifier\\rule_engine.cpp"
+},
+{
+  "directory": "d:\\VScode\\KiCad_Forge",
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-O3", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-DNDEBUG", "-o", "build\\.objs\\bench_import\\mingw\\x86_64\\release\\src\\classifier\\rule_loader.cpp.obj", "src\\classifier\\rule_loader.cpp"],
+  "file": "src\\classifier\\rule_loader.cpp"
+},
+{
+  "directory": "d:\\VScode\\KiCad_Forge",
+  "arguments": ["D:\\msys64\\mingw64\\bin\\clang++.exe", "-c", "-Qunused-arguments", "-m64", "-fvisibility=hidden", "-fvisibility-inlines-hidden", "-O3", "-std=c++23", "-Isrc", "-Isrc\\third_party", "-ID:\\msys64\\mingw64\\include", "-D_WIN32_WINNT=0x0A00", "-DNDEBUG", "-o", "build\\.objs\\bench_import\\mingw\\x86_64\\release\\src\\correspondence\\checker.cpp.obj", "src\\correspondence\\checker.cpp"],
+  "file": "src\\correspondence\\checker.cpp"
 }]

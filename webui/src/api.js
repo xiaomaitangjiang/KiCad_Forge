@@ -35,5 +35,8 @@ export const api = {
   pkgTypes:     ()              => request('/package-types'),
   manageType:   (url, action, name, extra) => request(url, { method: 'POST', body: JSON.stringify({ action, name, ...extra }) }),
   resetDb:      ()              => request('/db/reset', { method: 'POST' }),
+  pickFolder:   ()              => request('/pick-folder', { method: 'POST' }),
   importDir:    (dir)           => request(`/import?dir=${encodeURIComponent(dir)}`),
+  compLibraries:()              => request('/component-libraries'),
+  saveCompLibrary:(body)        => request('/component-libraries', { method: 'POST', body: JSON.stringify(body) }),
 }

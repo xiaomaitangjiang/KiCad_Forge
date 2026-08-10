@@ -1,14 +1,14 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { setLoadingCallback, api } from './api'
 import { useToast } from './hooks/useToast'
 import { useDarkMode } from './hooks/useDarkMode'
-import { useStatus, useSymbols, useLibraries, usePlugins, useIssues, useMatches, useSettings, useRules } from './hooks/useData'
+import { useStatus, useSymbols, useLibraries, usePlugins, useIssues, useMatches, useSettings, useRules, useComponentLibraries } from './hooks/useData'
 import Sidebar from './components/Sidebar'
 import Toolbar from './components/Toolbar'
 import SymbolTable from './components/SymbolTable'
 import Inspector from './components/Inspector'
-import { SettingsModal, RulesModal, PluginsModal, TypeModal, PluginActionModal } from './components/Modals'
+import { SettingsModal, RulesModal, PluginsModal, TypeModal, PluginActionModal, CreateLibraryModal, ImportingModal } from './components/Modals'
 import './App.css'
 
 const API = '/api'
@@ -27,6 +27,7 @@ export default function App() {
   const { matches, loadMatches } = useMatches()
   const { settings, setSettings, loadSettings } = useSettings()
   const { rules, loadRules } = useRules()
+  const { compLibraries, loadCompLibraries, setCompLibraries } = useComponentLibraries()
 
   // UI state
   const [filter, setFilter] = useState('')
@@ -47,15 +48,43 @@ export default function App() {
   const [compTypes, setCompTypes] = useState([])
   const [pkgTypes, setPkgTypes] = useState([])
 
+  // 确认弹窗（替代 window.confirm）
+  const [confirmState, setConfirmState] = useState({ open: false, message: '' })
+  const confirmResolve = useRef(null)
+
+  const showConfirm = useCallback((message) => {
+    return new Promise((resolve) => {
+      confirmResolve.current = resolve
+      setConfirmState({ open: true, message })
+    })
+  }, [])
+
+  const handleConfirmYes = useCallback(() => {
+    confirmResolve.current?.(true)
+    setConfirmState({ open: false, message: '' })
+  }, [])
+
+  const handleConfirmNo = useCallback(() => {
+    confirmResolve.current?.(false)
+    setConfirmState({ open: false, message: '' })
+  }, [])
+
   // Loading callback
   useEffect(() => { setLoadingCallback(setLoading) }, [])
 
   // Heartbeat + shutdown signal
+  // Use recursive setTimeout — browsers throttle setInterval in background tabs
   useEffect(() => {
-    const beat = setInterval(() => fetch(`${API}/status`).catch(()=>{}), 1000)
+    let active = true
+    function beat() {
+      if (!active) return
+      fetch(`${API}/status`).catch(()=>{})
+      setTimeout(beat, 1000)
+    }
+    beat()
     const bye = () => { navigator.sendBeacon(`${API}/bye`, '{}') }
     window.addEventListener('beforeunload', bye)
-    return () => { clearInterval(beat); window.removeEventListener('beforeunload', bye) }
+    return () => { active = false; window.removeEventListener('beforeunload', bye) }
   }, [])
 
   // Classify / check / match
@@ -80,9 +109,9 @@ export default function App() {
   }
 
   // Library operations
-  function createLibrary() { const name = prompt('Library name:'); if (name) api.createLibrary(name).then(() => loadLibraries()) }
+  const [showCreateLib, setShowCreateLib] = useState(false)
   async function deleteSymbol(sym) {
-    if (!confirm(t('confirm.deleteSymbol', { name: sym.name }))) return
+    if (!(await showConfirm(t('confirm.deleteSymbol', { name: sym.name })))) return
     const r = await api.deleteSymbol(sym.id)
     if (r?.ok) { toastMsg(t('toast.deleted', { name: '', extra: '' })); setSelected(null); loadSymbols(); loadStatus() }
     else toastMsg(r?.error || t('toast.failedUnknown'))
@@ -107,15 +136,15 @@ export default function App() {
 
       <Sidebar {...{filter, setFilter, clearFilters: () => { setFilter(''); setIssueFilter(false) }, setSelected, setTargetLib, loadSymbols: (q, lib) => loadSymbols(q, lib),
         status, issues, checkCorrespondence: toggleIssues, matches, autoMatch, typeList, issueFilter,
-        targetLib, setTargetLibRaw: setTargetLib, libraries, createLibrary,
+        targetLib, setTargetLibRaw: setTargetLib, libraries,
         loadRules, setShowRules, loadPlugins, setShowPlugins,
         loadCompTypes: () => { loadCompTypes(); setShowCompTypes(true) },
         setShowCompTypes, loadPkgTypes: () => { loadPkgTypes(); setShowPkgTypes(true) },
         setShowPkgTypes, loadSettings, setShowSettings,
-        dark, toggleDark, api, loadLibraries, loadSymbols, toastMsg }} />
+        dark, toggleDark, api, loadLibraries, loadSymbols, toastMsg, showConfirm }} />
 
       <div className="main">
-        <Toolbar {...{plugins, loadLibraries, setPluginAction, setPluginFormData, classify, checkCorrespondence, autoMatch, status, search, setSearch, loadSymbols}} />
+        <Toolbar {...{plugins, loadLibraries, setPluginAction, setPluginFormData, classify, checkCorrespondence, autoMatch, targetLib, status, search, setSearch, loadSymbols}} />
         <SymbolTable {...{symbols, filter, issueFilter, selected, setSelected}} />
         <div className="statusbar">
           <span>{t('status.filtered', { count: (filter ? symbols.filter(s => s.type === filter) : symbols).length, filter: filter ? ` · filtered by "${filter}"` : '' })}</span>
@@ -127,9 +156,12 @@ export default function App() {
 
       <div id="toast" className={toast ? 'show' : ''}>{toast}</div>
 
+      <ImportingModal onDone={() => { loadLibraries(); loadSymbols(); loadStatus(); }} />
+
       <PluginActionModal {...{pluginAction, setPluginAction, pluginFormData, setPluginFormData, libraries, toastMsg, loadSymbols, loadLibraries, loadStatus}} />
 
-      {showSettings  && <SettingsModal  {...{settings, setSettings, onClose: () => setShowSettings(false), loadSymbols, loadStatus, toastMsg}} />}
+      {showCreateLib && <CreateLibraryModal onClose={() => setShowCreateLib(false)} loadLibraries={loadLibraries} toastMsg={toastMsg} />}
+      {showSettings  && <SettingsModal  {...{settings, setSettings, compLibraries, setCompLibraries, loadCompLibraries, onClose: () => setShowSettings(false), loadSymbols, loadStatus, toastMsg, showConfirm}} />}
       {showRules     && <RulesModal     {...{rules, onClose: () => setShowRules(false)}} />}
       {showPlugins   && <PluginsModal   {...{plugins, onClose: () => setShowPlugins(false)}} />}
       {showCompTypes && <TypeModal title={t('types.componentTypes')} items={compTypes} onClose={()=>setShowCompTypes(false)}
@@ -138,6 +170,19 @@ export default function App() {
       {showPkgTypes  && <TypeModal title={t('types.packageTypes')} items={pkgTypes} onClose={()=>setShowPkgTypes(false)}
         onAdd={([name,cat])=>manageType('/package-types','add',name,{category:cat}).then(ok=>ok&&loadPkgTypes())}
         onRemove={name=>manageType('/package-types','remove',name).then(ok=>ok&&loadPkgTypes())} showCategory />}
+
+      {/* Confirm Dialog */}
+      {confirmState.open && (
+        <div className="modal-overlay show" onClick={e => { if (e.target === e.currentTarget) handleConfirmNo() }}>
+          <div className="confirm-modal">
+            <p style={{ whiteSpace: 'pre-line', lineHeight: 1.6 }}>{confirmState.message}</p>
+            <div className="btn-row" style={{ marginTop: 20 }}>
+              <button className="btn-ghost" onClick={handleConfirmNo}>Cancel</button>
+              <button className="btn-primary" style={{ background: 'var(--red)' }} onClick={handleConfirmYes}>Delete</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

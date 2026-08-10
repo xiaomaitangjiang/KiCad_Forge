@@ -3,6 +3,10 @@
     "title": "KiCad Forge",
     "noSymbols": "暂无元件",
     "noSymbolsHint": "点击侧栏的 Settings 配置元件库路径，然后点击 Save & Import。",
+    "importingTitle": "正在导入元件库",
+    "importingHint": "正在导入元件库，首次导入可能需要几分钟。",
+    "symbols": "符号",
+    "waitHint": "你可以关闭此窗口继续操作。",
     "selectComponent": "选择一个元件",
     "selectComponentHint": "查看详细信息"
   },
@@ -68,7 +72,19 @@
     "reimportAll": "重新导入",
     "reimportHint": "重新扫描配置的路径并导入所有元件和封装。",
     "reimportButton": "重新导入",
-    "dbLocation": "数据库位置"
+    "dbLocation": "数据库位置",
+    "compLibHint": "元件库将符号、封装和 3D 模型路径组合在一起。添加后点击「保存并导入」重新扫描。",
+    "addCompLib": "添加元件库",
+    "libName": "库名称",
+    "symbol": "符号",
+    "footprint": "封装",
+    "3d": "3D 模型",
+    "noPaths": "未配置路径 — 点击 ✎ 编辑",
+    "requiredHint": "必填",
+    "legacySinglePath": "单路径模式（兼容旧版）",
+    "writeKfId": "写入 Kicad_Forge_ID",
+    "writeKfIdHint": "导入时自动将 Kicad_Forge_ID 写回 .kicad_sym 文件。默认关闭以保护原始文件。",
+    "writeKfIdEnable": "启用写入（会修改官方库文件）"
   },
   "rules": {
     "title": "分类规则",
@@ -85,7 +101,8 @@
   "confirm": {
     "deleteSymbol": "删除 \"{{name}}\"？",
     "deleteLibrary": "删除库 \"{{name}}\" 及其本地文件？",
-    "resetDb": "重置数据库？所有元数据将丢失。\n磁盘上的 .kicad_sym 文件是安全的。\n重置后请重启应用。"
+    "resetDb": "重置数据库？所有元数据将丢失。\n磁盘上的 .kicad_sym 文件是安全的。\n重置后请重启应用。",
+    "deleteCompLibrary": "删除元件库 \"{{name}}\"？仅删除配置，不影响已导入的数据。"
   },
   "status": {
     "filtered": "{{count}} 个元件{{filter}}",

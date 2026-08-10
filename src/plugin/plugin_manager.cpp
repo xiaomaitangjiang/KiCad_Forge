@@ -1,10 +1,12 @@
 #include "plugin/plugin_manager.h"
+#include "util/logger.h"
 
 #include <fstream>
 #include <cstdio>
 #include <cstdlib>
 
 namespace kforge::plugin {
+using Kind = util::Error::Kind;
 
 PluginManager::PluginManager(const std::vector<std::filesystem::path>& paths)
     : search_paths_(paths) {}
@@ -30,9 +32,8 @@ void PluginManager::discover() {
             auto m = PluginManifest::from_file(manifest_path.string());
             if (m && !m->id.empty() && !m->name.empty()) {
                 auto id = m->id;
-                printf("[plugin] Discovered: %s v%s (%s) at %s\n",
-                       m->name.c_str(), m->version.c_str(), id.c_str(),
-                       entry.path().string().c_str());
+                LOG_INFO("[plugin] Discovered: {} v{} ({}) at {}",
+                         m->name, m->version, id, entry.path().string());
                 available_[id] = std::move(*m);
                 plugin_dirs_[id] = entry.path();
             }
@@ -83,7 +84,7 @@ util::Result<void> PluginManager::load(const std::string& plugin_id, IPluginCont
 
     auto dit = plugin_dirs_.find(plugin_id);
     if (dit == plugin_dirs_.end()) {
-        return std::unexpected(util::Error::not_found("Plugin not found: " + plugin_id));
+        return std::unexpected(util::Error::make<Kind::NotFound>("Plugin not found: " + plugin_id));
     }
 
     if (loaded_.count(plugin_id)) {
@@ -97,7 +98,7 @@ util::Result<void> PluginManager::load(const std::string& plugin_id, IPluginCont
     lp.initialized = true;
     loaded_[plugin_id] = std::move(lp);
 
-    printf("[plugin] Loaded: %s\n", plugin_id.c_str());
+    LOG_INFO("[plugin] Loaded: {}", plugin_id);
     return {};
 }
 
@@ -145,7 +146,7 @@ util::Result<std::string> PluginManager::execute(
     }
 
     if (plugin_dir.empty()) {
-        return std::unexpected(util::Error::not_found("Plugin not found: " + plugin_id));
+        return std::unexpected(util::Error::make<Kind::NotFound>("Plugin not found: " + plugin_id));
     }
     if (entry_script.empty()) {
         entry_script = "plugin.py";
@@ -153,7 +154,7 @@ util::Result<std::string> PluginManager::execute(
 
     auto script_path = plugin_dir / entry_script;
     if (!std::filesystem::exists(script_path)) {
-        return std::unexpected(util::Error::io("Plugin script not found: " + script_path.string()));
+        return std::unexpected(util::Error::make<Kind::IoError>("Plugin script not found: " + script_path.string()));
     }
 
     // Build command with proper quoting for the platform
@@ -171,14 +172,14 @@ util::Result<std::string> PluginManager::execute(
     std::string cmd = "python \"" + script_path.string() + "\" " + action + " '" + json_args + "'";
 #endif
 
-    printf("[plugin] Execute: %s\n", cmd.c_str());
+    LOG_DEBUG("[plugin] Execute: {}", cmd);
 
 #ifdef _WIN32
     // CreateProcess + CREATE_NO_WINDOW: no console popup
     HANDLE hRead, hWrite;
     SECURITY_ATTRIBUTES sa = {sizeof(sa), nullptr, TRUE};
     if (!CreatePipe(&hRead, &hWrite, &sa, 0))
-        return std::unexpected(util::Error::io("Failed to create pipe"));
+        return std::unexpected(util::Error::make<Kind::IoError>("Failed to create pipe"));
     SetHandleInformation(hRead, HANDLE_FLAG_INHERIT, 0);
 
     STARTUPINFOA si = {sizeof(si)};
@@ -201,19 +202,19 @@ util::Result<std::string> PluginManager::execute(
         DWORD ec = 0; GetExitCodeProcess(pi.hProcess, &ec);
         CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
         if (ec != 0 && output.empty())
-            { CloseHandle(hRead); return std::unexpected(util::Error::io("Plugin exit: " + std::to_string(ec))); }
+            { CloseHandle(hRead); return std::unexpected(util::Error::make<Kind::IoError>("Plugin exit: " + std::to_string(ec))); }
     }
     CloseHandle(hRead);
-    if (!ok) return std::unexpected(util::Error::io("Failed to launch plugin"));
+    if (!ok) return std::unexpected(util::Error::make<Kind::IoError>("Failed to launch plugin"));
     return output;
 #else
     FILE* pipe = popen(cmd.c_str(), "r");
-    if (!pipe) return std::unexpected(util::Error::io("Failed to execute plugin"));
+    if (!pipe) return std::unexpected(util::Error::make<Kind::IoError>("Failed to execute plugin"));
     std::string output; char buf[4096];
     while (fgets(buf, sizeof(buf), pipe)) output += buf;
     int rc = pclose(pipe);
     if (rc != 0 && output.empty())
-        return std::unexpected(util::Error::io("Plugin exit: " + std::to_string(rc)));
+        return std::unexpected(util::Error::make<Kind::IoError>("Plugin exit: " + std::to_string(rc)));
     return output;
 #endif
 }
@@ -249,6 +250,7 @@ util::Result<PluginManifest> PluginManifest::from_json(const nlohmann::json& doc
                 const auto& btn = a["button"];
                 act.button_show = btn.value("show", true);
                 act.button_style = btn.value("style", "both");
+                act.button_location = btn.value("location", "toolbar");
                 act.button_tooltip = btn.value("tooltip", "");
             }
             if (a.contains("schema")) act.schema = a["schema"];
@@ -263,7 +265,7 @@ util::Result<PluginManifest> PluginManifest::from_json(const nlohmann::json& doc
         for (auto& p : doc["platforms"]) m.platforms.push_back(p.get<std::string>());
     }
     if (m.id.empty() || m.name.empty()) {
-        return std::unexpected(util::Error::parse("manifest.json missing required fields (id, name)"));
+        return std::unexpected(util::Error::make<Kind::ParseError>("manifest.json missing required fields (id, name)"));
     }
     return m;
 }
@@ -271,13 +273,13 @@ util::Result<PluginManifest> PluginManifest::from_json(const nlohmann::json& doc
 util::Result<PluginManifest> PluginManifest::from_file(const std::string& path) {
     std::ifstream f(path);
     if (!f.is_open()) {
-        return std::unexpected(util::Error::io("Cannot open manifest: " + path));
+        return std::unexpected(util::Error::make<Kind::IoError>("Cannot open manifest: " + path));
     }
     try {
         auto doc = nlohmann::json::parse(f);
         return from_json(doc);
     } catch (const nlohmann::json::parse_error& e) {
-        return std::unexpected(util::Error::parse("Invalid JSON in " + path + ": " + e.what()));
+        return std::unexpected(util::Error::make<Kind::ParseError>("Invalid JSON in " + path + ": " + e.what()));
     }
 }
 

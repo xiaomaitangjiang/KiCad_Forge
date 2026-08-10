@@ -3,6 +3,10 @@
     "title": "KiCad Forge",
     "noSymbols": "No symbols loaded",
     "noSymbolsHint": "Click Settings in the sidebar to configure your symbol library path, then click Save & Import.",
+    "importingTitle": "Importing Libraries",
+    "importingHint": "Importing library. This may take a few minutes the first time.",
+    "symbols": "Symbols",
+    "waitHint": "You can close this window and continue working.",
     "selectComponent": "Select a component",
     "selectComponentHint": "to view details"
   },
@@ -68,7 +72,19 @@
     "reimportAll": "Reimport All",
     "reimportHint": "Re-scan configured paths and reimport all symbols/footprints.",
     "reimportButton": "Reimport",
-    "dbLocation": "Database Location"
+    "dbLocation": "Database Location",
+    "compLibHint": "A component library bundles symbol, footprint, and 3D model paths together. Add libraries then click Save & Import to scan.",
+    "addCompLib": "Add Component Library",
+    "libName": "Library Name",
+    "symbol": "Symbol",
+    "footprint": "Footprint",
+    "3d": "3D Model",
+    "noPaths": "No paths configured — click ✎ to edit",
+    "requiredHint": "required",
+    "legacySinglePath": "Legacy single-path mode",
+    "writeKfId": "Write Kicad_Forge_ID",
+    "writeKfIdHint": "Write Kicad_Forge_ID back to .kicad_sym files during import. Disabled by default to protect original files.",
+    "writeKfIdEnable": "Enable writing (modifies library files)"
   },
   "rules": {
     "title": "Classification Rules",
@@ -85,7 +101,8 @@
   "confirm": {
     "deleteSymbol": "Delete \"{{name}}\"?",
     "deleteLibrary": "Delete library \"{{name}}\" and its local files?",
-    "resetDb": "Reset database? All metadata will be lost.\n.kicad_sym files on disk are safe.\nRestart the app after."
+    "resetDb": "Reset database? All metadata will be lost.\n.kicad_sym files on disk are safe.\nRestart the app after.",
+    "deleteCompLibrary": "Delete component library \"{{name}}\"? Only removes config, imported data is kept."
   },
   "status": {
     "filtered": "{{count}} components{{filter}}",

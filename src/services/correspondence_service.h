@@ -25,7 +25,6 @@ public:
 
     /// Attempt to auto-link symbols to footprints based on heuristics.
     /// Actually writes matches to the relationship tables.
-    util::Result<int> auto_link();  // returns number of links created
 
 private:
     storage::Database* db_;

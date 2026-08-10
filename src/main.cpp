@@ -1,12 +1,11 @@
-// KiCad Forge — graphical symbol/footprint library manager
-// Entry point: starts HTTP server, opens native app window, manages lifecycle.
+#include "httplib.h"
 #include "api/api_server.h"
 #include "platform/app_window.h"
+#include "util/logger.h"
 
 #include <chrono>
+#include <string>
 #include <thread>
-
-#include "../third_party/httplib.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -14,58 +13,86 @@
 
 // --------------- main entry point ---------------
 
-static int run_server() {
-    (void)setvbuf(stdout, nullptr, _IONBF, 0);  
-    // unbuffered — printf visible in debugger
-    const int PORT = 20443;
+static int run_server()
+{
+    (void) setvbuf(stdout, nullptr, _IONBF, 0);
+    // 关闭输出缓冲区
 
-    // Check for stale process
-    httplib::Client probe("127.0.0.1", PORT);
-    probe.set_connection_timeout(0, 500000);
-    if (probe.Get("/api/status")) {
-        printf("Port %d is already in use. Is another instance running?\n", PORT);
+    // 0 = 让 OS 自动分配空闲端口
+    kforge::api::ApiServer server(0);
+    if (!server.start())
+    {
+        LOG_ERROR("Server start failed");
         return 1;
     }
-    
+    int PORT = server.port();
+    LOG_INFO("Server started on port {}", PORT);
 
-    // 1. Start HTTP backend
-    kforge::api::ApiServer server(PORT);
-    if (!server.start()) { printf("ERROR: Server start failed\n"); return 1; }
-
-    printf("KiCad Forge starting...\n"); fflush(stdout);
-
-    // 2. Wait for server to respond to HTTP requests
+    //等待服务器响应
     {
-        using namespace std::chrono;
+        using std::chrono::milliseconds;
+        using std::chrono::seconds;
+        using std::chrono::steady_clock;
         auto deadline = steady_clock::now() + seconds(8);
         bool ready = false;
-        while (steady_clock::now() < deadline) {
+        while (steady_clock::now() < deadline)
+        {
             httplib::Client cli("127.0.0.1", PORT);
             cli.set_connection_timeout(0, 200000);
-            if (cli.Get("/api/status")) { ready = true; break; }
+            if (cli.Get("/api/status"))
+            {
+                ready = true;
+                break;
+            }
             std::this_thread::sleep_for(milliseconds(200));
         }
-        if (!ready) { printf("ERROR: Server not responding\n"); return 1; }
+        if (!ready)
+        {
+            LOG_ERROR("Server did not respond within 8s");
+            return 1;
+        }
     }
-    printf("KiCad Forge running at http://127.0.0.1:%d\n", PORT);
+    LOG_INFO("Server responding on http://127.0.0.1:{}", PORT);
 
-    // 3. Open native app window, then block until user closes it.
-    //    Uses frontend heartbeat — works across all platforms.
+    //打开应用界面, 界面关闭时关闭后端进程.
     kforge::platform::WindowConfig cfg;
-    cfg.url = "http://127.0.0.1:20443";
+    cfg.url = "http://127.0.0.1:" + std::to_string(PORT);
 
     kforge::platform::NativeWindow win(cfg);
-    if (!win.open()) {
-        printf("ERROR: Could not open browser window\n");
+    if (!win.open())
+    {
+        LOG_ERROR("Failed to open browser window");
         return 1;
     }
-    printf("Close browser window or press Ctrl+C to stop\n"); fflush(stdout);
-    win.monitor([&] { return !server.should_stop() && server.ms_since_heartbeat() < 10000; });
+    LOG_INFO("Browser window opened");
+    win.monitor(
+        [&]
+        {
+            return !server.should_stop() && server.ms_since_heartbeat() < 30000;
+        });  // 30s 心跳超时 — 前端递归 setTimeout 不受浏览器节流
+    LOG_INFO("Shutting down (heartbeat stopped or bye signal received)");
+    // server destructor will join import thread, close DB, flush logs
     return 0;
 }
 
-// Windows subsystem: release builds use WinMain (no console)
+
 #ifdef _WIN32
-int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) { return run_server(); }
+int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
+{
+    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    int ret = run_server();
+    CoUninitialize();
+    return ret;
+}
 #endif
-int main() { return run_server(); }
+int main()
+{
+#ifdef _WIN32
+    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    int ret = run_server();
+    CoUninitialize();
+    return ret;
+#else
+    return run_server();
+#endif
+}

@@ -1,13 +1,19 @@
 #include "sexpr/tokenizer.h"
+#include "util/result.h"
 
 #include <cctype>
 
-namespace kforge::sexpr {
+namespace kforge::sexpr
+{
 
-Tokenizer::Tokenizer(std::string_view input)
-    : input_(input), pos_(0), line_(1), column_(1) {}
+using Kind = util::Error::Kind;
 
-Token Tokenizer::make_token(TokenType type, size_t start, size_t len) {
+Tokenizer::Tokenizer(std::string_view input) : input_(input), pos_(0), line_(1), column_(1)
+{
+}
+
+Token Tokenizer::make_token(TokenType type, size_t start, size_t len)
+{
     Token tok;
     tok.type = type;
     tok.text = input_.substr(start, len);
@@ -16,19 +22,23 @@ Token Tokenizer::make_token(TokenType type, size_t start, size_t len) {
     return tok;
 }
 
-void Tokenizer::skip_whitespace_and_comments() {
-    while (pos_ < input_.size()) {
+void Tokenizer::skip_whitespace_and_comments()
+{
+    while (pos_ < input_.size())
+    {
         char c = input_[pos_];
 
         // Whitespace
-        if (c == ' ' || c == '\t' || c == '\r') {
+        if (c == ' ' || c == '\t' || c == '\r')
+        {
             column_++;
             pos_++;
             continue;
         }
 
         // Newline
-        if (c == '\n') {
+        if (c == '\n')
+        {
             line_++;
             column_ = 1;
             pos_++;
@@ -36,8 +46,10 @@ void Tokenizer::skip_whitespace_and_comments() {
         }
 
         // Line comment (KiCAD uses # for comments in some files)
-        if (c == '#') {
-            while (pos_ < input_.size() && input_[pos_] != '\n') {
+        if (c == '#')
+        {
+            while (pos_ < input_.size() && input_[pos_] != '\n')
+            {
                 pos_++;
             }
             continue;
@@ -47,23 +59,27 @@ void Tokenizer::skip_whitespace_and_comments() {
     }
 }
 
-util::Result<Token> Tokenizer::read_atom() {
+util::Result<Token> Tokenizer::read_atom()
+{
     size_t start = pos_;
     int start_col = column_;
 
-    while (pos_ < input_.size()) {
+    while (pos_ < input_.size())
+    {
         char c = input_[pos_];
         // Atom characters: anything not whitespace, parens, or quotes
-        if (c == ' ' || c == '\t' || c == '\r' || c == '\n' ||
-            c == '(' || c == ')' || c == '"') {
+        if (c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '(' || c == ')' || c == '"')
+        {
             break;
         }
         pos_++;
     }
 
     size_t len = pos_ - start;
-    if (len == 0) {
-        return std::unexpected(util::Error::parse("empty atom", line_, start_col));
+    if (len == 0)
+    {
+        return std::unexpected(
+            util::Error::make<Kind::ParseError>("empty atom", line_, start_col));
     }
 
     auto tok = make_token(TokenType::Atom, start, len);
@@ -71,76 +87,92 @@ util::Result<Token> Tokenizer::read_atom() {
     return tok;
 }
 
-util::Result<Token> Tokenizer::read_string() {
+util::Result<Token> Tokenizer::read_string()
+{
     // Skip opening quote
     pos_++;  // skip '"'
     column_++;
     size_t start = pos_;
     int start_col = column_;
 
-    while (pos_ < input_.size()) {
+    while (pos_ < input_.size())
+    {
         char c = input_[pos_];
-        if (c == '"') {
+        if (c == '"')
+        {
             size_t len = pos_ - start;
             auto tok = make_token(TokenType::String, start, len);
             pos_++;  // skip closing quote
             column_++;
             return tok;
         }
-        if (c == '\\' && pos_ + 1 < input_.size()) {
+        if (c == '\\' && pos_ + 1 < input_.size())
+        {
             // Escaped character — skip it
             pos_ += 2;
             column_ += 2;
             continue;
         }
-        if (c == '\n') {
+        if (c == '\n')
+        {
             line_++;
             column_ = 1;
-        } else {
+        }
+        else
+        {
             column_++;
         }
         pos_++;
     }
 
-    return std::unexpected(util::Error::parse("unterminated string", line_, start_col));
+    return std::unexpected(util::Error::make<Kind::ParseError>("unterminated string", line_, start_col));
 }
 
-util::Result<Token> Tokenizer::next() {
+util::Result<Token> Tokenizer::next()
+{
     skip_whitespace_and_comments();
 
-    if (pos_ >= input_.size()) {
-        return Token{TokenType::Eof, {}, line_, column_};
+    if (pos_ >= input_.size())
+    {
+        return Token{.type=TokenType::Eof, .text={}, .line=line_, .column=column_};
     }
 
     char c = input_[pos_];
 
-    if (c == '(') {
+    if (c == '(')
+    {
         auto tok = make_token(TokenType::LParen, pos_, 1);
         pos_++;
         column_++;
         return tok;
     }
 
-    if (c == ')') {
+    if (c == ')')
+    {
         auto tok = make_token(TokenType::RParen, pos_, 1);
         pos_++;
         column_++;
         return tok;
     }
 
-    if (c == '"') {
+    if (c == '"')
+    {
         return read_string();
     }
 
     return read_atom();
 }
 
-util::Result<std::vector<Token>> Tokenizer::tokenize_all() {
+util::Result<std::vector<Token>> Tokenizer::tokenize_all()
+{
     std::vector<Token> tokens;
-    while (true) {
+    while (true)
+    {
         auto tok = next();
-        if (!tok) return std::unexpected(tok.error());
-        if (tok->type == TokenType::Eof) break;
+        if (!tok)
+            return std::unexpected(tok.error());
+        if (tok->type == TokenType::Eof)
+            break;
         tokens.push_back(*std::move(tok));
     }
     return tokens;
