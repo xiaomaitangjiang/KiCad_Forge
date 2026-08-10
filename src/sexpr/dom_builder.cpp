@@ -116,7 +116,7 @@ util::Result<std::unique_ptr<DomNode>> DomBuilder::parse_node(Tokenizer& tz)
     // KiCad: these node types have a name/number as the first atom after the type
     bool has_name_atom =
         (node->type() == "symbol" || node->type() == "pin" || node->type() == "footprint"
-         || node->type() == "pad");
+         || node->type() == "pad" || node->type() == "model");
     if (has_name_atom)
     {
         auto name_tok = tz.next();
