@@ -5,8 +5,6 @@
 //       | symbols_from{dir, lib_id}
 //       | footprints_from{dir}
 //       | models_from{dir}
-//       | with_auto_link{}
-//       | with_3d_linking{}
 //       | progress{[](auto& p, int d, int t) { LOG_INFO("{} {}/{}", p, d, t); }}
 //       | execute;
 #pragma once
@@ -48,8 +46,7 @@ inline IMP_Result imp_failed(std::string msg)
 struct symbols_from { std::string dir; std::string comp_lib_id; };
 struct footprints_from { std::string dir; };
 struct models_from { std::string dir; };
-struct with_3d_linking {};
-struct progress { std::function<void(const std::string& phase, int done, int total)> fn; };
+struct progress{ std::function<void(const std::string& phase, int done, int total)> fn; };
 
 // ---- Pipeline class ----
 class ImportPipeline {
@@ -62,7 +59,6 @@ public:
     ImportPipeline& operator|(symbols_from src);
     ImportPipeline& operator|(footprints_from src);
     ImportPipeline& operator|(models_from src);
-    ImportPipeline& operator|(with_3d_linking);
     ImportPipeline& operator|(progress p);
 
     struct execute_t {};
@@ -77,7 +73,6 @@ private:
     std::vector<symbols_from> pending_symbols_;
     std::vector<footprints_from> pending_footprints_;
     std::vector<models_from> pending_models_;
-    bool do_3d_linking_ = false;
     progress progress_fn_;
 
     // Internal implementation (moved from LibraryService)
@@ -87,7 +82,6 @@ private:
     ImportStats import_directory(const std::string& dir, const std::string& comp_lib_id = "");
     int scan_3d_models(const std::string& dir);
     void try_link_symbol_footprint(const std::string& sym_id, const std::string& fp_ref);
-    int do_link_3d_models();
 };
 
 inline constexpr ImportPipeline::execute_t execute{};

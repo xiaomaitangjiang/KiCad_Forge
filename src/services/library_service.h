@@ -28,8 +28,6 @@ public:
     util::Result<ImportStats> import_directory(const std::filesystem::path& dir,
                                                const std::string& component_library_id = "");
     util::Result<int> scan_3d_models(const std::filesystem::path& dir);
-    util::Result<int> link_3d_models_to_symbols();
-
     // -- Core operations --
     util::Result<int> merge_into_library(const std::filesystem::path& source_sym,
                                           const std::filesystem::path& target_sym);

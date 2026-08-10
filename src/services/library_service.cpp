@@ -53,13 +53,6 @@ util::Result<int> LibraryService::scan_3d_models(const std::filesystem::path& di
     return r.models_3d;
 }
 
-util::Result<int> LibraryService::link_3d_models_to_symbols() {
-    auto r = ImportPipeline(db_->handle())
-        | with_3d_linking{}
-        | execute;
-    return r.linked_models;
-}
-
 // ============================================================
 // delete_library
 // ============================================================

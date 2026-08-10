@@ -97,12 +97,6 @@ void ImportOrchestrator::start()
                 LOG_ERROR("Auto-import unknown exception");
             }
             running_ = false;
-
-            // Kick off async post-processing (auto-link + 3D link)
-            if (!cancel_.load(std::memory_order_relaxed))
-            {
-                async_link();
-            }
         });
 }
 
@@ -114,12 +108,6 @@ void ImportOrchestrator::stop()
         LOG_INFO("Shutdown: waiting for import thread...");
         import_thread_.join();
         LOG_INFO("Shutdown: import thread done");
-    }
-    if (link_thread_.joinable())
-    {
-        LOG_INFO("Shutdown: waiting for link thread...");
-        link_thread_.join();
-        LOG_INFO("Shutdown: link thread done");
     }
 }
 
@@ -172,45 +160,7 @@ services::ImportPipeline::Result ImportOrchestrator::run_now()
         LOG_ERROR("Failed to save last_import_ts: {}", util::error_formatter(sr.error()));
     }
 
-    // Post-processing runs async — response returns immediately
-    async_link();
     return result;
-}
-
-void ImportOrchestrator::async_link()
-{
-    if (cancel_.load(std::memory_order_relaxed))
-    {
-        return;
-    }
-    if (link_thread_.joinable())
-    {
-        link_thread_.join();
-    }
-
-    linking_ = true;
-    link_thread_ = std::thread(
-        [this]()
-        {
-            LOG_INFO("Async link: starting...");
-            try
-            {
-                services::ImportPipeline pipe(db_, &cancel_);
-                pipe | services::with_3d_linking{};
-                auto result = pipe | services::execute;
-                LOG_INFO("Async link done: {} symbol->footprint, {} footprint->3D model",
-                         result.linked_symbols, result.linked_models);
-            }
-            catch (const std::exception& e)
-            {
-                LOG_ERROR("Async link exception: {}", e.what());
-            }
-            catch (...)
-            {
-                LOG_ERROR("Async link unknown exception");
-            }
-            linking_ = false;
-        });
 }
 
 }  // namespace kforge::api

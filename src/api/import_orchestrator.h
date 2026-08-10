@@ -21,7 +21,6 @@ public:
     void stop();
 
     bool is_running() const { return running_.load(std::memory_order_relaxed); }
-    bool is_linking() const { return linking_.load(std::memory_order_relaxed); }
     int sym_count() const { return sym_count_.load(std::memory_order_relaxed); }
     int fp_count() const { return fp_count_.load(std::memory_order_relaxed); }
     bool cancel_requested() const { return cancel_.load(std::memory_order_relaxed); }
@@ -29,15 +28,10 @@ public:
     // Synchronous import, async post-processing (for manual "Reimport" button)
     services::ImportPipeline::Result run_now();
 
-    // Async auto-link + 3D linking (runs in background thread, non-blocking)
-    void async_link();
-
 private:
     sqlite3* db_;
     std::thread import_thread_;
-    std::thread link_thread_;
     std::atomic<bool> running_{false};
-    std::atomic<bool> linking_{false};
     std::atomic<bool> cancel_{false};
     std::atomic<int> sym_count_{0};
     std::atomic<int> fp_count_{0};

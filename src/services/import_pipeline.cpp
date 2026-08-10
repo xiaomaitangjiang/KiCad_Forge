@@ -42,11 +42,6 @@ ImportPipeline& ImportPipeline::operator|(models_from src)
     pending_models_.push_back(std::move(src));
     return *this;
 }
-ImportPipeline& ImportPipeline::operator|(with_3d_linking /*unused*/)
-{
-    do_3d_linking_ = true;
-    return *this;
-}
 ImportPipeline& ImportPipeline::operator|(progress p)
 {
     progress_fn_ = std::move(p);
@@ -81,12 +76,6 @@ ImportPipeline::Result ImportPipeline::operator|(execute_t /*unused*/)
     {
         int count = scan_3d_models(m.dir);
         r.models_3d += count;
-    }
-
-    // Phase 4: Link 3D models to footprints
-    if (do_3d_linking_)
-    {
-        r.linked_models = do_link_3d_models();
     }
 
     return r;
@@ -407,105 +396,6 @@ void ImportPipeline::try_link_symbol_footprint(const std::string& sym_id, const 
     {
         auto _ = rr.link_symbol_to_footprint(sym_id, fp->id(), "imported", 1.0);
     }
-}
-
-int ImportPipeline::do_link_3d_models()
-{
-    storage::SymbolRepository sr(db_);
-    storage::FootprintRepository fr(db_);
-    storage::Model3DRepository mr(db_);
-    storage::RelationshipRepository rr(db_);
-    auto syms = sr.find_all();
-    auto models = mr.find_all();
-    if (!syms || !models)
-    {
-        return 0;
-    }
-
-    // Build model stem → id index (O(N))
-    std::unordered_map<std::string, core::Uuid> model_index;
-    for (auto& m : *models)
-    {
-        std::string stem = m.file_path().stem().string();
-        if (!model_index.contains(stem))
-        {
-            model_index[stem] = m.id();
-        }
-    }
-
-    int linked = 0;
-    int skipped = 0;
-    int count = 0;
-    for (auto& sym : *syms)
-    {
-        if ((cancel_ != nullptr) && cancel_->load(std::memory_order_relaxed))
-        {
-            break;
-        }
-        if (sym.footprint().empty())
-        {
-            skipped++;
-            continue;
-        }
-        auto colon = sym.footprint().find(':');
-        std::string short_fp =
-            (colon != std::string::npos) ? sym.footprint().substr(colon + 1) : sym.footprint();
-        // Exact match
-        core::Uuid model_id;
-        auto it = model_index.find(short_fp);
-        if (it != model_index.end())
-        {
-            model_id = it->second;
-        }
-        else
-        {
-            // Substring match
-            for (auto& [stem, id] : model_index)
-            {
-                if (stem.contains(short_fp) || short_fp.contains(stem))
-                {
-                    model_id = id;
-                    break;
-                }
-            }
-        }
-        if (model_id.empty())
-        {
-            continue;
-        }
-
-        core::Uuid fp_id;
-        auto existing_fp = rr.find_footprint_for_symbol(sym.id());
-        if (existing_fp && *existing_fp)
-        {
-            fp_id = **existing_fp;
-        }
-        else
-        {
-            auto existing = fr.find_by_name(short_fp);
-            if (existing)
-            {
-                fp_id = existing->id();
-            }
-            else
-            {
-                core::Footprint fp;
-                fp.set_name(short_fp);
-                fp.set_description("Auto-created from symbol footprint_ref");
-                auto ins = fr.insert(fp);
-                if (!ins)
-                {
-                    continue;
-                }
-                fp_id = ins->id();
-            }
-            auto _ = rr.link_symbol_to_footprint(sym.id(), fp_id, "imported", 1.0);
-        }
-        auto _ = rr.link_footprint_to_model(fp_id, model_id, "heuristic");
-        linked++;
-    }
-    LOG_INFO("3D LINK: {} linked, {} skipped (no footprint_ref)", linked, skipped);
-    return linked;
 }
 
 }  // namespace kforge::services
