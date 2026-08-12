@@ -1,103 +1,210 @@
-# Contributing to KiCad Forge
+# Contributing to KiCad Forge / 贡献指南
 
-We welcome contributions! Here's how to get started.
+[中文](#中文) | [English](#english)
 
-## Development workflow
+---
 
-1. Fork & clone the repo
-2. Create a feature branch: `git checkout -b feature/your-feature`
-3. Install dependencies (see README Quick Start)
-4. Make your changes, following the conventions below
-5. Test both `debug` and `release` builds
-6. Submit a PR with a clear description of what changed and why
+## 中文
 
-## Code conventions
+- [开发流程](#开发流程)
+- [代码规范](#代码规范)
+- [提交前检查清单](#提交前检查清单)
+- [架构约定](#架构约定)
+- [目录结构](#目录结构)
+- [添加插件](#添加插件)
+- [不应提交的内容](#不应提交的内容)
 
-### C++
-- C++23, clang (MinGW target via MSYS2)
-- `printf` for output — **not** `std::println` (MinGW libstdc++ does not implement `__write_to_terminal`)
-- `snake_case` filenames, PascalCase types, snake_case methods
-- `util::Result<T>` for fallible operations — no exceptions in core logic
-- `#pragma once` for headers (not include guards)
-- Prefer `std::filesystem::path` over string concatenation for path manipulation
+### 开发流程
 
-### Frontend (React)
-- Functional components with hooks (`useState`, `useEffect`)
-- Inline SVG for icons, CSS variables for theming
-- `fetch()` with relative URLs (`/api/...`) — never hardcode ports or hosts
-- CSS class naming: kebab-case, scoped by component
+1. Fork 仓库并 clone
+2. 创建 feature 分支：`git checkout -b feature/xxx`
+3. 安装依赖（见 [README 快速开始](README.md#快速开始)）
+4. 遵循下方规范提交修改
+5. Debug + Release 均通过编译
+6. 提交 PR，附带清晰的改动说明
 
-### Build tooling
+### 代码规范
+
+**C++**
+
+- C++23，clang（MSYS2 MinGW 目标）
+- 文件名 `snake_case`，类型名 `PascalCase`，方法名 `snake_case`
+- `#pragma once`，不用 include guard
+- `util::Result<T>` 处理可失败操作，核心逻辑不抛异常
+- 优先用 `std::filesystem::path`，不用字符串拼接路径
+- 不为第三方库做兼容修改
+
+**前端（React）**
+
+- 函数组件 + Hooks
+- 内联 SVG 做图标，CSS 变量做主题
+- `fetch()` 用相对路径（`/api/...`），不硬编码端口
+- CSS class 用小写 kebab-case，按组件作用域命名
+
+**构建**
+
+- `xmake` 管理 C++ 编译，`npm`/Vite 管理前端
+- `before_build` 检查 SVG 是否更新，按需重生成 `app.ico`
+- `after_build` 复制 webui、plugins、DLL 到输出目录
+
+### 提交前检查清单
+
+1. `xmake build` 两种模式均编译通过
+2. `npm run build` 无警告
+3. 无新增编译警告
+4. 冒烟测试：启动 → 窗口正常显示 → 心跳正常 → 关闭窗口后进程退出
+
+### 架构约定
+
+| 约定 | 说明 |
+|---|---|
+| **便携优先** | 运行时数据在 `./data/`（exe 同级目录），回退 `%APPDATA%/KiCad_Forge/data/` |
+| **管道导入** | `ImportPipeline(db) \| symbols_from{...} \| footprints_from{...} \| models_from{...} \| execute` |
+| **CRTP 平台** | `AppWindow<Derived>` 编译期派发 |
+| **心跳生命周期** | 前端每 1s 调用 `/api/status`，后端 30s 无心跳则退出 |
+| **插件隔离** | 插件以独立 Python 进程运行 |
+| **插件发现** | 启动时扫描 `exe_dir/plugins/`，`manifest.json` 驱动全部 UI |
+
+### 目录结构
+
+```
+src/
+  api/                  HTTP 路由
+  core/                 领域模型
+  sexpr/                S-Expression 解析
+  parser/               KiCad 文件解析
+  storage/              SQLite 数据库
+  classifier/           分类规则
+  correspondence/       Symbol↔Footprint↔3D 追踪
+  services/             业务逻辑
+  plugin/               插件基础设施
+  platform/             跨平台窗口（CRTP）
+  util/                 工具类
+plugins/                插件包
+webui/                  前端
+resources/              Windows .rc + app.ico
+scripts/                构建辅助脚本
+```
+
+### 添加插件
+
+参考实现：[plugins/lcsc_import/](plugins/lcsc_import/)
+
+1. 创建 `plugins/<name>/`，放入：
+   - `manifest.json`（id、name、icon、actions 等）
+   - `icon.svg`（24×24 SVG）
+   - `plugin.py`（接收 `action` + JSON args，输出 JSON 到 stdout）
+2. 支持的字段类型：`text`、`library_picker`、`select`、`file_picker`
+3. 构建——`after_build` 自动复制 `plugins/`
+
+### 不应提交的内容
+
+- `build/` 构建产物
+- `*.db`、`*.db-wal`、`*.db-shm` 运行时数据库
+- `resources/app.ico`（构建时自动生成）
+- IDE 文件（`.idea/`、`*.user`）
+- DLL 和 exe 等二进制文件
+
+`.vscode/` 除外——包含共享的调试和构建配置。
+
+---
+
+## English
+
+- [Workflow](#workflow)
+- [Code Conventions](#code-conventions)
+- [Pre-submit Checklist](#pre-submit-checklist)
+- [Architecture Conventions](#architecture-conventions)
+- [Directory Structure](#directory-structure)
+- [Adding a Plugin](#adding-a-plugin)
+- [What Not to Commit](#what-not-to-commit)
+
+### Workflow
+
+1. Fork & clone
+2. Branch: `git checkout -b feature/xxx`
+3. Install dependencies (see [README Quick Start](README.md#quick-start))
+4. Follow conventions below
+5. Both debug & release build cleanly
+6. Submit a PR with a clear description
+
+### Code Conventions
+
+**C++**
+
+- C++23, clang (MSYS2 MinGW target)
+- `snake_case` filenames, `PascalCase` types, `snake_case` methods
+- `#pragma once` over include guards
+- `util::Result<T>` for fallible operations
+- Prefer `std::filesystem::path` over string concatenation
+- Never patch third-party library source
+
+**Frontend (React)**
+
+- Functional components + Hooks
+- Inline SVG icons, CSS variables for theming
+- `fetch()` with relative URLs (`/api/...`)
+- kebab-case CSS classes scoped by component
+
+**Build**
+
 - `xmake` for C++, `npm`/Vite for frontend
-- `python scripts/svg2ico.py` generates `resources/app.ico` from `webui/public/favicon.svg`
-- `after_build` in `xmake.lua` copies webui + plugins + required DLLs to the output directory
-- `before_build` regenerates the ICO when the source SVG is newer
+- `before_build` regenerates `app.ico` when source SVG changes
+- `after_build` copies webui + plugins + DLLs to output
 
-## Before submitting a PR
+### Pre-submit Checklist
 
-1. Both `debug` and `release` modes build cleanly (`xmake build`)
-2. `npm run build` in `webui/` passes without warnings
-3. No new compiler warnings (existing warnings in `api_server.cpp` are known)
-4. Manual smoke test:
-   - Launch exe — Edge window opens, toolbar loads
-   - Plugin button appears, dialog opens and works
-   - Close Edge — server exits within 1 second (heartbeat)
+1. `xmake build` passes for both modes
+2. `npm run build` passes without warnings
+3. No new compiler warnings
+4. Smoke test: launch → window renders → heartbeat works → process exits on close
 
-## Project architecture conventions
+### Architecture Conventions
 
 | Convention | Detail |
 |---|---|
-| **Portable-first** | Runtime data in `./data/` next to exe; falls back to `%APPDATA%/KiCad_Forge/data/` |
-| **No Qt** | Pure C++23 + httplib + SQLite3, web UI via React, Edge `--app` for native window |
-| **CRTP platform** | `AppWindow<Derived>` — compile-time dispatch, zero virtual overhead |
-| **Heartbeat lifecycle** | Frontend pings `/api/status` every 500ms. Server exits 1s after last ping. No process monitoring. |
-| **Plugin isolation** | Plugins run as separate Python processes via `CreateProcess(CREATE_NO_WINDOW)` |
-| **Plugin discovery** | `exe_dir/plugins/` scanned at startup. `manifest.json` drives all UI (actions, buttons, dialogs) |
+| **Portable-first** | Runtime data at `./data/`, fallback `%APPDATA%/KiCad_Forge/data/` |
+| **Pipeline import** | `ImportPipeline(db) \| symbols_from{...} \| footprints_from{...} \| models_from{...} \| execute` |
+| **CRTP platform** | `AppWindow<Derived>` compile-time dispatch |
+| **Heartbeat lifecycle** | Frontend pings `/api/status` every 1s; server exits after 30s of silence |
+| **Plugin isolation** | Plugins run as separate Python processes |
+| **Plugin discovery** | `exe_dir/plugins/` scanned at startup; `manifest.json` drives all UI |
 
-## Directory structure
+### Directory Structure
 
 ```
-src/                    C++ backend
-  api/                  HTTP routes (httplib)
+src/
+  api/                  HTTP routes
   core/                 Domain models
   sexpr/                S-Expression parser
   parser/               KiCad file parsers
-  storage/              SQLite database layer
+  storage/              SQLite database
   classifier/           Classification rules
   correspondence/       Symbol↔Footprint↔3D tracker
   services/             Business logic
   plugin/               Plugin infrastructure
   platform/             Cross-platform window (CRTP)
+  util/                 Utilities
 plugins/                Plugin bundles
-webui/                  React frontend
-resources/              Windows .rc + auto-generated .ico
-scripts/                Build helper scripts
+webui/                  Frontend
+resources/              Windows .rc + app.ico
+scripts/                Build helpers
 ```
 
-## Adding a plugin
+### Adding a Plugin
 
-1. Create `plugins/<name>/manifest.json` with:
-   - `id` — unique reverse-domain identifier
-   - `name` — display name
-   - `icon` — SVG icon filename
-   - `actions[]` — each with `id`, `name`, `trigger`, `schema.fields[]`
-2. Add `icon.svg` (24x24 SVG) to the plugin directory
-3. Write `plugin.py` — receives `action` + JSON args from CLI, outputs JSON to stdout
-4. Define `actions[].schema.fields[]` for any dialog-triggered actions. Supported field types:
-   - `text` — text input
-   - `library_picker` — library dropdown
-   - `select` — static options
-   - `file_picker` — file path input
-5. Rebuild — `after_build` copies `plugins/` automatically
+Reference: [plugins/lcsc_import/](plugins/lcsc_import/)
 
-See [plugins/lcsc_import/](plugins/lcsc_import/) for the reference implementation.
+1. Create `plugins/<name>/` with `manifest.json`, `icon.svg`, `plugin.py`
+2. Supported field types: `text`, `library_picker`, `select`, `file_picker`
+3. Build — `after_build` copies `plugins/` automatically
 
-## What NOT to commit
+### What Not to Commit
 
-- `build/` — build outputs (in `.gitignore`)
-- `*.db`, `*.db-wal`, `*.db-shm` — runtime databases
-- `resources/app.ico` — auto-generated from `favicon.svg` by `before_build`
+- `build/` directory
+- `*.db`, `*.db-wal`, `*.db-shm`
+- `resources/app.ico` (auto-generated)
 - IDE files (`.idea/`, `*.user`)
-- DLLs and exe files (`*.dll`, `*.exe`) — build artifacts
+- DLL and exe binaries
 
-The `.vscode/` directory IS tracked — it contains shared debug and build configurations.
+`.vscode/` is tracked — it contains shared debug and build configs.
