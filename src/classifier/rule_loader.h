@@ -4,7 +4,7 @@
 #include <vector>
 
 #include "classifier/rule.h"
-#include "util/result.h"
+#include "util/error.h"
 
 namespace kforge::classifier {
 

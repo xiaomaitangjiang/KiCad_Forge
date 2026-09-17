@@ -4,7 +4,7 @@
 #include <vector>
 #include <variant>
 
-#include "core/types.h"
+#include "core/model/types.h"
 
 namespace kforge::classifier {
 

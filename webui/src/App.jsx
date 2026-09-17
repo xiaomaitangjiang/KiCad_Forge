@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { setLoadingCallback, api } from './api'
 import { useToast } from './hooks/useToast'
@@ -8,7 +8,7 @@ import Sidebar from './components/Sidebar'
 import Toolbar from './components/Toolbar'
 import SymbolTable from './components/SymbolTable'
 import Inspector from './components/Inspector'
-import { SettingsModal, RulesModal, PluginsModal, TypeModal, PluginActionModal, CreateLibraryModal, ImportingModal } from './components/Modals'
+import { SettingsModal, RulesModal, PluginsModal, TypeModal, PluginActionModal, CreateLibraryModal, ImportingModal, ClassifyResultModal, MatchSuggestModal, DeleteLibraryModal } from './components/Modals'
 import './App.css'
 
 const API = '/api'
@@ -47,6 +47,7 @@ export default function App() {
   const [showPkgTypes, setShowPkgTypes] = useState(false)
   const [compTypes, setCompTypes] = useState([])
   const [pkgTypes, setPkgTypes] = useState([])
+  const [pendingDeleteLib, setPendingDeleteLib] = useState(null)  // DeleteLibraryModal pending
 
   // 确认弹窗（替代 window.confirm）
   const [confirmState, setConfirmState] = useState({ open: false, message: '' })
@@ -58,6 +59,26 @@ export default function App() {
       setConfirmState({ open: true, message })
     })
   }, [])
+
+  // Two-step delete: default = DB-only unregister; tick = also fs::remove file
+  const confirmDeleteLib = useCallback(async (deleteFile) => {
+    const lib = pendingDeleteLib
+    if (!lib) return
+    setPendingDeleteLib(null)
+    if (deleteFile) {
+      const r = await api.deleteLibrary(lib.id)
+      if (r?.ok) {
+        toastMsg(t('toast.deleted', { name: lib.name, extra: r.deleted_file ? ' (+file)' : '' }))
+        loadLibraries(); loadSymbols(); setTargetLib('')
+      } else toastMsg(r?.error || t('toast.failedUnknown'))
+    } else {
+      const r = await api.saveCompLibrary({ action: 'remove', id: lib.id })
+      if (r?.ok) {
+        toastMsg(t('toast.removed', { name: lib.name }))
+        loadLibraries(); loadSymbols(); setTargetLib('')
+      } else toastMsg(r?.error || t('toast.failedUnknown'))
+    }
+  }, [pendingDeleteLib, t, toastMsg, loadLibraries, loadSymbols])
 
   const handleConfirmYes = useCallback(() => {
     confirmResolve.current?.(true)
@@ -88,10 +109,13 @@ export default function App() {
   }, [])
 
   // Classify / check / match
+  const [classifyResult, setClassifyResult] = useState(null)
+  const [matchList, setMatchList] = useState(null)
+
   async function classify() {
     toastMsg(t('toast.classifying'))
     const r = await api.classify()
-    if (r) { toastMsg(t('toast.classified', { matched: r.matched, total: r.total })); loadSymbols(); loadStatus() }
+    if (r) { setClassifyResult(r); loadSymbols(); loadStatus() }
   }
   function toggleIssues() {
     setIssueFilter(prev => !prev)
@@ -104,8 +128,9 @@ export default function App() {
     toastMsg(issues.length === 0 ? t('toast.noIssues') : t('toast.issuesFound', { count: issues.length }))
   }
   async function autoMatch() {
-    await loadMatches()
-    toastMsg(t('toast.matchSuggestions', { count: matches.length }))
+    // useRequest.load returns the fresh data — the `matches` state is stale here
+    const list = await loadMatches() || []
+    setMatchList(list)
   }
 
   // Library operations
@@ -126,9 +151,11 @@ export default function App() {
     toastMsg(r?.error || 'Failed'); return false
   }
 
-  // Filtered data
-  const typeCounts = {}; symbols.forEach(s => { typeCounts[s.type] = (typeCounts[s.type]||0) + 1 })
-  const typeList = Object.entries(typeCounts).sort((a, b) => b[1] - a[1])
+  // Filtered data — memoized: rebuilt only when symbols change, not per render
+  const typeList = useMemo(() => {
+    const typeCounts = {}; symbols.forEach(s => { typeCounts[s.type] = (typeCounts[s.type]||0) + 1 })
+    return Object.entries(typeCounts).sort((a, b) => b[1] - a[1])
+  }, [symbols])
 
   return (
     <div className={dark ? 'app dark' : 'app'}>
@@ -137,6 +164,7 @@ export default function App() {
       <Sidebar {...{filter, setFilter, clearFilters: () => { setFilter(''); setIssueFilter(false) }, setSelected, setTargetLib, loadSymbols: (q, lib) => loadSymbols(q, lib),
         status, issues, checkCorrespondence: toggleIssues, matches, autoMatch, typeList, issueFilter,
         targetLib, setTargetLibRaw: setTargetLib, libraries,
+        onRequestDelete: setPendingDeleteLib,
         loadRules, setShowRules, loadPlugins, setShowPlugins,
         loadCompTypes: () => { loadCompTypes(); setShowCompTypes(true) },
         setShowCompTypes, loadPkgTypes: () => { loadPkgTypes(); setShowPkgTypes(true) },
@@ -152,7 +180,7 @@ export default function App() {
         </div>
       </div>
 
-      <Inspector {...{selected, classify, autoMatch, onDeleteSymbol: deleteSymbol}} />
+      <Inspector {...{selected, classify, onDeleteSymbol: deleteSymbol, onRefresh: loadSymbols}} />
 
       <div id="toast" className={toast ? 'show' : ''}>{toast}</div>
 
@@ -160,8 +188,11 @@ export default function App() {
 
       <PluginActionModal {...{pluginAction, setPluginAction, pluginFormData, setPluginFormData, libraries, toastMsg, loadSymbols, loadLibraries, loadStatus}} />
 
+      {classifyResult && <ClassifyResultModal result={classifyResult} onClose={() => setClassifyResult(null)} />}
+      {matchList && <MatchSuggestModal matches={matchList} onClose={() => setMatchList(null)} />}
+
       {showCreateLib && <CreateLibraryModal onClose={() => setShowCreateLib(false)} loadLibraries={loadLibraries} toastMsg={toastMsg} />}
-      {showSettings  && <SettingsModal  {...{settings, setSettings, compLibraries, setCompLibraries, loadCompLibraries, onClose: () => setShowSettings(false), loadSymbols, loadStatus, toastMsg, showConfirm}} />}
+      {showSettings  && <SettingsModal  {...{settings, setSettings, compLibraries, setCompLibraries, loadCompLibraries, onClose: () => setShowSettings(false), loadSymbols, loadStatus, toastMsg, showConfirm, onRequestDelete: setPendingDeleteLib}} />}
       {showRules     && <RulesModal     {...{rules, onClose: () => setShowRules(false)}} />}
       {showPlugins   && <PluginsModal   {...{plugins, onClose: () => setShowPlugins(false)}} />}
       {showCompTypes && <TypeModal title={t('types.componentTypes')} items={compTypes} onClose={()=>setShowCompTypes(false)}
@@ -182,6 +213,12 @@ export default function App() {
             </div>
           </div>
         </div>
+      )}
+      {pendingDeleteLib && (
+        <DeleteLibraryModal
+          lib={pendingDeleteLib}
+          onClose={() => setPendingDeleteLib(null)}
+          onConfirm={confirmDeleteLib} />
       )}
     </div>
   )

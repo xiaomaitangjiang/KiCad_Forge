@@ -17,6 +17,7 @@ export default function Sidebar({
   loadCompTypes, setShowCompTypes, loadPkgTypes, setShowPkgTypes,
   loadSettings, setShowSettings, dark, toggleDark, api,
   loadLibraries, toastMsg, showConfirm,
+  onRequestDelete,
 }) {
   const { t, i18n } = useTranslation()
   const [expanded, setExpanded] = useState({})
@@ -79,15 +80,11 @@ export default function Sidebar({
                   <div key={l.id} className={`nav-item ${targetLib === l.id ? 'active' : ''}`}
                     style={{ display:'flex', justifyContent:'space-between', padding:'3px 8px 3px 16px', fontSize:11 }}
                     onClick={() => { setFilter(''); setTargetLib(l.id); loadSymbols(null, l.id) }}>
-                    <span style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}><span className="dot dot-ok" /> {l.name}</span>
+                    <span style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}><span className="dot dot-ok" /> {l.locked ? '🔒 ' : ''}{l.name}</span>
+                    {/* Two-step: opens DeleteLibraryModal (default DB-only,
+                        opt-in checkbox escalates to fs::remove). */}
                     <span style={{ cursor:'pointer', color:'var(--red)', fontSize:12, padding:'0 2px' }}
-                      onClick={async e => { e.stopPropagation();
-                        if (!(await showConfirm(t('confirm.deleteLibrary', { name: l.name })))) return;
-                        api.deleteLibrary(l.id).then(x => {
-                          if (x?.ok) { toastMsg(t('toast.deleted', { name: l.name, extra: x.deleted_file ? ' + file' : '' })); loadLibraries(); loadSymbols(); setTargetLib('') }
-                          else toastMsg(x?.error || t('toast.failedUnknown'))
-                        })
-                      }}>×</span>
+                      onClick={e => { e.stopPropagation(); onRequestDelete(l) }}>×</span>
                   </div>
                 ))}
               </div>

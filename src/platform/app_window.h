@@ -4,6 +4,7 @@
 
 #include "../util/logger.h"
 
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
@@ -140,13 +141,13 @@ public:
         w_ = webview_create(0, nullptr);
         if (!w_)
         {
-            LOG_ERROR("webview: creation failed — WebView2 Runtime may be missing");
+            kforge::util::log_error{}("webview: creation failed — WebView2 Runtime may be missing");
             return false;
         }
         webview_set_title(w_, cfg_.title.c_str());
         webview_set_size(w_, cfg_.width, cfg_.height, WEBVIEW_HINT_NONE);
         webview_navigate(w_, cfg_.url.c_str());
-        LOG_INFO("webview: navigating to {}", cfg_.url);
+        kforge::util::log_info{}("webview: navigating to {}", cfg_.url);
 
         // Set window icon — webview uses IDI_APPLICATION by default
         webview_dispatch(
@@ -183,21 +184,32 @@ public:
         std::thread monitor_thread(
             [this](F is_alive_copy)
             {
+                // Wait for the first heartbeat (window may still be opening)
                 auto deadline = steady_clock::now() + seconds(30);
-                while (steady_clock::now() < deadline && !is_alive_copy())
+                while (!window_closed_ && steady_clock::now() < deadline && !is_alive_copy())
                 {
-                    std::this_thread::sleep_for(milliseconds(500));
+                    std::this_thread::sleep_for(milliseconds(200));
                 }
-                while (is_alive_copy())
+                // Poll: exit as soon as the window is gone (webview_run has
+                // returned — see window_closed_ below) or the heartbeat is
+                // lost (frontend crashed/hung without closing the window).
+                while (!window_closed_ && is_alive_copy())
                 {
-                    std::this_thread::sleep_for(seconds(1));
+                    std::this_thread::sleep_for(milliseconds(200));
                 }
-                LOG_INFO("webview: heartbeat lost, terminating...");
-                webview_terminate(w_);
+                if (!window_closed_)
+                {
+                    kforge::util::log_info{}("webview: heartbeat lost, terminating...");
+                    webview_terminate(w_);
+                }
             },
             std::forward<F>(is_alive));
 
-        webview_run(w_);  // blocks until webview_terminate() is called
+        webview_run(w_);  // returns when the window is closed
+        // Wake the monitor thread so join() below returns promptly — without
+        // this, a healthy heartbeat keeps is_alive() true forever and the
+        // process would hang on join() until the heartbeat timeout.
+        window_closed_ = true;
         if (monitor_thread.joinable())
         {
             monitor_thread.join();
@@ -206,6 +218,7 @@ public:
 
 private:
     webview_t w_ = nullptr;
+    std::atomic<bool> window_closed_{false};
 };
 
 using NativeWindow = WinWebView2Window;
