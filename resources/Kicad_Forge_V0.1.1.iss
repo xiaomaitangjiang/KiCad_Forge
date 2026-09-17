@@ -44,5 +44,11 @@ Source: "{#SourceDir}\plugins\*"; DestDir: "{userappdata}\KiCad_Forge\plugins"; 
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
+[UninstallDelete]
+; Runtime-generated data, logs and plugins are not tracked as installed files
+Type: filesandordirs; Name: "{userappdata}\KiCad_Forge"
+Type: filesandordirs; Name: "{app}\config"
+Type: filesandordirs; Name: "{app}\data"
+
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent

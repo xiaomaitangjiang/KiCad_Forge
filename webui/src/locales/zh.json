@@ -38,7 +38,6 @@
     "footprint": "封装",
     "notAssigned": "未分配",
     "3dModel": "3D 模型",
-    "linked": "已关联",
     "notLinked": "未分配",
     "pinCount": "引脚数",
     "mpn": "型号",
@@ -46,7 +45,25 @@
     "quickActions": "快捷操作",
     "findFootprint": "查找匹配封装",
     "deleteSymbol": "删除元件",
-    "type": "类型"
+    "type": "类型",
+    "clickToChange": "点击修改",
+    "lockedHint": "属于锁定库：删除、绑定与分类已被禁用（导入同步不受影响）",
+    "settings": "元件设置",
+    "noFootprintFirst": "请先分配封装",
+    "bindFootprint": "封装",
+    "bindModel": "3D 模型",
+    "confirmApply": "应用修改",
+    "cancelApply": "取消",
+    "close": "关闭",
+    "classifyResult": "分类结果",
+    "matchSuggestions": "匹配建议",
+    "typeUpdated": "类型更新：{{count}}",
+    "confidence": "置信度",
+    "score": "匹配度",
+    "matchFor": "{{name}} 的匹配建议",
+    "noMatches": "无匹配封装",
+    "searchFootprint": "搜索封装…",
+    "searchModel": "搜索 3D 模型…"
   },
   "plugin": {
     "cancel": "取消",
@@ -58,7 +75,7 @@
   "settings": {
     "title": "设置",
     "libraryPaths": "库路径",
-    "symbolPath": "元件库路径",
+    "symbolPath": "符号库路径",
     "symbolPathHint": "包含 .kicad_sym 文件的目录",
     "footprintPath": "封装库路径",
     "footprintPathHint": "包含 .kicad_mod 文件的目录",
@@ -80,11 +97,16 @@
     "footprint": "封装",
     "3d": "3D 模型",
     "noPaths": "未配置路径 — 点击 ✎ 编辑",
+    "lock": "锁定",
+    "unlock": "解锁",
+    "locked": "已锁定",
+    "unlocked": "已解锁",
+    "officialLocked": "KiCad 官方库——默认锁定，不可解锁",
     "requiredHint": "必填",
-    "legacySinglePath": "单路径模式（兼容旧版）",
     "writeKfId": "写入 Kicad_Forge_ID",
     "writeKfIdHint": "导入时自动将 Kicad_Forge_ID 写回 .kicad_sym 文件。默认关闭以保护原始文件。",
-    "writeKfIdEnable": "启用写入（会修改官方库文件）"
+    "writeKfIdEnable": "启用写入（会修改官方库文件）",
+    "standardLibraryGuard": "🔒 标准 KiCad 库受保护。请勿解锁；如需启用文件写入，请确认你知道这会修改官方库文件。"
   },
   "rules": {
     "title": "分类规则",
@@ -100,9 +122,14 @@
   },
   "confirm": {
     "deleteSymbol": "删除 \"{{name}}\"？",
-    "deleteLibrary": "删除库 \"{{name}}\" 及其本地文件？",
+    "deleteLibrary": "从列表中移除库 \"{{name}}\"？\n",
     "resetDb": "重置数据库？所有元数据将丢失。\n磁盘上的 .kicad_sym 文件是安全的。\n重置后请重启应用。",
-    "deleteCompLibrary": "删除元件库 \"{{name}}\"？仅删除配置，不影响已导入的数据。"
+    "deleteCompLibrary": "删除元件库 \"{{name}}\"？仅删除配置，不影响已导入的数据。",
+    "deleteLibraryTitle": "删除元件库 \"{{name}}\"？",
+    "deleteLibraryHint": "默认仅从 KiCad Forge 移除该库的登记。\n勾选下方复选框可同时删除磁盘上的 .kicad_sym 文件。",
+    "deleteLibraryFile": "同时删除本地 .kicad_sym 文件",
+    "deleteLibraryFileWarning": "此操作将永久删除磁盘上的文件，不可撤销。",
+    "deleteLibraryOk": "删除"
   },
   "status": {
     "filtered": "{{count}} 个元件{{filter}}",
@@ -123,6 +150,7 @@
     "imported": "已导入 {{id}}: {{count}} 到库",
     "failed": "失败: {{error}}",
     "failedUnknown": "失败: 未知错误",
+    "locked": "库已锁定，无法修改",
     "executing": "正在执行...",
     "done": "完成: {{count}} 已导入",
     "required": "{{label}} 为必填项"

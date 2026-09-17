@@ -1,9 +1,16 @@
-#include "httplib.h"
-#include "api/api_server.h"
+#include "core/db/db_service.hpp"
+#include "core/model/type_registry.h"
+#include "interface/api/api_server.h"
+#include "interface/api/import_manager.h"
+#include "interface/manager/setup/launcher.hpp"
 #include "platform/app_window.h"
+#include "util/config_store.h"
 #include "util/logger.h"
+#include "util/platform.h"
 
 #include <chrono>
+#include <cstdio>
+#include <filesystem>
 #include <string>
 #include <thread>
 
@@ -13,22 +20,45 @@
 
 // --------------- main entry point ---------------
 
+// Frontend sends heartbeats via recursive setTimeout (immune to browser
+// background-tab throttling), so a 5s timeout is safe; the old 30s made the
+// process linger for ~30s after the window closed.
+static constexpr auto kHeartbeatTimeoutMs = 5000;
+
 static int run_server()
 {
     (void) setvbuf(stdout, nullptr, _IONBF, 0);
-    // 关闭输出缓冲区
 
-    // 0 = 让 OS 自动分配空闲端口
-    kforge::api::ApiServer server(0);
-    if (!server.start())
+    using namespace kforge;
+
+    // --- 初始化全部在 main：服务实例先构造 ---
+    auto data_dir = util::get_data_dir();
+    std::filesystem::create_directories(data_dir);
+
+    util::ConfigStore cfg(data_dir + "/config.json");
+    auto plugins = plugin::PluginManager::create_default();
+
+    // ---- Launcher 编排：声明序 build（logger→db→…→apiserver，依赖注入）。
+    //      CTAD：左值→T&（引用槽）、右值→T（右值槽入静态 store）
+    kforge::launcher::Launcher l(util::Logger{},
+                                 storage::DbService{data_dir + "/meta.db"},
+                                 cfg,
+                                 *plugins,
+                                 api::ImportManager{},
+                                 core::TypeRegistry::instance(),
+                                 api::ApiServer{});
+
+    auto r = l.launch_all();  // 经 Launcher 触发各服务 build；失败带服务类型
+    if (!r.ok())
     {
-        LOG_ERROR("Server start failed");
+        kforge::util::log_error{}("Launch failed: {}", r.result.error().format_message());
         return 1;
     }
-    int PORT = server.port();
-    LOG_INFO("Server started on port {}", PORT);
 
-    //等待服务器响应
+    int PORT = l.get<api::ApiServer>().port();
+    kforge::util::log_info{}("Server started on port {}", PORT);
+
+    // 等待服务器响应
     {
         using std::chrono::milliseconds;
         using std::chrono::seconds;
@@ -48,33 +78,34 @@ static int run_server()
         }
         if (!ready)
         {
-            LOG_ERROR("Server did not respond within 8s");
+            kforge::util::log_error{}("Server did not respond within 8s");
             return 1;
         }
     }
-    LOG_INFO("Server responding on http://127.0.0.1:{}", PORT);
+    kforge::util::log_info{}("Server responding on http://127.0.0.1:{}", PORT);
 
-    //打开应用界面, 界面关闭时关闭后端进程.
-    kforge::platform::WindowConfig cfg;
-    cfg.url = "http://127.0.0.1:" + std::to_string(PORT);
+    //打开应用界面, 界面关闭时关闭后端进程
+    kforge::platform::WindowConfig win_cfg;
+    win_cfg.url = "http://127.0.0.1:" + std::to_string(PORT);
 
-    kforge::platform::NativeWindow win(cfg);
+    kforge::platform::NativeWindow win(win_cfg);
     if (!win.open())
     {
-        LOG_ERROR("Failed to open browser window");
+        kforge::util::log_error{}("Failed to open browser window");
         return 1;
     }
-    LOG_INFO("Browser window opened");
+    kforge::util::log_info{}("Browser window opened");
+    l.get<api::ImportManager>().start_async();  // 导入归 ImportManager（窗口后启动）
     win.monitor(
         [&]
         {
-            return !server.should_stop() && server.ms_since_heartbeat() < 30000;
-        });  // 30s 心跳超时 — 前端递归 setTimeout 不受浏览器节流
-    LOG_INFO("Shutting down (heartbeat stopped or bye signal received)");
-    // server destructor will join import thread, close DB, flush logs
+            return !l.get<api::ApiServer>().should_stop() &&
+                   l.get<api::ApiServer>().ms_since_heartbeat() < kHeartbeatTimeoutMs;
+        });
+    kforge::util::log_info{}("Shutting down (heartbeat stopped or bye signal received)");
+    // 栈析构：~Launcher → 自动调用destroy_all（忽略报错）
     return 0;
 }
-
 
 #ifdef _WIN32
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)

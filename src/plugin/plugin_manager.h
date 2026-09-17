@@ -15,7 +15,7 @@
 #endif
 
 #include "plugin/iplugin.h"
-#include "util/result.h"
+#include "util/error.h"
 
 namespace kforge::plugin {
 
@@ -29,6 +29,12 @@ public:
         const std::vector<std::filesystem::path>& search_paths);
 
     ~PluginManager();
+
+    /// Create a manager over the standard search paths (bundled exe-dir plugins +
+    /// user plugins, deduplicated), run discovery, and auto-load one-click plugins.
+    /// Equivalent of the former ApiServer::init_plugins(); kept as a factory so
+    /// tests can still construct with explicit paths.
+    static std::unique_ptr<PluginManager> create_default();
 
     // --- Discovery ---
 

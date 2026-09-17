@@ -38,7 +38,6 @@
     "footprint": "Footprint",
     "notAssigned": "Not assigned",
     "3dModel": "3D Model",
-    "linked": "Linked",
     "notLinked": "Not assigned",
     "pinCount": "Pin Count",
     "mpn": "MPN",
@@ -46,7 +45,25 @@
     "quickActions": "Quick Actions",
     "findFootprint": "Find Matching Footprint",
     "deleteSymbol": "Delete Symbol",
-    "type": "Type"
+    "type": "Type",
+    "clickToChange": "Click to change",
+    "lockedHint": "Belongs to a locked library: delete, bind and classify are disabled (import sync is not affected)",
+    "settings": "Settings",
+    "noFootprintFirst": "Assign a footprint first",
+    "bindFootprint": "Footprint",
+    "bindModel": "3D Model",
+    "confirmApply": "Apply changes",
+    "cancelApply": "Cancel",
+    "close": "Close",
+    "classifyResult": "Classification Results",
+    "matchSuggestions": "Match Suggestions",
+    "typeUpdated": "Types updated: {{count}}",
+    "confidence": "Confidence",
+    "score": "Score",
+    "matchFor": "Matches for {{name}}",
+    "noMatches": "No matching footprints",
+    "searchFootprint": "Search footprint…",
+    "searchModel": "Search 3D model…"
   },
   "plugin": {
     "cancel": "Cancel",
@@ -80,11 +97,16 @@
     "footprint": "Footprint",
     "3d": "3D Model",
     "noPaths": "No paths configured — click ✎ to edit",
+    "lock": "Lock",
+    "unlock": "Unlock",
+    "locked": "Locked",
+    "unlocked": "Unlocked",
+    "officialLocked": "Official KiCad library — locked, cannot unlock",
     "requiredHint": "required",
-    "legacySinglePath": "Legacy single-path mode",
     "writeKfId": "Write Kicad_Forge_ID",
     "writeKfIdHint": "Write Kicad_Forge_ID back to .kicad_sym files during import. Disabled by default to protect original files.",
-    "writeKfIdEnable": "Enable writing (modifies library files)"
+    "writeKfIdEnable": "Enable writing (modifies library files)",
+    "standardLibraryGuard": "🔒 Standard KiCad libraries are protected. Do not unlock them. If you need to enable writing Kicad_Forge_ID back to .kicad_sym, be aware this will modify official library files."
   },
   "rules": {
     "title": "Classification Rules",
@@ -100,9 +122,14 @@
   },
   "confirm": {
     "deleteSymbol": "Delete \"{{name}}\"?",
-    "deleteLibrary": "Delete library \"{{name}}\" and its local files?",
+    "deleteLibrary": "Unregister library \"{{name}}\" from the list?\n",
     "resetDb": "Reset database? All metadata will be lost.\n.kicad_sym files on disk are safe.\nRestart the app after.",
-    "deleteCompLibrary": "Delete component library \"{{name}}\"? Only removes config, imported data is kept."
+    "deleteCompLibrary": "Delete component library \"{{name}}\"? Only removes config, imported data is kept.",
+    "deleteLibraryTitle": "Delete library \"{{name}}\"?",
+    "deleteLibraryHint": "By default this only removes the library from KiCad Forge.\nCheck the box below to also delete the .kicad_sym file on disk.",
+    "deleteLibraryFile": "Also delete the local .kicad_sym file",
+    "deleteLibraryFileWarning": "This will permanently remove the file from disk. This cannot be undone.",
+    "deleteLibraryOk": "Delete"
   },
   "status": {
     "filtered": "{{count}} components{{filter}}",
@@ -123,6 +150,7 @@
     "imported": "Imported {{id}}: {{count}} in library",
     "failed": "Failed: {{error}}",
     "failedUnknown": "Failed: unknown",
+    "locked": "Library is locked",
     "executing": "Executing...",
     "done": "Done: {{count}} imported",
     "required": "{{label}} is required"

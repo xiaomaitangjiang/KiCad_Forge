@@ -1,157 +1,157 @@
+// Generic error handling primitives — standard-library style
+//   ErrorInfo<ErrorTs...>  — variant dispatch
+//   StatusResult<E, Info>  — enum status + typed context
+//   ErrorVisitor<Derived>  — CRTP visitor factory + dispatch
 #pragma once
 
-#include <concepts>
-#include <cstdint>
-#include <expected>
+#include <cstddef>
 #include <string>
+#include <type_traits>
 #include <utility>
+#include <variant>
 
 namespace kforge::util
 {
 
-/// Error type used across the project.
-class Error
+namespace detail
+{
+template <typename... Fs>
+struct Overloaded : Fs...
+{
+    using Fs::operator()...;
+};
+template <typename... Fs>
+Overloaded(Fs...) -> Overloaded<Fs...>;
+}  // namespace detail
+
+// ============================================================
+// ErrorInfo<ErrorTs...> — variant dispatch
+// ============================================================
+template <typename... ErrorTs>
+class ErrorInfo
 {
 public:
-    enum class Kind
-    {
-        None,
-        ParseError,
-        IoError,
-        DbError,
-        NetworkError,
-        PluginError,
-        ServiceError,
-        ValidationError,
-        NotFound,
-        InternalError,
-    };
+    using Variant = std::variant<ErrorTs...>;
+    static constexpr size_t N = sizeof...(ErrorTs);
 
-public:
-    Error() = default;
-    ~Error() = default;
+    // The first error type acts as the empty state for default construction
+    // (used by StatusResult::ok() aggregate init and Error's default ctor)
+    static_assert(std::is_default_constructible_v<std::variant_alternative_t<0, Variant>>,
+                  "First error type must be default-constructible (acts as the empty state)");
 
     template <typename T>
-    requires std::constructible_from<std::string, T>
-    Error(Kind error_type, T&& message, int line, int column)
-        : kind_(error_type), message_(std::forward<T>(message)), line_(line), column_(column)
+    requires(std::is_same_v<std::decay_t<T>, ErrorTs> || ...)
+    explicit ErrorInfo(T&& v) noexcept(std::is_nothrow_constructible_v<Variant, T>)
+        : value_(std::forward<T>(v))
     {
     }
 
-    // Getters
-    [[nodiscard]] Kind kind() const
+    ErrorInfo() = default;
+
+    // Per-type visitor — one lambda per error type; the compiler checks
+    // coverage, and an auto&& fallback may cover the remaining types
+    template <typename... Visitors>
+    decltype(auto) match(Visitors&&... visitors) const
     {
-        return kind_;
-    }
-    [[nodiscard]] const std::string& message() const
-    {
-        return message_;
-    }
-    [[nodiscard]] int line() const
-    {
-        return line_;
-    }
-    [[nodiscard]] int column() const
-    {
-        return column_;
+        return std::visit(detail::Overloaded{std::forward<Visitors>(visitors)...}, value_);
     }
 
-    // Template factory — all kinds share this, ParseError can pass extra line/column
-    template <Kind K>
-    static Error make(std::string msg, int line = 0, int column = 0)
+    // Pre-built overloaded visitor — single callable covering all types
+    template <typename Visitor>
+    [[nodiscard]] decltype(auto) visit(Visitor&& v) const
+        noexcept(noexcept(std::visit(std::forward<Visitor>(v), value_)))
     {
-        return {K, msg, line, column};
+        return std::visit(std::forward<Visitor>(v), value_);
+    }
+
+    // Check if holds a specific error type
+    template <typename T>
+    [[nodiscard]] bool is() const noexcept
+    {
+        return std::holds_alternative<T>(value_);
+    }
+
+    // Get the held value by type or by index (mutable and const access)
+    template <typename T>
+    [[nodiscard]] T& get()
+    {
+        return std::get<T>(value_);
+    }
+    template <typename T>
+    [[nodiscard]] const T& get() const
+    {
+        return std::get<T>(value_);
+    }
+    template <std::size_t T>
+    [[nodiscard]] decltype(auto) get() const
+    {
+        return std::get<T>(value_);
+    }
+
+    [[nodiscard]] const Variant& variant() const noexcept
+    {
+        return value_;
     }
 
 private:
-    Kind kind_ = Kind::None;
-    std::string message_;
-    int line_ = 0;
-    int column_ = 0;
-
-    // Friend: formatter accesses private fields
-    template <Kind K>
-    friend struct ErrorFormatter;
+    Variant value_{};
 };
 
+// deduction guide
 template <typename T>
-using Result = std::expected<T, Error>;
+ErrorInfo(T) -> ErrorInfo<std::decay_t<T>>;
 
-// ============================================================
-// Error formatting
-// ============================================================
-
-template <Error::Kind K>
-struct ErrorFormatter
+// ---- make_error_visitor: create an overloaded visitor on the fly ----
+template <typename... Fs>
+auto make_error_visitor(Fs&&... fns)
 {
-    static std::string format(const Error& e)
-    {
-        return e.message_;
-    }
-};
-
-template <>
-struct ErrorFormatter<Error::Kind::ParseError>
-{
-    static std::string format(const Error& e)
-    {
-        if (e.line_ > 0)
-            return e.message_ + " at " + std::to_string(e.line_) + ":" + std::to_string(e.column_);
-        return e.message_;
-    }
-};
-
-inline std::string error_formatter(const Error& e)
-{
-    switch (e.kind())
-    {
-        case Error::Kind::ParseError:
-            return ErrorFormatter<Error::Kind::ParseError>::format(e);
-        case Error::Kind::IoError:
-            return ErrorFormatter<Error::Kind::IoError>::format(e);
-        case Error::Kind::DbError:
-            return ErrorFormatter<Error::Kind::DbError>::format(e);
-        case Error::Kind::NetworkError:
-            return ErrorFormatter<Error::Kind::NetworkError>::format(e);
-        case Error::Kind::PluginError:
-            return ErrorFormatter<Error::Kind::PluginError>::format(e);
-        case Error::Kind::NotFound:
-            return ErrorFormatter<Error::Kind::NotFound>::format(e);
-        default:
-            return e.message();
-    }
+    return detail::Overloaded<std::decay_t<Fs>...>{std::forward<Fs>(fns)...};
 }
 
 // ============================================================
-// Generic multi-status result — user-defined enum as state
+// ErrorVisitor<Derived> — CRTP visitor factory + dispatch
+// Derived provides: static visitor(const Derived&) → visitor
 // ============================================================
-
-template <typename E>
-requires std::is_enum_v<E>
-struct [[nodiscard]] StatusResult
+template <typename Derived>
+class ErrorVisitor
 {
-    E status;
-    std::string error;
-
-    [[nodiscard]] bool is(E s) const
+public:
+    template <typename... Fs>
+    static auto make(Fs&&... fns)
     {
-        return status == s;
-    }
-    [[nodiscard]] bool ok() const
-    {
-        return static_cast<int8_t>(status) >= 0;
+        return make_error_visitor(std::forward<Fs>(fns)...);
     }
 
-    static StatusResult make(E s)
+    template <typename... ErrorTs>
+    static decltype(auto) dispatch(const Derived& self, const ErrorInfo<ErrorTs...>& info)
     {
-        return {s, {}};
-    }
-    static StatusResult make_error(E s, std::string msg)
-    {
-        return {s, std::move(msg)};
+        return info.visit(Derived::visitor(self));
     }
 };
 
+// ============================================================
+// StatusResult<E, Info> — enum status + typed error context
+// ============================================================
+template <typename E, typename Info = std::string>
+requires std::is_enum_v<E>
+struct [[nodiscard]] StatusResult
+{
+    E status{};
+    Info info{};
 
+    [[nodiscard]] constexpr bool is(E s) const noexcept
+    {
+        return status == s;
+    }
+
+    static constexpr StatusResult ok(E s) noexcept
+    {
+        return {s, {}};
+    }
+    static StatusResult err(E s, Info i) noexcept
+    {
+        return {s, std::move(i)};
+    }
+};
 
 }  // namespace kforge::util

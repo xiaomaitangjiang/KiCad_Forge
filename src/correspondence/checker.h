@@ -3,11 +3,11 @@
 #include <string>
 #include <vector>
 
-#include "core/types.h"
-#include "core/symbol.h"
-#include "core/footprint.h"
-#include "core/model_3d.h"
-#include "core/component.h"
+#include "core/model/types.h"
+#include "core/model/symbol.h"
+#include "core/model/footprint.h"
+#include "core/model/model_3d.h"
+#include "core/model/component.h"
 
 namespace kforge::correspondence {
 
@@ -64,11 +64,20 @@ public:
         const std::vector<core::Symbol>& symbols,
         const std::vector<core::Footprint>& footprints);
 
+    /// Suggest Top-N footprint matches for a single symbol (lazy, per-symbol).
+    static std::vector<MatchSuggestion> suggest_for_symbol(
+        const core::Symbol& sym,
+        const std::vector<core::Footprint>& footprints,
+        size_t top_n = 10);
+
     /// Compute similarity between two names (0.0 to 1.0).
     static double name_similarity(const std::string& a, const std::string& b);
 
 private:
     static int levenshtein_distance(const std::string& a, const std::string& b);
+
+    /// Score a symbol↔footprint pair: name similarity + pin-count boost.
+    static double score_pair(const core::Symbol& sym, const core::Footprint& fp);
 };
 
 /// Converts issue type to display string.

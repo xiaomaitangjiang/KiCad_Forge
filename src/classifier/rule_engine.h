@@ -4,9 +4,9 @@
 #include <vector>
 
 #include "classifier/rule.h"
-#include "core/symbol.h"
-#include "core/footprint.h"
-#include "core/component.h"
+#include "core/model/symbol.h"
+#include "core/model/footprint.h"
+#include "core/model/component.h"
 
 namespace kforge::classifier {
 

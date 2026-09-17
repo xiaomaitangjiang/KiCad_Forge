@@ -50,8 +50,8 @@ export function useMatches() {
 }
 
 export function useSettings() {
-  const { data, load: loadSettings } = useRequest(api.settings)
-  const [settings, setSettings] = useState({ symbol_lib_path: '', footprint_lib_path: '', model_3d_path: '' })
+  const { data, load: loadSettings } = useRequest(api.loadConfig)
+  const [settings, setSettings] = useState({})
   useEffect(() => { if (data) setSettings(data) }, [data])
   return { settings, setSettings, loadSettings }
 }

@@ -1,12 +1,12 @@
 // Import pipeline benchmark — measures each phase to identify bottlenecks
-#include "../src/core/symbol.h"
-#include "../src/parser/symbol_lib_parser.h"
-#include "../src/sexpr/tokenizer.h"
-#include "../src/sexpr/dom_builder.h"
+#include "../src/core/model/symbol.h"
+#include "../src/core/io/parser/symbol_lib_parser.h"
+#include "../src/core/io/sexpr/token/tokenizer.h"
+#include "../src/core/io/sexpr/dom/dom_builder.h"
 #include "../src/classifier/rule_engine.h"
-#include "../src/storage/database.h"
-#include "../src/storage/repositories.h"
-#include "../src/services/import_pipeline.h"
+#include "../src/core/db/database.h"
+#include "../src/core/repo/repositories.h"
+#include "../src/interface/service/import/pipeline.h"
 
 #include <chrono>
 #include <cstdio>

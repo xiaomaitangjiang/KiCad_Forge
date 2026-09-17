@@ -6,12 +6,12 @@
 
 #include <nlohmann/json.hpp>
 
-#include "core/types.h"
-#include "core/symbol.h"
-#include "core/footprint.h"
-#include "core/model_3d.h"
-#include "core/component.h"
-#include "util/result.h"
+#include "core/model/types.h"
+#include "core/model/symbol.h"
+#include "core/model/footprint.h"
+#include "core/model/model_3d.h"
+#include "core/model/component.h"
+#include "util/error.h"
 #include "plugin/iplugin_context.h"
 
 namespace kforge::plugin {

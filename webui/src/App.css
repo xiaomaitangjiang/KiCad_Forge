@@ -306,6 +306,31 @@ tr.selected td { background: rgba(0,122,255,0.08); }
   color: var(--text2);
   margin-top: 2px;
 }
+.inspector-locked {
+  margin: 0 12px 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--red);
+  border-radius: 6px;
+  color: var(--red);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.inspector-gear {
+  margin-left: auto;
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  border: 1px solid var(--sep);
+  background: transparent;
+  cursor: pointer;
+  color: var(--text2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  flex-shrink: 0;
+}
+.inspector-gear:hover { background: var(--bg); color: var(--text); }
 .inspector-section {
   padding: 16px;
   border-bottom: 1px solid var(--sep);
@@ -335,6 +360,7 @@ tr.selected td { background: rgba(0,122,255,0.08); }
 .val.warn { color: var(--orange); }
 .val.err { color: var(--red); }
 .val.ok { color: var(--green); }
+.val.wrap { overflow-wrap: anywhere; }
 
 .actions {
   display: flex;
@@ -375,6 +401,93 @@ tr.selected td { background: rgba(0,122,255,0.08); }
   gap: 12px;
 }
 .inspector-empty p { font-size: 13px; line-height: 1.4; }
+
+/* ---- Symbol settings modal (shell reuses the Modal component styles) ---- */
+.modal-section {
+  padding: 12px 16px; border-bottom: 1px solid var(--border);
+  overflow-y: auto;
+}
+.modal-section label {
+  display: block; font-size: 11px; color: var(--text3);
+  text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 4px;
+}
+.modal-current {
+  font-size: 12px; margin-bottom: 8px; overflow-wrap: anywhere;
+}
+.modal-search {
+  width: 100%; box-sizing: border-box; padding: 7px 10px;
+  font: 13px var(--font); color: var(--text);
+  background: var(--bg); border: 1px solid var(--sep);
+  border-radius: 7px; outline: none;
+}
+.modal-search:focus { border-color: var(--accent); }
+.modal-results {
+  margin-top: 8px; max-height: min(280px, 40vh); overflow-y: auto;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.modal-actions {
+  display: flex; justify-content: flex-end; padding: 12px 16px; gap: 8px;
+}
+.modal-actions button {
+  padding: 7px 16px; border-radius: 7px; cursor: pointer;
+  font: 12px var(--font); border: 1px solid var(--sep);
+  background: transparent; color: var(--text);
+}
+.modal-actions button:hover { background: var(--bg); }
+
+/* ---- Search popover (footprint / 3D model picker) ---- */
+.search-popover {
+  position: fixed; z-index: 200;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+  max-height: min(320px, 45vh); display: flex; flex-direction: column;
+}
+.search-popover-header {
+  display: flex; align-items: center; padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.search-popover-input {
+  flex: 1; background: transparent; border: none; outline: none;
+  color: var(--text); font-size: 13px; padding: 4px;
+}
+.search-popover-close {
+  background: none; border: none; color: var(--text-secondary);
+  cursor: pointer; font-size: 14px; padding: 2px 6px;
+}
+.search-popover-list { overflow-y: auto; flex: 1; }
+.search-popover-empty { color: var(--text-secondary); text-align: center; padding: 16px; font-size: 13px; }
+.search-popover-item {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 6px 10px; cursor: pointer; font-size: 13px;
+}
+.search-popover-item.match-row { display: grid; }
+.search-popover-item:hover { background: var(--hover); }
+.search-popover-name { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.search-popover-extra { color: var(--text-secondary); font-size: 11px; margin-left: 8px; flex-shrink: 0; }
+
+/* ---- Match suggestion tables (symbol | footprint | score) ---- */
+.match-row {
+  display: grid;
+  grid-template-columns: 1fr 1.6fr 60px;
+  gap: 10px;
+  align-items: center;
+}
+.match-row.two-col { grid-template-columns: 1fr 60px; }
+.match-head {
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--sep);
+  margin-bottom: 4px;
+}
+.match-col {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inspector-section { position: relative; }
 
 /* ========================================
    Loading bar
@@ -443,8 +556,7 @@ tr.selected td { background: rgba(0,122,255,0.08); }
   background: var(--card);
   border-radius: 14px;
   padding: 24px;
-  min-width: 480px;
-  max-width: 640px;
+  width: min(640px, calc(100vw - 48px));
   max-height: 80vh;
   overflow-y: auto;
   box-shadow: 0 24px 80px rgba(0,0,0,0.25);

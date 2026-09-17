@@ -4,7 +4,7 @@
 #include <cctype>
 #include <regex>
 
-#include "core/type_registry.h"
+#include "core/model/type_registry.h"
 
 namespace kforge::classifier {
 

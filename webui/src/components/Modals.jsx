@@ -20,7 +20,7 @@ export function Modal({ title, children, onClose }) {
 }
 
 // ---- Settings Modal ----
-export function SettingsModal({ settings, setSettings, compLibraries, setCompLibraries, loadCompLibraries, onClose, loadSymbols, loadStatus, toastMsg, showConfirm }) {
+export function SettingsModal({ settings, setSettings, compLibraries, setCompLibraries, loadCompLibraries, onClose, loadSymbols, loadStatus, toastMsg, showConfirm, onRequestDelete }) {
   const [tab, setTab] = useState('paths')
   const [editingId, setEditingId] = useState(null)  // which library is being edited
   const [draftName, setDraftName] = useState('')
@@ -30,6 +30,7 @@ export function SettingsModal({ settings, setSettings, compLibraries, setCompLib
   const { t, i18n } = useTranslation()
 
   const startEdit = (lib) => {
+    if (lib.locked) { toastMsg(t('toast.locked')); return }
     setEditingId(lib.id)
     setDraftName(lib.name)
     setDraftSym(lib.symbol_path || '')
@@ -48,10 +49,17 @@ export function SettingsModal({ settings, setSettings, compLibraries, setCompLib
     else toastMsg(r?.error || t('toast.failedUnknown'))
   }
 
-  const removeLib = async (lib) => {
-    if (!(await showConfirm(t('confirm.deleteCompLibrary', { name: lib.name })))) return
-    const r = await api.saveCompLibrary({ action: 'remove', id: lib.id })
-    if (r?.ok) { loadCompLibraries(); toastMsg(t('toast.removed', { name: lib.name })) }
+  // Remove (unregister) a component library from the DB. Locked libraries
+  // can also be removed — this only clears the DB registration and does NOT
+  // touch the user's local .kicad_sym files on disk.
+  // Two-step via DeleteLibraryModal: default DB-only, opt-in to also delete file
+  const removeLib = (lib) => { onRequestDelete(lib) }
+
+  // Toggle library lock; official KiCad libs cannot be unlocked
+  const toggleLock = async (lib) => {
+    if (lib.is_protected) { toastMsg(t('settings.officialLocked')); return }
+    const r = await api.saveCompLibrary({ action: 'update', id: lib.id, locked: !lib.locked })
+    if (r?.ok) { loadCompLibraries(); toastMsg(t(lib.locked ? 'settings.unlocked' : 'settings.locked')) }
     else toastMsg(r?.error || t('toast.failedUnknown'))
   }
 
@@ -62,14 +70,6 @@ export function SettingsModal({ settings, setSettings, compLibraries, setCompLib
       toastMsg(t('toast.saved', { symbols: r.imported_symbols || 0, footprints: r.imported_footprints || 0 }))
       onClose(); loadSymbols(); loadStatus()
     } else toastMsg(r?.error || t('toast.failedUnknown'))
-  }
-
-  const saveLegacy = async () => {
-    const r = await api.saveSettings(settings)
-    if (r) {
-      toastMsg(t('toast.saved', { symbols: r.imported_symbols || 0, footprints: r.imported_footprints || 0 }))
-      onClose(); loadSymbols(); loadStatus()
-    }
   }
 
   // 打开设置时加载元件库列表
@@ -89,6 +89,9 @@ export function SettingsModal({ settings, setSettings, compLibraries, setCompLib
           {tab==='paths'?<>
             <div style={{marginBottom:12}}>
               <p style={{fontSize:12,color:'var(--text2)',margin:'0 0 8px 0'}}>{t('settings.compLibHint')}</p>
+              <p style={{fontSize:11,color:'var(--red)',margin:'0 0 12px 0',padding:'8px 10px',border:'1px solid var(--red)',borderRadius:6,background:'rgba(220,38,38,0.06)'}}>
+                {t('settings.standardLibraryGuard')}
+              </p>
 
               {/* Existing component libraries */}
               {compLibraries.map(lib => (
@@ -112,7 +115,7 @@ export function SettingsModal({ settings, setSettings, compLibraries, setCompLib
                     <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
                       <div style={{flex:1,minWidth:0}}>
                         <div style={{fontSize:13,fontWeight:600,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
-                          {lib.id === 'default' ? '⭐ ' : '📦 '}{lib.name}
+                          {lib.locked ? '🔒 ' : ''}{lib.id === 'default' ? '⭐ ' : '📦 '}{lib.name}
                         </div>
                         <div style={{fontSize:10,color:'var(--text3)',marginTop:2,lineHeight:1.4}}>
                           {lib.symbol_path && <div>⚡ {t('settings.symbol')}: {lib.symbol_path}</div>}
@@ -122,8 +125,15 @@ export function SettingsModal({ settings, setSettings, compLibraries, setCompLib
                         </div>
                       </div>
                       <div style={{display:'flex',gap:4,flexShrink:0}}>
-                        <button className="btn-ghost" style={{padding:'3px 8px',fontSize:10}} onClick={() => startEdit(lib)} title={t('types.add')}>✎</button>
-                        <button className="btn-ghost" style={{padding:'3px 8px',fontSize:10,color:'var(--red)'}} onClick={() => removeLib(lib)} title={t('inspector.deleteSymbol')}>×</button>
+                        <button className="btn-ghost" style={{padding:'3px 8px',fontSize:11,opacity: lib.is_protected ? 0.5 : 1}}
+                          onClick={() => toggleLock(lib)}
+                          title={lib.is_protected ? t('settings.officialLocked') : t(lib.locked ? 'settings.unlock' : 'settings.lock')}>
+                          {lib.locked ? '🔒' : '🔓'}
+                        </button>
+                        <button className="btn-ghost" style={{padding:'3px 8px',fontSize:10,opacity: lib.locked ? 0.35 : 1}}
+                          onClick={() => startEdit(lib)} title={t('types.add')}>✎</button>
+                        <button className="btn-ghost" style={{padding:'3px 8px',fontSize:10,color:'var(--red)',opacity: lib.locked ? 0.35 : 1}}
+                          onClick={() => removeLib(lib)} title={t('inspector.deleteSymbol')}>×</button>
                       </div>
                     </div>
                   )}
@@ -166,17 +176,6 @@ export function SettingsModal({ settings, setSettings, compLibraries, setCompLib
                   </button>
                 </div>
               )}
-
-              {/* Legacy mode accordion */}
-              <details style={{marginTop:16,fontSize:11,color:'var(--text3)'}}>
-                <summary style={{cursor:'pointer'}}>{t('settings.legacySinglePath')}</summary>
-                <div style={{padding:'8px 0'}}>
-                  <Field k="symbol_lib_path" label={t('settings.symbolPath')} hint={t('settings.symbolPathHint')} {...{settings,setSettings}} />
-                  <Field k="footprint_lib_path" label={t('settings.footprintPath')} hint={t('settings.footprintPathHint')} {...{settings,setSettings}} />
-                  <Field k="model_3d_path" label={t('settings.3dPath')} hint={t('settings.3dPathHint')} {...{settings,setSettings}} />
-                  <div className="btn-row"><button className="btn-primary" onClick={saveLegacy}>{t('settings.saveImport')}</button></div>
-                </div>
-              </details>
             </div>
           </>:<>
             <div style={{display:'flex',flexDirection:'column',gap:12}}>
@@ -189,11 +188,11 @@ export function SettingsModal({ settings, setSettings, compLibraries, setCompLib
               </UtilBox>
               <UtilBox title={t('settings.writeKfId')} desc={t('settings.writeKfIdHint')}>
                 <label style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer',fontSize:12}}>
-                  <input type="checkbox" checked={settings.write_kf_id_to_file === 'true'}
+                  <input type="checkbox" checked={!!settings.write_kf_id_to_file}
                     onChange={async e => {
-                      const v = e.target.checked ? 'true' : 'false';
+                      const v = e.target.checked;
                       setSettings({...settings, write_kf_id_to_file: v});
-                      await api.saveSettings({write_kf_id_to_file: v});
+                      await api.saveConfig({write_kf_id_to_file: v});
                     }} />
                   {t('settings.writeKfIdEnable')}
                 </label>
@@ -414,14 +413,6 @@ export function CreateLibraryModal({ onClose, loadLibraries, toastMsg }) {
     const r = await api.createLibrary(name.trim())
     if (r?.ok) {
       toastMsg(t('toast.added', { name: name.trim() })); loadLibraries(); onClose()
-      // Save paths via settings if provided
-      if (symPath || fpPath) {
-        const s = await api.settings()
-        const cur = s || {}
-        if (symPath) cur.symbol_lib_path = symPath
-        if (fpPath) cur.footprint_lib_path = fpPath
-        await api.saveSettings(cur)
-      }
     } else toastMsg(r?.error || t('toast.failedUnknown'))
   }
 
@@ -454,6 +445,142 @@ export function CreateLibraryModal({ onClose, loadLibraries, toastMsg }) {
       <div className="btn-row">
         <button className="btn-ghost" onClick={onClose}>{t('plugin.cancel')}</button>
         <button className="btn-primary" onClick={create}>{t('types.add')}</button>
+      </div>
+    </Modal>
+  )
+}
+
+// ---- Classify Result Modal ----
+export function ClassifyResultModal({ result, onClose }) {
+  const { t } = useTranslation()
+  const rows = result?.results || []
+  return (
+    <Modal title={t('inspector.classifyResult')} onClose={onClose}>
+      <p style={{ fontSize: 12, color: 'var(--text2)', margin: '0 0 12px 0' }}>
+        {t('toast.classified', { matched: result?.matched ?? 0, total: result?.total ?? 0 })}
+        {result?.type_updated != null && ` · ${t('inspector.typeUpdated', { count: result.type_updated })}`}
+      </p>
+      <div className="modal-results">
+        {rows.length === 0 && <div className="search-popover-empty">—</div>}
+        {rows.map((r, i) => (
+          <div key={i} className="search-popover-item">
+            <span className="search-popover-name">{r.name}</span>
+            {r.library && <span className="search-popover-extra">{r.library}</span>}
+            {r.type && <span className="search-popover-extra">{r.type}</span>}
+            {r.confidence != null && (
+              <span className="search-popover-extra">
+                {t('inspector.confidence')}: {fmtConfidence(r.confidence)}
+              </span>
+            )}
+          </div>
+        ))}
+      </div>
+    </Modal>
+  )
+}
+
+// ---- Match Suggestions Modal (table: symbol | footprint | score) ----
+export function MatchSuggestModal({ matches, onClose }) {
+  const { t } = useTranslation()
+  const rows = matches || []
+  return (
+    <Modal title={t('inspector.matchSuggestions')} onClose={onClose}>
+      <div className="match-head match-row">
+        <span>{t('app.symbols')}</span>
+        <span>{t('inspector.footprint')}</span>
+        <span>{t('inspector.score')}</span>
+      </div>
+      <div className="modal-results">
+        {rows.length === 0 && <div className="search-popover-empty">—</div>}
+        {rows.map((m, i) => (
+          <div key={i} className="search-popover-item match-row">
+            <span className="match-col">{m.symbol}</span>
+            <span className="match-col">{m.footprint}</span>
+            <span className="match-col" style={{ textAlign: 'right' }}>
+              {m.score != null ? `${m.score}%` : '—'}
+            </span>
+          </div>
+        ))}
+      </div>
+    </Modal>
+  )
+}
+
+// ---- Per-symbol match suggestions (lazy, click to bind; table: footprint | score) ----
+export function SymbolMatchModal({ symbol, matches, onClose, onPick }) {
+  const { t } = useTranslation()
+  const rows = matches || []
+  return (
+    <Modal title={t('inspector.matchFor', { name: symbol.name })} onClose={onClose}>
+      <div className="match-head match-row two-col">
+        <span>{t('inspector.footprint')}</span>
+        <span>{t('inspector.score')}</span>
+      </div>
+      <div className="modal-results">
+        {rows.length === 0 && <div className="search-popover-empty">{t('inspector.noMatches')}</div>}
+        {rows.map((m, i) => (
+          <div key={i} className="search-popover-item match-row two-col" onClick={() => onPick(m)}>
+            <span className="match-col">{m.footprint}</span>
+            <span className="match-col" style={{ textAlign: 'right' }}>
+              {m.score != null ? `${m.score}%` : '—'}
+            </span>
+          </div>
+        ))}
+      </div>
+    </Modal>
+  )
+}
+
+// 0-1 scale doubles → percent, otherwise assume already 0-100
+function fmtConfidence(c) {
+  const n = Number(c)
+  if (!Number.isFinite(n)) return '—'
+  return n > 1 ? `${Math.round(n)}%` : `${Math.round(n * 100)}%`
+}
+
+// ---- Two-step Delete Library Confirmation ----
+// Default: removes the library from KiCad Forge only (DB unregister).
+// Tick "Also delete local file" to escalate to fs::remove of .kicad_sym.
+export function DeleteLibraryModal({ lib, onClose, onConfirm }) {
+  const { t } = useTranslation()
+  const [deleteFile, setDeleteFile] = useState(false)
+  return (
+    <Modal title={t('confirm.deleteLibraryTitle', { name: lib.name })} onClose={onClose}>
+      <p style={{ fontSize: 12, color: 'var(--text2)', margin: '0 0 12px 0', whiteSpace: 'pre-line' }}>
+        {t('confirm.deleteLibraryHint')}
+      </p>
+      <label style={{
+        display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer',
+        fontSize: 12, padding: '8px 10px', border: '1px solid var(--sep)', borderRadius: 6,
+        background: deleteFile ? 'rgba(220,38,38,0.08)' : 'transparent'
+      }}>
+        <input type="checkbox" checked={deleteFile}
+          onChange={e => setDeleteFile(e.target.checked)} style={{ marginTop: 2 }} />
+        <span>
+          {t('confirm.deleteLibraryFile')}
+          {lib.file_path && (
+            <span style={{
+              display: 'block', fontSize: 10, color: 'var(--text3)',
+              wordBreak: 'break-all', marginTop: 2
+            }}>
+              {lib.file_path}
+            </span>
+          )}
+        </span>
+      </label>
+      {deleteFile && (
+        <p style={{ fontSize: 11, color: 'var(--red)', margin: '8px 0 0 0' }}>
+          ⚠ {t('confirm.deleteLibraryFileWarning')}
+        </p>
+      )}
+      <div className="btn-row" style={{
+        marginTop: 16, display: 'flex', gap: 8, justifyContent: 'flex-end'
+      }}>
+        <button className="btn-ghost" onClick={onClose}>{t('plugin.cancel')}</button>
+        <button className="btn-primary" style={{ background: 'var(--red)' }}
+          onClick={() => onConfirm(deleteFile)}>
+          {t('confirm.deleteLibraryOk')}
+        </button>
       </div>
     </Modal>
   )

@@ -34,6 +34,17 @@ double CorrespondenceChecker::name_similarity(const std::string& a,
     return 1.0 - static_cast<double>(dist) / static_cast<double>(max_len);
 }
 
+double CorrespondenceChecker::score_pair(const core::Symbol& sym,
+                                         const core::Footprint& fp) {
+    double score = name_similarity(sym.name(), fp.name());
+
+    // Boost score if pin/pad counts match
+    if (sym.pin_count() > 0 && sym.pin_count() == fp.pad_count()) {
+        score = std::min(1.0, score + 0.2);
+    }
+    return score;
+}
+
 std::vector<Issue> CorrespondenceChecker::check(
     const std::vector<core::Symbol>& symbols,
     const std::vector<core::Footprint>& footprints,
@@ -171,12 +182,7 @@ std::vector<MatchSuggestion> CorrespondenceChecker::suggest_matches(
         best.score = 0.0;
 
         for (const auto& fp : footprints) {
-            double score = name_similarity(sym.name(), fp.name());
-
-            // Boost score if pin/pad counts match
-            if (sym.pin_count() > 0 && sym.pin_count() == fp.pad_count()) {
-                score = std::min(1.0, score + 0.2);
-            }
+            double score = score_pair(sym, fp);
 
             if (score > best.score) {
                 best.footprint_id = fp.id();
@@ -200,6 +206,40 @@ std::vector<MatchSuggestion> CorrespondenceChecker::suggest_matches(
               [](const MatchSuggestion& a, const MatchSuggestion& b) {
                   return a.score > b.score;
               });
+
+    return suggestions;
+}
+
+std::vector<MatchSuggestion> CorrespondenceChecker::suggest_for_symbol(
+    const core::Symbol& sym, const std::vector<core::Footprint>& footprints, size_t top_n) {
+
+    std::vector<MatchSuggestion> suggestions;
+    if (sym.is_power()) return suggestions;
+
+    // Per-symbol threshold is more lenient than the batch 0.5 — show candidates
+    const double SIMILARITY_THRESHOLD = 0.3;
+
+    for (const auto& fp : footprints) {
+        double score = score_pair(sym, fp);
+        if (score < SIMILARITY_THRESHOLD) continue;
+
+        MatchSuggestion s;
+        s.symbol_id = sym.id();
+        s.symbol_name = sym.name();
+        s.footprint_id = fp.id();
+        s.footprint_name = fp.name();
+        s.score = score;
+        s.reason = score > 0.8 ? "Name and pin count match" : "Partial name match";
+        suggestions.push_back(std::move(s));
+    }
+
+    std::sort(suggestions.begin(), suggestions.end(),
+              [](const MatchSuggestion& a, const MatchSuggestion& b) {
+                  return a.score > b.score;
+              });
+    if (suggestions.size() > top_n) {
+        suggestions.resize(top_n);
+    }
 
     return suggestions;
 }
