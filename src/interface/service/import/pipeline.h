@@ -115,7 +115,7 @@ private:
     int model_ref_imported_ = 0;
 
     // Patch Kicad_Forge_ID property back into .kicad_sym on successful write.
-    // Default false — official KiCad files must NEVER be touched without explicit opt-in.
+    // Default false; locked and official libraries remain read-only even when enabled.
     bool write_kf_id_to_file_ = false;
 
     // Internal implementation (moved from LibraryService)

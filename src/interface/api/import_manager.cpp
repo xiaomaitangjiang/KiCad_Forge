@@ -42,7 +42,8 @@ void ImportManager::start_async()
 
 void ImportManager::stop_async()
 {
-    orch_->stop();
+    if (orch_)
+        orch_->stop();
 }
 
 bool ImportManager::is_running() const
@@ -66,6 +67,7 @@ services::ImportPipeline::Result ImportManager::import_all(const Options& opts)
 {
     if (opts.force)
     {
+        orch_->stop();
         clear_imported_files_cache();  // mtime snapshots gone → full re-import
     }
     return orch_->run_now();

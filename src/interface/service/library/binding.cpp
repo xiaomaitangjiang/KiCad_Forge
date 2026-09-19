@@ -8,6 +8,10 @@
 #include "core/repo/repositories.h"
 #include "correspondence/checker.h"
 #include "util/logger.h"
+#include "util/file_write.h"
+#include "interface/service/library/source_policy.h"
+#include <sqlite3.h>
+#include <mutex>
 
 #include <algorithm>
 #include <cctype>
@@ -96,15 +100,8 @@ SymbolBindingManager::Binding SymbolBindingManager::get(const std::string& symbo
         const auto& fp_id = **fp_opt;
         b.fp_id = fp_id;
 
-        // Look up footprint name from in-memory cache
-        for (const auto& fp : footprints_)
-        {
-            if (fp.id() == fp_id)
-            {
-                b.fp_name = fp.name();
-                break;
-            }
-        }
+        if (auto fp = storage::FootprintRepository(db_).find_by_id(fp_id))
+            b.fp_name = fp->name();
 
         // Look up linked 3D model
         auto model_ids = rr.find_models_for_footprint(fp_id);
@@ -112,14 +109,8 @@ SymbolBindingManager::Binding SymbolBindingManager::get(const std::string& symbo
         {
             const auto& m_id = (*model_ids)[0];
             b.model_id = m_id;
-            for (const auto& m : models_)
-            {
-                if (m.id() == m_id)
-                {
-                    b.model_name = m.file_path().filename().string();
-                    break;
-                }
-            }
+            if (auto model = storage::Model3DRepository(db_).find_by_id(m_id))
+                b.model_name = model->file_path().filename().string();
         }
     }
     return b;
@@ -128,146 +119,113 @@ SymbolBindingManager::Binding SymbolBindingManager::get(const std::string& symbo
 util::Result<void> SymbolBindingManager::assign_footprint(const std::string& symbol_id,
                                                           const std::string& footprint_id)
 {
-    storage::FootprintRepository fpr(db_);
-    std::string fp_name;
-    if (auto fp = fpr.find_by_id(footprint_id))
+    static std::mutex binding_mutex;
+    std::lock_guard lock(binding_mutex);
+    bool transaction = false, file_changed = false;
+    std::filesystem::path source;
+    std::string original;
+    auto exec = [&](const char* sql) {
+        if (sqlite3_exec(db_, sql, nullptr, nullptr, nullptr) != SQLITE_OK)
+            throw std::runtime_error(sqlite3_errmsg(db_));
+    };
+    auto require = [](const auto& result) {
+        if (!result) throw std::runtime_error(result.error().format_message());
+    };
+    try
     {
-        fp_name = fp->name();
-    }
+        storage::SymbolRepository symbols(db_);
+        storage::FootprintRepository footprints(db_);
+        storage::RelationshipRepository links(db_);
+        storage::Model3DRepository models(db_);
+        auto sym = symbols.find_by_id(symbol_id);
+        auto fp = footprints.find_by_id(footprint_id);
+        require(sym);
+        require(fp);
+        auto libs = storage::LibraryRepository(db_).find_all();
+        require(libs);
+        std::string owner;
+        for (const auto& lib : *libs)
+            if (lib.id == sym->library_id()) { source = lib.file_path; owner = lib.component_library_id; break; }
+        if (source.empty() || !std::filesystem::is_regular_file(source))
+            throw std::runtime_error("Symbol source file is missing");
+        auto locked = source_is_locked(db_, source, owner);
+        require(locked);
+        if (*locked) throw std::runtime_error("Symbol belongs to a locked library");
+        std::ifstream in(source, std::ios::binary);
+        if (!in) throw std::runtime_error("Cannot read symbol source");
+        original.assign(std::istreambuf_iterator<char>(in), {});
+        if (in.bad()) throw std::runtime_error("Cannot read symbol source");
+        in.close();
+        std::string updated = original;
+        auto reference = fp->name();
+        auto fp_path = std::filesystem::path(fp->library_path());
+        if (reference.find(':') == std::string::npos && fp_path.parent_path().extension() == ".pretty")
+            reference = fp_path.parent_path().stem().string() + ":" + reference;
+        if (!sexpr::replace_property_value(updated, "symbol", sym->name(), "Footprint", reference))
+            throw std::runtime_error("Footprint property not found in library file");
+        auto parsed = parser::FootprintParser::parse(fp_path);
+        require(parsed);
+        auto groups = storage::ComponentLibraryRepository(db_).find_all();
+        require(groups);
+        std::vector<std::string> roots;
+        for (const auto& group : *groups)
+            if (!group.model_3d_path.empty()) roots.push_back(group.model_3d_path);
 
-    // 1. The .kicad_sym file is the source of truth: update its
-    //    (property "Footprint" ...) FIRST; on failure return without
-    //    touching the DB so file and DB cannot diverge.
-    {
-        storage::SymbolRepository sr(db_);
-        auto sym = sr.find_by_id(symbol_id);
-        if (sym && !fp_name.empty())
+        exec("SAVEPOINT binding_update");
+        transaction = true;
+        sym->set_footprint(reference);
+        sym->set_property("Footprint", reference);
+        require(symbols.update(*sym));
+        auto existing = links.find_footprint_for_symbol(symbol_id);
+        require(existing);
+        if (*existing) require(links.unlink_symbol_footprint(symbol_id, **existing));
+        require(links.link_symbol_to_footprint(symbol_id, footprint_id, "manual"));
+        auto old_models = links.find_models_for_footprint(footprint_id);
+        require(old_models);
+        for (const auto& id : *old_models) require(links.unlink_footprint_model(footprint_id, id));
+        for (const auto& model : parsed->models_3d())
         {
-            storage::LibraryRepository lr(db_);
-            if (auto libs = lr.find_all())
+            auto path = sexpr::resolve_model_path(model.path, fp_path.parent_path(), roots);
+            if (path.empty()) continue;
+            auto existing_model = models.find_by_path(path.string());
+            std::string id;
+            if (existing_model) id = existing_model->id();
+            else
             {
-                for (auto& l : *libs)
-                {
-                    if (l.id != sym->library_id() || l.file_path.empty())
-                    {
-                        continue;
-                    }
-                    if (!std::filesystem::exists(l.file_path))
-                    {
-                        break;  // library file gone — nothing to sync
-                    }
-                    std::ifstream f(l.file_path, std::ios::binary);
-                    std::string text((std::istreambuf_iterator<char>(f)),
-                                     std::istreambuf_iterator<char>());
-                    f.close();
-                    if (!sexpr::replace_property_value(text, "symbol", sym->name(), "Footprint",
-                                                       fp_name))
-                    {
-                        return std::unexpected(util::Error::make<util::Error::Kind::ValidationError>(
-                            "Footprint property not found in library file"));
-                    }
-                    std::ofstream out(l.file_path, std::ios::binary);
-                    out << text;
-                    if (!out)
-                    {
-                        return std::unexpected(util::Error::make<util::Error::Kind::IoError>(
-                            "Failed to write library file"));
-                    }
-                    break;
-                }
+                if (existing_model.error().kind() != util::Error::Kind::NotFound)
+                    require(existing_model);
+                core::Model3D created;
+                created.set_file_path(path);
+                created.set_format(sexpr::model_format_of(path.extension().string()));
+                created.set_source("footprint_ref");
+                auto inserted = models.insert(created);
+                require(inserted);
+                id = inserted->id();
             }
+            require(links.link_footprint_to_model(footprint_id, id, "explicit"));
         }
+        util::replace_file(source, updated);
+        file_changed = true;
+        exec("RELEASE binding_update");
+        transaction = false;
+        return {};
     }
-
-    storage::RelationshipRepository rr(db_);
-
-    // 2. DB link
-    auto existing = rr.find_footprint_for_symbol(symbol_id);
-    if (existing && *existing)
+    catch (const std::exception& error)
     {
-        if (auto unlink = rr.unlink_symbol_footprint(symbol_id, **existing); !unlink)
+        std::string message = error.what();
+        if (transaction)
         {
-            kforge::util::log_error{}("Binding: unlink failed: {}",
-                                      util::error_formatter(unlink.error()));
+            if (sqlite3_exec(db_, "ROLLBACK TO binding_update", nullptr, nullptr, nullptr) != SQLITE_OK)
+                message += "; database rollback failed: " + std::string(sqlite3_errmsg(db_));
+            sqlite3_exec(db_, "RELEASE binding_update", nullptr, nullptr, nullptr);
         }
-    }
-    if (auto link = rr.link_symbol_to_footprint(symbol_id, footprint_id, "manual"); !link)
-    {
-        kforge::util::log_error{}("Binding: link failed: {}",
-                                  util::error_formatter(link.error()));
-    }
-
-    // 3. Auto-link the new footprint's own 3D models (same resolution as the
-    //    import pipeline: absolute / relative-to-footprint / ${VAR} roots).
-    if (auto fp = fpr.find_by_id(footprint_id); fp && !fp->library_path().empty())
-    {
-        auto parsed = parser::FootprintParser::parse(fp->library_path());
-        if (parsed)
+        if (file_changed)
         {
-            // Clear old model links — the new footprint's refs take over
-            if (auto olds = rr.find_models_for_footprint(footprint_id))
-            {
-                for (auto& mid : *olds)
-                {
-                    auto _ = rr.unlink_footprint_model(footprint_id, mid);
-                }
-            }
-            // Model roots for ${KICADx_3DMODEL_DIR} resolution
-            std::vector<std::string> roots;
-            {
-                storage::ComponentLibraryRepository clr(db_);
-                if (auto cls = clr.find_all())
-                {
-                    for (auto& cl : *cls)
-                    {
-                        if (!cl.model_3d_path.empty())
-                        {
-                            roots.emplace_back(cl.model_3d_path);
-                        }
-                    }
-                }
-            }
-            storage::Model3DRepository mrepo(db_);
-            for (auto& m : parsed->models_3d())
-            {
-                if (m.path.empty())
-                {
-                    continue;
-                }
-                auto resolved =
-                    sexpr::resolve_model_path(m.path, std::filesystem::path(fp->library_path()).parent_path(),
-                                              roots);
-                if (resolved.empty())
-                {
-                    continue;  // unresolvable reference — stays unlinked
-                }
-                std::string model_id;
-                if (auto existing = mrepo.find_by_path(resolved.string()))
-                {
-                    model_id = existing->id();  // Uuid == std::string
-                }
-                else
-                {
-                    core::Model3D nm;
-                    nm.set_file_path(resolved);
-                    nm.set_format(sexpr::model_format_of(resolved.extension().string()));
-                    nm.set_description(resolved.stem().string());
-                    nm.set_source("footprint_ref");
-                    if (auto nins = mrepo.insert(nm); nins)
-                    {
-                        model_id = nins->id();  // Uuid == std::string
-                    }
-                }
-                if (!model_id.empty())
-                {
-                    auto _ = rr.link_footprint_to_model(footprint_id, model_id, "explicit");
-                }
-            }
+            try { util::replace_file(source, original); }
+            catch (const std::exception& restore_error) { message += "; source restore failed: " + std::string(restore_error.what()); }
         }
+        return std::unexpected(util::Error::make<util::Error::Kind::ServiceError>(message));
     }
-
-    kforge::util::log_info{}("Binding: symbol {} → footprint {}", symbol_id, footprint_id);
-    return {};
 }
 
 void SymbolBindingManager::assign_model(const std::string& footprint_id,

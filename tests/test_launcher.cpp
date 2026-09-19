@@ -124,32 +124,6 @@ struct FailedDestroy : Server<FailedDestroy>
 
 }  // namespace
 
-// —— 编译期负例（doctest 无法表达，保留 #if 0 手法手动验证）——
-#if 0
-static void negative_cases()
-{
-    struct Unknown
-    {
-    };
-    Db db;
-    Launcher<Db&> l(db);
-    l.launch<Unknown>();    // concept 失败: 未注册（RegisteredSlot）
-    l.get<Unknown>();       // concept 失败: 未注册（RegisteredSlot）
-    l.launch<Db>();         // concept 失败: 无静态 build（Buildable）
-
-    struct WrongReturn
-    {
-        static int build()
-        {
-            return 0;
-        }
-    };
-    Launcher<WrongReturn> w(WrongReturn{});
-    w.launch<WrongReturn>();  // concept 失败: build 必须返回 Result<void>（BuildableService）
-
-    Launcher<Db&, Db&> dup(db, db);  // TaggedTuple requires 失败: 标签重复
-}
-#endif
 
 TEST_CASE("CTAD binding: lvalue → ref slot, rvalue → value slot")
 {

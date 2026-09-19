@@ -7,6 +7,7 @@
 #include "core/io/sexpr/path_util.h"
 #include "core/io/sexpr/text_util.h"
 #include "interface/service/import/pipeline.h"
+#include "interface/service/library/source_policy.h"
 #include "core/db/database.h"
 #include "core/repo/repositories.h"
 #include "util/logger.h"
@@ -302,6 +303,8 @@ IMP_Result ImportPipeline::write_symbol_library(ParsedSymbolLib& lib,
             sym.component_type = classifier::guess_type_from_name(sym.name());
         }
         sym.set_library_id(lib_id);
+        if (sym.Kicad_Forge_ID().empty())
+            sym.set_Kicad_Forge_ID(core::Symbol::compute_hash(sym));
 
         if (seen.contains(sym.name()))
         {
@@ -322,12 +325,10 @@ IMP_Result ImportPipeline::write_symbol_library(ParsedSymbolLib& lib,
     }
     sqlite3_exec(db_, "COMMIT", nullptr, nullptr, nullptr);
 
-    // Optional: patch Kicad_Forge_ID back into the .kicad_sym file. Off by
-    // default — official KiCad libraries must never be modified unless the
-    // user explicitly opts in (write_kf_id_to_file_). Best-effort: failures
-    // are logged but never fail the import.
+    // 开关只允许未锁定用户库写回；标准库始终只读。
     if (write_kf_id_to_file_ && std::filesystem::exists(path))
     {
+        auto locked = source_is_locked(db_, path, comp_lib_id);
         std::unordered_map<std::string, std::string> name_to_kf;
         for (auto& s : lib.items)
         {
@@ -337,13 +338,15 @@ IMP_Result ImportPipeline::write_symbol_library(ParsedSymbolLib& lib,
                 name_to_kf[s.name()] = kf;
             }
         }
-        if (!name_to_kf.empty())
+        if (locked && !*locked && !name_to_kf.empty())
         {
-            int patched = sexpr::patch_kf_id_to_file(path, name_to_kf);
-            if (patched > 0)
+            try
             {
-                kforge::util::log_info{}("Patched Kicad_Forge_ID into {} symbols in {}",
-                                         patched, path.filename().string());
+                sexpr::patch_kf_id_to_file(path, name_to_kf);
+            }
+            catch (const std::exception& error)
+            {
+                kforge::util::log_error{}("KF ID write failed: {}", error.what());
             }
         }
     }
@@ -382,6 +385,7 @@ std::optional<core::Footprint> ImportPipeline::parse_footprint_file(const fs::pa
 IMP_Result ImportPipeline::write_footprint(const fs::path& path, const core::Footprint& fp_in)
 {
     core::Footprint fp = fp_in;  // mutable copy for id assignment
+    fp.set_library_path(path.string());
     storage::FootprintRepository repo(db_);
     std::string fp_id;
     auto it = fp_by_name_.find(fp.name());
@@ -404,7 +408,7 @@ IMP_Result ImportPipeline::write_footprint(const fs::path& path, const core::Foo
                 auto _ = rr.unlink_footprint_model(fp_id, mid);
             }
         }
-        it->second = std::move(fp);  // keep the pool in sync
+        it->second = fp;  // model references are still needed below
     }
     else
     {
@@ -550,6 +554,7 @@ ImportPipeline::ImportDirResult ImportPipeline::import_directory(const std::stri
             }
         }
 
+        counts.skipped += static_cast<int>(sym_files.size() - parsed_libs.size());
         for (auto& lib : parsed_libs)
         {
             if (cancelled())

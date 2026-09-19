@@ -171,7 +171,7 @@ util::Result<core::LibraryMeta> LibraryRepository::insert(const core::LibraryMet
     int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
     if (rc != SQLITE_OK) return std::unexpected(util::Error::make<Kind::DbError>(sqlite3_errmsg(db_)));
     bind_text(stmt, 1, l.id); bind_text(stmt, 2, l.name);
-    bind_text(stmt, 3, l.file_path.string()); bind_text(stmt, 4, l.component_library_id);
+    bind_text(stmt, 3, l.file_path.string()); bind_text_nullable(stmt, 4, l.component_library_id);
     bind_text(stmt, 5, l.description);
     rc = sqlite3_step(stmt);
     if (rc != SQLITE_DONE) return std::unexpected(util::Error::make<Kind::DbError>(sqlite3_errmsg(db_)));
@@ -600,7 +600,7 @@ util::Result<core::Footprint> FootprintRepository::insert(
 
     bind_text(stmt, 1, f.id());
     bind_text(stmt, 2, f.name());
-    bind_text(stmt, 3, "");  // library_path — not used yet
+    bind_text(stmt, 3, f.library_path());
     bind_text(stmt, 4, f.description());
     bind_text(stmt, 5, f.tags());
     sqlite3_bind_int(stmt, 6, f.pad_count());
@@ -620,7 +620,7 @@ util::Result<core::Footprint> FootprintRepository::insert(
 util::Result<void> FootprintRepository::update(const core::Footprint& fp) {
     const char* sql =
         "UPDATE footprints SET name=?1, description=?2, tags=?3, "
-        "pad_count=?4, package_type=?5, properties_json=?6 WHERE id=?7";
+        "pad_count=?4, package_type=?5, properties_json=?6, library_path=?8 WHERE id=?7";
 
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
@@ -636,6 +636,7 @@ util::Result<void> FootprintRepository::update(const core::Footprint& fp) {
     bind_text(stmt, 5, package_type_to_string(fp.package_type));
     bind_text(stmt, 6, properties_to_json(fp.properties()));
     bind_text(stmt, 7, fp.id());
+    bind_text(stmt, 8, fp.library_path());
 
     rc = sqlite3_step(stmt);
     if (rc != SQLITE_DONE) {

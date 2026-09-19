@@ -19,6 +19,7 @@ public:
 
     std::string get(const std::string& key) const;
     bool get_bool(const std::string& key, bool default_val = false) const;
+    // I/O failure throws; the in-memory value is committed only after saving.
     void set(const std::string& key, std::string value);
     void set_bool(const std::string& key, bool val);
 
@@ -30,7 +31,7 @@ private:
     nlohmann::json data_;
 
     void load();
-    void flush() const;
+    void flush(const nlohmann::json& data) const;
 };
 
 }  // namespace kforge::util

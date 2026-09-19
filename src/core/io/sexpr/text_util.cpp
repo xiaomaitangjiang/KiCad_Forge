@@ -1,46 +1,86 @@
 #include "core/io/sexpr/text_util.h"
+#include "core/io/sexpr/token/tokenizer.h"
+#include "util/file_write.h"
 #include <algorithm>
 #include <fstream>
 #include <iterator>
 
 namespace kforge::sexpr {
 
+namespace {
+std::string escape_value(std::string_view value) {
+    std::string result;
+    for (char c : value) {
+        if (c == '\\' || c == '"') result += '\\';
+        result += c;
+    }
+    return result;
+}
+
+struct TextNodes {
+    std::vector<Token> tokens;
+    std::vector<size_t> parent, close;
+    bool valid = false;
+    explicit TextNodes(std::string_view text) {
+        auto result = Tokenizer(text).tokenize_all();
+        if (!result) return;
+        tokens = std::move(*result);
+        parent.resize(tokens.size(), std::string::npos);
+        close.resize(tokens.size(), std::string::npos);
+        std::vector<size_t> stack;
+        for (size_t i = 0; i < tokens.size(); ++i) {
+            if (!stack.empty()) parent[i] = stack.back();
+            if (tokens[i].type == TokenType::LParen) stack.push_back(i);
+            if (tokens[i].type == TokenType::RParen) {
+                if (stack.empty()) return;
+                close[stack.back()] = i;
+                stack.pop_back();
+            }
+        }
+        valid = stack.empty();
+    }
+    bool matches(size_t i, std::string_view type, std::string_view name) const {
+        return i + 2 < tokens.size() && tokens[i].type == TokenType::LParen &&
+            tokens[i + 1].type == TokenType::Atom && tokens[i + 1].text == type &&
+            (tokens[i + 2].type == TokenType::Atom || tokens[i + 2].type == TokenType::String) &&
+            tokens[i + 2].text == (tokens[i + 2].type == TokenType::String ? escape_value(name) : std::string(name));
+    }
+    std::optional<size_t> node(std::string_view type, std::string_view name) const {
+        if (!valid) return {};
+        for (size_t i = 0; i < tokens.size(); ++i) {
+            auto p = parent[i];
+            bool top = p == std::string::npos ||
+                (parent[p] == std::string::npos && p + 1 < tokens.size() &&
+                 tokens[p + 1].text == "kicad_symbol_lib");
+            if (top && matches(i, type, name)) return i;
+        }
+        return {};
+    }
+    std::optional<size_t> property(size_t node, std::string_view key) const {
+        for (size_t i = node + 1; i < close[node]; ++i)
+            if (parent[i] == node && matches(i, "property", key)) return i;
+        return {};
+    }
+};
+}
+
 std::optional<size_t> find_node(std::string_view text, std::string_view type,
                                 std::string_view name) {
-    std::string marker = std::string("(") + std::string(type) + " \"" +
-                         std::string(name) + "\"";
-    auto pos = text.find(marker);
-    // Also try without quotes (atom-style names)
-    if (pos == std::string_view::npos) {
-        marker = std::string("(") + std::string(type) + " " + std::string(name);
-        pos = text.find(marker);
-        // Verify it's a word boundary after the name
-        if (pos != std::string_view::npos) {
-            size_t after = pos + marker.size();
-            if (after < text.size() && text[after] != ' ' && text[after] != '\n' &&
-                text[after] != '\t' && text[after] != '\r' && text[after] != ')')
-                pos = std::string_view::npos;
-        }
-    }
-    if (pos == std::string_view::npos) return std::nullopt;
-    return pos;
+    TextNodes nodes(text);
+    if (auto index = nodes.node(type, name))
+        return static_cast<size_t>(nodes.tokens[*index].text.data() - text.data());
+    return {};
 }
 
 size_t find_matching_paren(std::string_view text, size_t open_paren) {
+    if (open_paren >= text.size() || text[open_paren] != '(') return std::string_view::npos;
+    Tokenizer tokenizer(text.substr(open_paren));
     int depth = 0;
-    bool in_str = false;
-    for (size_t i = open_paren; i < text.size(); i++) {
-        char c = text[i];
-        if (in_str) {
-            if (c == '"' && (i == 0 || text[i - 1] != '\\')) in_str = false;
-        } else {
-            if (c == '"') in_str = true;
-            else if (c == '(') depth++;
-            else if (c == ')') {
-                depth--;
-                if (depth == 0) return i;
-            }
-        }
+    while (auto token = tokenizer.next()) {
+        if (token->type == TokenType::Eof) break;
+        if (token->type == TokenType::LParen) ++depth;
+        if (token->type == TokenType::RParen && --depth == 0)
+            return static_cast<size_t>(token->text.data() - text.data());
     }
     return std::string_view::npos;
 }
@@ -70,34 +110,18 @@ std::string remove_node(std::string_view text, size_t start, size_t end) {
 bool replace_property_value(std::string& text, std::string_view node_type,
                             std::string_view node_name, std::string_view prop_key,
                             std::string_view new_value) {
-    auto node_start = find_node(text, node_type, node_name);
-    if (!node_start) return false;
-    auto node_end = find_matching_paren(text, *node_start);
-    if (node_end == std::string_view::npos) return false;
-
-    // Locate (property "KEY" inside the node
-    std::string marker = std::string("(property \"") + std::string(prop_key) + "\"";
-    auto rel = text.find(marker, *node_start);
-    if (rel == std::string::npos || rel > node_end) return false;
-
-    // The '(' of the property subtree and its matching ')'
-    auto prop_open = text.rfind('(', rel);
-    if (prop_open == std::string::npos || prop_open < *node_start) return false;
-    auto prop_close = find_matching_paren(text, prop_open);
-    if (prop_close == std::string::npos || prop_close > node_end) return false;
-
-    // Rebuild the property node with the new value — same layout as
-    // insert_property so formatting stays consistent
-    std::string prop = "(property \"" + std::string(prop_key) + "\" \"" +
-                       std::string(new_value) +
-                       "\"\n"
-                       "\t\t\t(at 0 -22.86 0)\n"
-                       "\t\t\t(effects\n"
-                       "\t\t\t\t(font (size 1.27 1.27))\n"
-                       "\t\t\t\t(hide yes)\n"
-                       "\t\t\t)\n"
-                       "\t\t)";
-    text.replace(prop_open, prop_close - prop_open + 1, prop);
+    TextNodes nodes(text);
+    auto node = nodes.node(node_type, node_name);
+    if (!node) return false;
+    auto prop = nodes.property(*node, prop_key);
+    if (!prop || *prop + 3 >= nodes.close[*prop]) return false;
+    const auto& value = nodes.tokens[*prop + 3];
+    if (value.type != TokenType::String && value.type != TokenType::Atom) return false;
+    size_t start = static_cast<size_t>(value.text.data() - text.data());
+    size_t length = value.text.size();
+    if (value.type == TokenType::String) { --start; length += 2; }
+    auto replacement = "\"" + escape_value(new_value) + "\"";
+    text.replace(start, length, replacement);
     return true;
 }
 
@@ -115,29 +139,14 @@ int patch_kf_id_to_file(
 
     int patched = 0;
     for (const auto& [name, kf_id] : name_to_kf_id) {
-        auto node_start = find_node(text, "symbol", name);
-        if (!node_start) continue;
-
-        auto sym_end = text.find("(symbol ", *node_start + 8);
-        if (sym_end == std::string::npos) sym_end = text.size();
-        if (text.find("Kicad_Forge_ID", *node_start) < static_cast<size_t>(sym_end)) continue;
-
-        // Insertion point: before sub-symbol if any, otherwise before the
-        // symbol's closing paren.
-        std::string sub_marker = "(symbol " + name + "_0_1";
-        auto insert_pos = text.find(sub_marker, *node_start);
-        if (insert_pos == std::string::npos || insert_pos >= static_cast<size_t>(sym_end))
-            insert_pos = find_matching_paren(text, *node_start);
-        if (insert_pos == std::string_view::npos) continue;
-
-        text = insert_property(text, insert_pos, "Kicad_Forge_ID", kf_id);
-        patched++;
+        TextNodes nodes(text);
+        auto node = nodes.node("symbol", name);
+        if (!node || nodes.property(*node, "Kicad_Forge_ID")) continue;
+        auto position = static_cast<size_t>(nodes.tokens[nodes.close[*node]].text.data() - text.data());
+        text = insert_property(text, position, "Kicad_Forge_ID", "\"" + escape_value(kf_id) + "\"");
+        ++patched;
     }
-
-    if (patched > 0) {
-        std::ofstream out(sym_file, std::ios::binary);
-        if (out.is_open()) out << text;
-    }
+    if (patched > 0) util::replace_file(sym_file, text);
     return patched;
 }
 

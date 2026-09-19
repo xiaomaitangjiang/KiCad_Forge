@@ -36,6 +36,14 @@ struct DbService
 
     // 提供 sqlite3* 给其他服务 build 注入
     sqlite3* handle() const { return db ? db->handle() : nullptr; }
+
+    static kforge::util::Result<void> destroy()
+    {
+        auto& self = kforge::launcher::util::instance_store<DbService>();
+        if (self)
+            self->db.reset();
+        return {};
+    }
 };
 
 }  // namespace kforge::storage

@@ -1,4 +1,5 @@
 #include "util/config_store.h"
+#include "util/file_write.h"
 
 #include <fstream>
 #include <mutex>
@@ -39,30 +40,14 @@ void ConfigStore::load()
     }
 }
 
-void ConfigStore::flush() const
+void ConfigStore::flush(const nlohmann::json& data) const
 {
     auto parent = path_.parent_path();
     if (!parent.empty())
     {
-        std::error_code ec;
-        std::filesystem::create_directories(parent, ec);
+        std::filesystem::create_directories(parent);
     }
-    auto tmp = path_;
-    tmp += ".tmp";
-    std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
-    if (!out.is_open())
-    {
-        return;
-    }
-    out << data_.dump(2);
-    out.flush();
-    out.close();
-    std::error_code ec;
-    std::filesystem::rename(tmp, path_, ec);  // atomic on POSIX & Win32
-    if (ec)
-    {
-        std::filesystem::remove(tmp, ec);
-    }
+    replace_file(path_, data.dump(2));
 }
 
 std::string ConfigStore::get(const std::string& key) const
@@ -91,7 +76,8 @@ bool ConfigStore::get_bool(const std::string& key, bool default_val) const
     if (it->is_string())
     {
         auto s = it->get<std::string>();
-        return s == "true" || s == "1";
+        if (s == "true" || s == "1") return true;
+        if (s == "false" || s == "0") return false;
     }
     return default_val;
 }
@@ -99,15 +85,19 @@ bool ConfigStore::get_bool(const std::string& key, bool default_val) const
 void ConfigStore::set(const std::string& key, std::string value)
 {
     std::unique_lock lock(mtx_);
-    data_[key] = std::move(value);
-    flush();
+    auto next = data_;
+    next[key] = std::move(value);
+    flush(next);
+    data_ = std::move(next);
 }
 
 void ConfigStore::set_bool(const std::string& key, bool val)
 {
     std::unique_lock lock(mtx_);
-    data_[key] = val;
-    flush();
+    auto next = data_;
+    next[key] = val;
+    flush(next);
+    data_ = std::move(next);
 }
 
 nlohmann::json ConfigStore::all() const

@@ -37,9 +37,8 @@ public:
     // Query current binding for a symbol
     Binding get(const std::string& symbol_id) const;
 
-    // Assign footprint to symbol (replaces existing link). Syncs the
-    // .kicad_sym source file first and auto-links the new footprint's 3D
-    // models; fails (without touching the DB) when the file cannot be updated.
+    // Update the source reference and DB links; roll back DB changes if the
+    // source cannot be replaced. Models are read from the selected footprint.
     util::Result<void> assign_footprint(const std::string& symbol_id,
                                         const std::string& footprint_id);
 

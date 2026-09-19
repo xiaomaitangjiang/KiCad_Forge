@@ -7,6 +7,7 @@
 #include "util/template/traits.hpp"
 
 #include <functional>
+#include <array>
 #include <tuple>
 #include <type_traits>
 #include <utility>
@@ -43,7 +44,7 @@ D& resolve(std::variant<std::reference_wrapper<D>, typename Server<D>::owned_tag
  * TaggedTuple。槽位为 variant<reference_wrapper<D>, Server<D>::owned_tag>：
  * 左值实参 -> 槽持引用；
  * 右值实参 -> 实例存入按类型的静态实例存储里，此时槽持空类标记 （这样槽位就可以恒定两个指针宽）
- * 服务类型无需继承Server，owned_tag 仅是槽位空类标签（tip：应该没有傻子会这么干吧）
+ * 服务类型无需继承 Server，owned_tag 仅是槽位空类标签。
  * 模板参数的 S&/S 写法仅表意，行为以实参值类别为准
  *（CTAD 推导：Launcher(http, logger) -> Launcher<HttpServer, Logger&>）。
  *
@@ -56,6 +57,8 @@ D& resolve(std::variant<std::reference_wrapper<D>, typename Server<D>::owned_tag
  * 生命周期：
  * 引用对象自行管理生命周期
  * 实例存于静态实例存储由launcher管理
+ * build 调用后需要清理，失败时也清理部分资源；未调用 build 的服务跳过。
+ * 只有 destroy 的服务从构造起参与清理。每轮启动仅尝试一次 destroy，移动转交清理责任。
  */
 template <typename... Servers>
 requires(sizeof...(Servers) > 0)  // 空 Launcher 无意义
@@ -67,6 +70,28 @@ public:
 private:
     using raw_slots = std::tuple<Servers...>;
     static constexpr std::size_t count_v = sizeof...(Servers);
+
+    static constexpr bool has_cleanup = (util::Destroyable<std::decay_t<Servers>> || ...);
+    struct NoCleanup {};
+    using CleanupState = std::conditional_t<has_cleanup, std::array<bool, count_v>, NoCleanup>;
+
+    static constexpr CleanupState initial_cleanup()
+    {
+        if constexpr (has_cleanup)
+            return {(!util::Buildable<std::decay_t<Servers>> &&
+                     util::Destroyable<std::decay_t<Servers>>) ...};
+        else
+            return {};
+    }
+
+    template <typename S>
+    static constexpr std::size_t slot_index()
+    {
+        constexpr std::array matches{std::is_same_v<S, std::decay_t<Servers>>...};
+        for (std::size_t i = 0; i < count_v; ++i)
+            if (matches[i]) return i;
+        return count_v;
+    }
 
     // 槽位：variant<引用, 标记>
     template <typename S>
@@ -80,8 +105,7 @@ private:
     static constexpr bool arg_is_rvalue_v =
         !std::is_lvalue_reference_v<std::tuple_element_t<I, std::remove_cvref_t<ArgTuple>>>;
 
-    // 构造辅助函数：左值 -> 持引用；右值 -> 按类型存入7
-    // ++。静态实例存储，槽持 owned_tag
+    // 左值持引用；右值存入静态实例存储，槽持 owned_tag。
     template <std::size_t I, typename ArgTuple>
     static constexpr auto slot_arg(ArgTuple&& args)
     {
@@ -113,7 +137,7 @@ private:
         server_result<Servers...> out;
         if constexpr (util::Buildable<std::decay_t<S>>)
         {
-            out = launch<S>();
+            out = launch<std::decay_t<S>>();
         }
         return out;
     }
@@ -125,7 +149,7 @@ private:
         server_result<Servers...> out;
         if constexpr (util::Destroyable<std::decay_t<S>>)
         {
-            out = destroy<S>();
+            out = destroy<std::decay_t<S>>();
         }
         return out;
     }
@@ -210,6 +234,9 @@ public:
 
         auto params = util::find_args<bare_args_t>(
             ServerList, std::make_index_sequence<std::tuple_size_v<bare_args_t>>{});
+        // build 失败或抛出时也可能已分配资源，需要清理。
+        if constexpr (util::Destroyable<S>)
+            cleanup_[slot_index<S>()] = true;
         outcome.result = std::apply(&S::build, std::move(params));
         if (!outcome.ok())
         {
@@ -236,6 +263,9 @@ public:
     {
         server_result<Servers...> outcome;
         using S = std::decay_t<Service>;
+        // 每轮启动只尝试一次销毁，包括返回错误或抛异常的情况。
+        if (!std::exchange(cleanup_[slot_index<S>()], false))
+            return outcome;
         outcome.result = S::destroy();
         if (!outcome.ok())
         {
@@ -273,12 +303,27 @@ public:
     {
         destroy_all_unchecked_impl(std::make_index_sequence<count_v>{});
     }
-    // 自定义析构抑制隐式移动 —— 显式恢复（槽内引用/标记可移动；实例存于静态 store 不动）
-    Launcher(Launcher&&) = default;
-    Launcher& operator=(Launcher&&) = default;
+    // 移出对象不再负责清理，服务实例地址保持不变。
+    Launcher(Launcher&& other) noexcept
+        : ServerList(std::move(other.ServerList)),
+          cleanup_(std::exchange(other.cleanup_, CleanupState{}))
+    {
+    }
+
+    Launcher& operator=(Launcher&& other) noexcept
+    {
+        if (this != &other)
+        {
+            destroy_all_unchecked_impl(std::make_index_sequence<count_v>{});
+            ServerList = std::move(other.ServerList);
+            cleanup_ = std::exchange(other.cleanup_, CleanupState{});
+        }
+        return *this;
+    }
 
 private:
     Storage ServerList;
+    [[no_unique_address]] CleanupState cleanup_ = initial_cleanup();
 };
 
 

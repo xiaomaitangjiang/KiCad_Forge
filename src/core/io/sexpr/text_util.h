@@ -25,8 +25,8 @@ std::string insert_property(std::string_view text, size_t before_pos, std::strin
 std::string remove_node(std::string_view text, size_t start, size_t end);
 
 /// Replace the value of (property "KEY" ...) inside the (type "name" ...) node.
-/// Rebuilds the property subtree (same layout as insert_property) with
-/// new_value. Returns false when the node or the property cannot be located.
+/// Only replaces the direct property's value token; preserves all other text.
+/// Returns false on invalid input or a missing node/property.
 bool replace_property_value(std::string& text, std::string_view node_type,
                             std::string_view node_name, std::string_view prop_key,
                             std::string_view new_value);

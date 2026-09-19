@@ -22,6 +22,8 @@ void ImportOrchestrator::start()
         return;
     }
 
+    if (import_thread_.joinable()) import_thread_.join();
+
     running_ = true;
     cancel_ = false;  // reset after a previous stop()
     sym_count_ = 0;
@@ -96,10 +98,13 @@ void ImportOrchestrator::stop()
 
 services::ImportPipeline::Result ImportOrchestrator::run_now()
 {
+    stop();
+    cancel_ = false;
     storage::ComponentLibraryRepository cl_repo(db_);
     auto libs = cl_repo.find_enabled();
 
-    services::ImportPipeline pipe(db_, &cancel_);
+    const bool write_kf_id = config_ && config_->get_bool("write_kf_id_to_file", false);
+    services::ImportPipeline pipe(db_, &cancel_, write_kf_id);
     if (libs && !libs->empty())
     {
         for (auto& l : *libs)
