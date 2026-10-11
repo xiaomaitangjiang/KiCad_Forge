@@ -5,6 +5,7 @@
 #include "interface/api/import_manager.h"
 #include "interface/manager/setup/launcher.hpp"
 #include "support/test_environment.h"
+#include "util/lifecycle.h"
 
 #include <spdlog/sinks/callback_sink.h>
 
@@ -44,7 +45,7 @@ struct ApiProbe
     }
     static Result destroy()
     {
-        database_alive_at_shutdown = database && database->handle();
+        database_alive_at_shutdown = database && database->db != nullptr;
         return {};
     }
 };
@@ -78,13 +79,31 @@ TEST_CASE_FIXTURE(StartupFixture, "DB failure is logged and prevents import and 
         REQUIRE_FALSE(result.ok());
         CHECK(failed_by<DbService>(result));
         CHECK(result.result.error().kind() == kforge::util::Error::Kind::DbError);
-        CHECK(l.get<DbService>().handle() == nullptr);
+        CHECK(l.get<DbService>().db == nullptr);
         CHECK(l.get<ImportManager>().orchestrator() == nullptr);
         CHECK_FALSE(ApiProbe::started);
         REQUIRE(TestLogger::messages.size() == 1);
         CHECK(TestLogger::messages.front().find("Database open failed:") != std::string::npos);
     }
     CHECK_FALSE(ApiProbe::started);
+}
+
+TEST_CASE_FIXTURE(StartupFixture, "heartbeat timeout never kills a minimized window")
+{
+    using kforge::util::frontend_alive;
+    using kforge::util::kHeartbeatTimeoutMs;
+
+    // 窗口可见 + 心跳过期 → 判定前端已死（兜底路径仍然有效）
+    CHECK_FALSE(frontend_alive(kHeartbeatTimeoutMs + 1, false));
+    CHECK(frontend_alive(kHeartbeatTimeoutMs - 1, false));
+    CHECK(frontend_alive(0, false));
+
+    // 最小化时 WebView 会节流定时器：无论多久没心跳都不算死
+    CHECK(frontend_alive(kHeartbeatTimeoutMs + 1, true));
+    CHECK(frontend_alive(60 * 60 * 1000, true));
+
+    // 超时必须比任何正常阻塞（导入、全库分类）都长
+    CHECK(kHeartbeatTimeoutMs >= 60000);
 }
 
 TEST_CASE_FIXTURE(StartupFixture, "uninitialized import manager can be stopped repeatedly")
@@ -101,10 +120,10 @@ TEST_CASE_FIXTURE(StartupFixture, "DB stays alive for dependents and closes on l
         Launcher l(TestLogger{}, DbService{(temp.path() / "test.db").string()}, config,
                    ImportManager{}, ApiProbe{});
         REQUIRE(l.launch_all().ok());
-        CHECK(l.get<DbService>().handle() != nullptr);
+        CHECK(l.get<DbService>().db != nullptr);
         CHECK(l.get<ImportManager>().orchestrator() != nullptr);
         CHECK(ApiProbe::started);
     }
     CHECK(ApiProbe::database_alive_at_shutdown);
-    CHECK(kforge::launcher::util::instance_store<DbService>()->handle() == nullptr);
+    CHECK(kforge::launcher::util::instance_store<DbService>()->db == nullptr);
 }

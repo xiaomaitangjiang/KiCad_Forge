@@ -5,6 +5,7 @@
 #include "interface/manager/setup/launcher.hpp"
 #include "platform/app_window.h"
 #include "util/config_store.h"
+#include "util/lifecycle.h"
 #include "util/logger.h"
 #include "util/platform.h"
 
@@ -19,11 +20,6 @@
 #endif
 
 // --------------- main entry point ---------------
-
-// Frontend sends heartbeats via recursive setTimeout (immune to browser
-// background-tab throttling), so a 5s timeout is safe; the old 30s made the
-// process linger for ~30s after the window closed.
-static constexpr auto kHeartbeatTimeoutMs = 5000;
 
 static int run_server()
 {
@@ -96,11 +92,15 @@ static int run_server()
     }
     kforge::util::log_info{}("Browser window opened");
     l.get<api::ImportManager>().start_async();  // 导入归 ImportManager（窗口后启动）
+    // 正常退出由原生窗口关闭驱动（webview_run 返回）；这里只兜底前端崩溃，
+    // 因此超时放得很宽 —— 导入/分类这类长操作、窗口最小化时的定时器节流
+    // 都不该被当成死亡。
     win.monitor(
         [&]
         {
             return !l.get<api::ApiServer>().should_stop() &&
-                   l.get<api::ApiServer>().ms_since_heartbeat() < kHeartbeatTimeoutMs;
+                   util::frontend_alive(l.get<api::ApiServer>().ms_since_heartbeat(),
+                                        win.is_minimized());
         });
     kforge::util::log_info{}("Shutting down (heartbeat stopped or bye signal received)");
     // 栈析构：~Launcher → 自动调用destroy_all（忽略报错）

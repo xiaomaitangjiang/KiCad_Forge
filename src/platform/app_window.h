@@ -111,6 +111,9 @@ public:
         }
     }
 
+    /// 外部浏览器进程：拿不到窗口状态，一律按「可见」处理
+    [[nodiscard]] bool is_minimized() const { return false; }
+
 private:
     pid_t pid_{-1};
 };
@@ -175,6 +178,16 @@ public:
         }
     }
 
+    /// 窗口最小化时不判心跳超时：WebView 会节流页面定时器，
+    /// 稀疏心跳属于正常现象（生命周期由原生关闭事件掌握）
+    [[nodiscard]] bool is_minimized() const
+    {
+        if (!w_)
+            return false;
+        HWND hwnd = static_cast<HWND>(webview_get_window(w_));
+        return hwnd != nullptr && IsIconic(hwnd) != 0;
+    }
+
     template <typename F>
     void monitor(F&& is_alive)
     {
@@ -191,16 +204,27 @@ public:
                     std::this_thread::sleep_for(milliseconds(200));
                 }
                 // Poll: exit as soon as the window is gone (webview_run has
-                // returned — see window_closed_ below) or the heartbeat is
-                // lost (frontend crashed/hung without closing the window).
+                // returned — see window_closed_ below) or the frontend stops
+                // responding while the window is still open (crash/hang).
+                // 判死策略见 util/lifecycle.h：最小化时不做心跳判死。
                 while (!window_closed_ && is_alive_copy())
                 {
                     std::this_thread::sleep_for(milliseconds(200));
                 }
                 if (!window_closed_)
                 {
-                    kforge::util::log_info{}("webview: heartbeat lost, terminating...");
-                    webview_terminate(w_);
+                    kforge::util::log_info{}(
+                        "webview: frontend stopped responding, terminating (window still open)");
+                    // webview_terminate posts WM_QUIT to the CALLING thread's
+                    // queue — dispatch it onto the UI thread, otherwise the
+                    // main thread's webview_run loop never exits.
+                    webview_dispatch(
+                        w_,
+                        [](webview_t w, void*)
+                        {
+                            webview_terminate(w);
+                        },
+                        nullptr);
                 }
             },
             std::forward<F>(is_alive));

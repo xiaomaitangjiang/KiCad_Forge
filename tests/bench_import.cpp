@@ -159,10 +159,11 @@ int main() {
             printf("  Cannot open DB: %s\n", db_result.error().message().c_str());
         } else {
             auto& db = *db_result;
-            storage::SymbolRepository repo(db->handle());
+            auto session = db->session();
+            storage::SymbolRepository repo(session);
 
             // Pre-create the default library
-            sqlite3_exec(db->handle(),
+            sqlite3_exec(session.handle(),
                 "INSERT OR IGNORE INTO libraries(id,name,file_path) "
                 "VALUES('default','Default','test.kicad_sym')",
                 nullptr, nullptr, nullptr);
@@ -201,7 +202,7 @@ int main() {
         if (db_result) {
             auto& db = *db_result;
             Timer t;
-            auto result = services::ImportPipeline(db->handle())
+            auto result = services::ImportPipeline(**db_result)
                 | services::symbols_from{test_file.string(), "test"}
                 | services::execute;
             printf("  imported %d symbols: %.1f ms\n", result.symbols, t.ms());

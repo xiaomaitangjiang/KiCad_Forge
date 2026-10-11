@@ -17,11 +17,12 @@
 ### 开发流程
 
 1. Fork 仓库并 clone
-2. 创建 feature 分支：`git checkout -b feature/xxx`
+2. 创建分支：`git checkout -b xxx/xxx`
 3. 安装依赖（见 [README 快速开始](README.md#快速开始)）
 4. 遵循下方规范提交修改
 5. Debug + Release 均通过编译
-6. 提交 PR，附带清晰的改动说明
+6. 补全单元测试
+7. 提交 PR，附带清晰的改动说明
 
 ### 代码规范
 
@@ -32,7 +33,6 @@
 - `#pragma once`，不用 include guard
 - `util::Result<T>` 处理可失败操作，核心逻辑不抛异常
 - 优先用 `std::filesystem::path`，不用字符串拼接路径
-- 不为第三方库做兼容修改
 
 **前端（React）**
 
@@ -52,38 +52,49 @@
 1. `xmake build` 两种模式均编译通过
 2. `npm run build` 无警告
 3. 无新增编译警告
-4. 冒烟测试：启动 → 窗口正常显示 → 心跳正常 → 关闭窗口后进程退出
-
-### 架构约定
-
-| 约定 | 说明 |
-|---|---|
-| **便携优先** | 运行时数据在 `./data/`（exe 同级目录），回退 `%APPDATA%/KiCad_Forge/data/` |
-| **管道导入** | `ImportPipeline(db) \| symbols_from{...} \| footprints_from{...} \| models_from{...} \| execute` |
-| **CRTP 平台** | `AppWindow<Derived>` 编译期派发 |
-| **心跳生命周期** | 前端每 1s 调用 `/api/status`，后端 30s 无心跳则退出 |
-| **插件隔离** | 插件以独立 Python 进程运行 |
-| **插件发现** | 启动时扫描 `exe_dir/plugins/`，`manifest.json` 驱动全部 UI |
+4. 单元测试无报错
 
 ### 目录结构
 
 ```
-src/
-  api/                  HTTP 路由
-  core/                 领域模型
-  sexpr/                S-Expression 解析
-  parser/               KiCad 文件解析
-  storage/              SQLite 数据库
-  classifier/           分类规则
-  correspondence/       Symbol↔Footprint↔3D 追踪
-  services/             业务逻辑
-  plugin/               插件基础设施
-  platform/             跨平台窗口（CRTP）
-  util/                 工具类
-plugins/                插件包
-webui/                  前端
-resources/              Windows .rc + app.ico
-scripts/                构建辅助脚本
+KiCad_Forge
+├── config
+├── docs
+├── install_file
+├── plugins
+├── resources
+├── scripts
+├── sql
+├── src
+│   ├── classifier
+│   ├── core
+│   │   ├── db
+│   │   ├── io
+│   │   │   ├── parser
+│   │   │   └── sexpr
+│   │   │       ├── dom
+│   │   │       └── token
+│   │   ├── model
+│   │   └── repo
+│   ├── correspondence
+│   ├── interface
+│   │   ├── api
+│   │   ├── manager
+│   │   │   ├── binding
+│   │   │   └── setup
+│   │   └── service
+│   │       ├── classification
+│   │       ├── correspondence
+│   │       ├── import
+│   │       └── library
+│   ├── platform
+│   ├── plugin
+│   ├── third_party
+│   └── util
+│       ├── container
+│       └── template
+├── tests
+└── webui
 ```
 
 ### 添加插件

@@ -125,6 +125,72 @@ bool replace_property_value(std::string& text, std::string_view node_type,
     return true;
 }
 
+std::vector<std::string_view> top_level_nodes(std::string_view text, std::string_view type)
+{
+    std::vector<std::string_view> nodes;
+    // 目标节点是根节点（kicad_symbol_lib / kicad_pcb …）的直接子节点：
+    // 从根 '(' 之后逐个扫描同级节点，遇到根的 ')' 结束
+    auto root = text.find('(');
+    if (root == std::string_view::npos)
+        return nodes;
+
+    auto matches = [&](std::string_view node)
+    {
+        if (node.size() <= type.size() + 1 || node.substr(1, type.size()) != type)
+            return false;
+        // "(symbol" 后必须跟分隔符，避免匹配到 "symbols"
+        char next = node[type.size() + 1];
+        return next == ' ' || next == '\t' || next == '\n' || next == '\r' || next == '"';
+    };
+
+    std::size_t index = root + 1;
+    while (index < text.size())
+    {
+        while (index < text.size() &&
+               std::isspace(static_cast<unsigned char>(text[index])))
+            ++index;
+        if (index >= text.size() || text[index] == ')')
+            break;  // 根节点结束
+        if (text[index] == '"')
+        {
+            ++index;  // 跳过根节点上的字符串 token
+            while (index < text.size() && text[index] != '"')
+                index += (text[index] == '\\') ? 2 : 1;
+            ++index;
+            continue;
+        }
+        if (text[index] != '(')
+        {
+            ++index;  // 原子 token（版本号、生成器等）
+            continue;
+        }
+        auto end = find_matching_paren(text, index);
+        if (end == std::string_view::npos)
+            break;
+        auto node = text.substr(index, end - index + 1);
+        if (matches(node))
+            nodes.push_back(node);
+        index = end + 1;
+    }
+    return nodes;
+}
+
+int patch_kf_id_content(
+    std::string& text,
+    const std::unordered_map<std::string, std::string>& name_to_kf_id)
+{
+    int patched = 0;
+    for (const auto& [name, kf_id] : name_to_kf_id) {
+        TextNodes nodes(text);
+        auto node = nodes.node("symbol", name);
+        if (!node || nodes.property(*node, "Kicad_Forge_ID")) continue;
+        auto position = static_cast<size_t>(nodes.tokens[nodes.close[*node]].text.data() - text.data());
+        text = insert_property(text, position, "Kicad_Forge_ID", "\"" + escape_value(kf_id) + "\"");
+        ++patched;
+    }
+    return patched;
+}
+
 int patch_kf_id_to_file(
     const std::filesystem::path& sym_file,
     const std::unordered_map<std::string, std::string>& name_to_kf_id)
@@ -137,15 +203,7 @@ int patch_kf_id_to_file(
                      std::istreambuf_iterator<char>());
     in.close();
 
-    int patched = 0;
-    for (const auto& [name, kf_id] : name_to_kf_id) {
-        TextNodes nodes(text);
-        auto node = nodes.node("symbol", name);
-        if (!node || nodes.property(*node, "Kicad_Forge_ID")) continue;
-        auto position = static_cast<size_t>(nodes.tokens[nodes.close[*node]].text.data() - text.data());
-        text = insert_property(text, position, "Kicad_Forge_ID", "\"" + escape_value(kf_id) + "\"");
-        ++patched;
-    }
+    int patched = patch_kf_id_content(text, name_to_kf_id);
     if (patched > 0) util::replace_file(sym_file, text);
     return patched;
 }

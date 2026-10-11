@@ -1,7 +1,7 @@
 {
   "id": "com.kicad_forge.lcsc_import",
   "name": "LCSC Component Importer",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "KiCad Forge",
   "description": "Download symbols, footprints, and 3D models from LCSC by part number",
   "license": "MIT",
@@ -16,20 +16,31 @@
       "name": "Import LCSC",
       "description": "Import a component from LCSC by part number",
       "trigger": "dialog",
+      "template": "two_step",
+      "analyze_action": "analyze",
+      "protocol": "staged-import-v1",
       "icon": "icon.svg",
       "button": {
         "show": true,
         "style": "both",
-        "location": "toolbar",
+        "location": "sidebar",
         "tooltip": "Download from LCSC"
       },
       "schema": {
         "fields": [
           { "key": "lcsc_id", "label": "LCSC Part Number", "type": "text", "required": true },
           { "key": "target_library", "label": "Target Symbol Library", "type": "library_picker", "required": true },
-          { "key": "footprint_library", "label": "Footprint Library", "type": "library_picker" }
+          { "key": "footprint_choice", "label": "Footprint", "type": "search_picker",
+            "source": "footprints", "near_from": "footprint_name" }
         ]
       }
+    },
+    {
+      "id": "analyze",
+      "name": "Analyze LCSC",
+      "description": "Download and inspect without writing to the library",
+      "trigger": "hidden",
+      "button": { "show": false }
     }
   ],
   "dependencies": {

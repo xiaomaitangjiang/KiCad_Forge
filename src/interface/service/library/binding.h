@@ -8,12 +8,16 @@
 
 #include "util/error.h"
 
-struct sqlite3;
+namespace kforge::storage
+{
+class Database;
+}
 
 namespace kforge::core
 {
 struct Footprint;
 struct Model3D;
+struct Symbol;
 }  // namespace kforge::core
 
 namespace kforge::services
@@ -22,7 +26,7 @@ namespace kforge::services
 class SymbolBindingManager
 {
 public:
-    explicit SymbolBindingManager(sqlite3* db);
+    explicit SymbolBindingManager(storage::Database& db);
 
     // ---- OOP interface ----
 
@@ -42,14 +46,19 @@ public:
     util::Result<void> assign_footprint(const std::string& symbol_id,
                                         const std::string& footprint_id);
 
-    // Assign 3D model to footprint (replaces existing link)
-    void assign_model(const std::string& footprint_id, const std::string& model_id);
+    // Assign 3D model to footprint (replaces existing link). Validates both
+    // objects first and swaps the links inside a transaction — a failure
+    // leaves the previous links untouched.
+    util::Result<void> assign_model(const std::string& footprint_id,
+                                    const std::string& model_id);
 
     // Search from in-memory index, no DB queries
     struct FootprintRef
     {
         std::string id;
         std::string name;
+        std::string library;  // .pretty library name (for "Lib:Name" footprint refs)
+        double score;         // similarity score (0-1) when anchor is used, else 1.0
         int pad_count;
     };
     // `query` filters by substring; when query is empty and `anchor` is given,
@@ -64,17 +73,29 @@ public:
         std::string id;
         std::string name;
         std::string format;
+        double score;  // similarity score (0-1) when anchor is used, else 1.0
     };
     std::vector<ModelRef> search_models(const std::string& query, int limit = 20,
                                         const std::string& anchor = "") const;
 
+    struct SymbolRef
+    {
+        std::string id;
+        std::string name;
+        double score;  // similarity score (0-1) when anchor is used, else 1.0
+    };
+    std::vector<SymbolRef> search_symbols(const std::string& query, int limit = 20,
+                                          const std::string& anchor = "") const;
+
 private:
     // ---- DOD internals ----
-    sqlite3* db_;
+    // 只借连接持有者，不缓存裸 sqlite3*：每次操作自取 session
+    storage::Database* db_;
 
     // Contiguous storage
     std::vector<core::Footprint> footprints_;
     std::vector<core::Model3D> models_;
+    std::vector<core::Symbol> symbols_;
 
     // Hash indices: name/stem → offset into the vector
     std::unordered_map<std::string, size_t> fp_by_name_;

@@ -34,9 +34,23 @@ def do_init(lib_path):
     ok, out, err = git(["init"], cwd=d)
     if not ok:
         return {"ok": False, "error": err or "git init failed"}
-    git(["add", "-A"], cwd=d)
-    ok2, out2, err2 = git(["commit", "-m", "KF: initial commit"], cwd=d)
-    return {"ok": True, "output": (out + "\n" + out2).strip()}
+
+    # Report init and first commit as separate outcomes — identity not
+    # configured, index locked or a hook rejection must not read as success.
+    ok_add, _, err_add = git(["add", "-A"], cwd=d)
+    ok_commit, out_c, err_c = git(["commit", "-m", "KF: initial commit"], cwd=d)
+
+    note = ""
+    if not ok_add:
+        note = f"git add failed: {err_add}"
+    elif not ok_commit:
+        combined = f"{out_c}\n{err_c}".lower()
+        note = ("nothing to commit yet" if "nothing to commit" in combined
+                else f"git commit failed: {err_c}")
+
+    return {"ok": True, "initialized": True, "committed": ok_commit,
+            "output": "\n".join(x for x in (out, out_c, note) if x).strip(),
+            "note": note}
 
 
 def do_commit(lib_path, message):
@@ -48,6 +62,24 @@ def do_commit(lib_path, message):
     if not ok:
         return {"ok": False, "error": err or "git commit failed (nothing to commit?)"}
     return {"ok": True, "output": out}
+
+
+def do_status(lib_path):
+    """Repository overview for the dialog: initialised? branch? last commit? changes?"""
+    root = repo_root(lib_path)
+    if not root:
+        return {"ok": True, "initialized": False, "root": "",
+                "branch": "", "last_commit": "", "changes": ""}
+    ok_b, branch, _ = git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=root)
+    ok_l, last, _ = git(["log", "-1", "--oneline", "--decorate"], cwd=root)
+    ok_s, status, _ = git(["status", "--porcelain"], cwd=root)
+    changed = len([ln for ln in status.splitlines() if ln.strip()]) if ok_s else 0
+    _, ahead, _ = git(["rev-list", "--count", "@{upstream}..HEAD"], cwd=root)
+    return {"ok": True, "initialized": True, "root": root,
+            "branch": branch if ok_b else "(detached)",
+            "last_commit": last if ok_l else "(no commits yet)",
+            "changes": f"{changed} file(s)" if changed else "clean",
+            "ahead": ahead or ""}
 
 
 def do_history(lib_path):
@@ -79,6 +111,7 @@ def do_diff(lib_path):
 # ---- CLI entry ----
 
 ACTIONS = {
+    "status": lambda args: do_status(args.get("target_library", "")),
     "init": lambda args: do_init(args.get("target_library", "")),
     "commit": lambda args: do_commit(
         args.get("target_library", ""),

@@ -4,7 +4,8 @@
 
 Desktop library manager for KiCad — browse, classify, and import symbols and footprints with a modern web UI and extensible plugin system.
 
-KiCad 桌面端符号/封装库管理器——浏览、分类、导入，现代 Web 界面 + 插件系统。
+KiCad 桌面端元件库（符号，封装库）管理器
+浏览、分类、导入，现代 Web 界面 + 插件系统。
 
 ![screenshot](resources/main_view.png)
 
@@ -55,28 +56,48 @@ xmake f -m debug && xmake build
 ### 项目结构
 
 ```
-src/
-├── api/               HTTP 路由（httplib）
-├── core/              领域模型：Symbol / Footprint / Model3D
-├── sexpr/             S-Expression 解析器（Tokenizer → DOM Builder → Writer）
-├── parser/            KiCad 文件解析器（.kicad_sym / .kicad_mod）
-├── storage/           SQLite 数据库层（Repository 模式）
-├── classifier/        分类规则引擎
-├── correspondence/    Symbol↔Footprint↔3D 关联追踪
-├── services/          业务逻辑编排
-├── plugin/            Python 插件基础设施
-├── platform/          跨平台应用窗口（CRTP，Windows 下 WebView2）
-└── util/              工具类（日志、Result、错误处理）
-
-plugins/               插件包
-webui/                 React 19 + Vite 前端
-resources/             Windows 资源文件 + app.ico（构建时自动生成）
-scripts/               svg2ico.py
+KiCad_Forge
+├── config
+├── docs
+├── plugins
+├── resources
+├── scripts
+├── sql
+├── src
+│   ├── classifier
+│   ├── core
+│   │   ├── db
+│   │   ├── io
+│   │   │   ├── parser
+│   │   │   └── sexpr
+│   │   │       ├── dom
+│   │   │       └── token
+│   │   ├── model
+│   │   └── repo
+│   ├── correspondence
+│   ├── interface
+│   │   ├── api
+│   │   ├── manager
+│   │   │   ├── binding
+│   │   │   └── setup
+│   │   └── service
+│   │       ├── classification
+│   │       ├── correspondence
+│   │       ├── import
+│   │       └── library
+│   ├── platform
+│   ├── plugin
+│   ├── third_party
+│   └── util
+│       ├── container
+│       └── template
+├── tests
+└── webui
 ```
 
 ### 插件系统
 
-> ⚠️ 安全警告：插件以独立 Python 进程运行，拥有与主程序相同的文件系统访问权限。仅安装来自可信来源的插件，恶意插件可能读取、篡改或删除任意文件。
+> ⚠️ 注意：插件以独立 Python 进程运行，拥有与主程序相同的文件系统访问权限。请仅安装来自可信来源的插件，恶意插件可能读取、篡改或删除任意文件。
 
 插件放在 `plugins/` 目录下，每个插件一个文件夹，包含 `manifest.json` + Python 脚本。后端通过 CLI 调用：`python plugin.py <action> '<json_args>'`，插件输出 JSON 到 stdout。
 

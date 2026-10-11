@@ -24,7 +24,7 @@
 #include <unordered_map>
 #include <vector>
 
-struct sqlite3;
+namespace kforge::storage { class Database; class DbSession; }
 
 namespace kforge::services
 {
@@ -80,9 +80,9 @@ public:
             linked_models = 0;
     };
 
-    explicit ImportPipeline(sqlite3* db, std::atomic<bool>* cancel = nullptr,
+    explicit ImportPipeline(storage::Database& db, std::atomic<bool>* cancel = nullptr,
                            bool write_kf_id_to_file = false)
-        : db_(db), cancel_(cancel), write_kf_id_to_file_(write_kf_id_to_file)
+        : db_(&db), cancel_(cancel), write_kf_id_to_file_(write_kf_id_to_file)
     {
     }
 
@@ -97,7 +97,7 @@ public:
     Result operator|(execute_t);
 
 private:
-    sqlite3* db_;
+    storage::Database* db_;
     std::atomic<bool>* cancel_ = nullptr;
 
     // Pending steps
@@ -137,12 +137,13 @@ private:
 
     // Footprint import split: parallel-safe parse (no DB access) + serial DB write
     std::optional<core::Footprint> parse_footprint_file(const std::filesystem::path& path);
-    IMP_Result write_footprint(const std::filesystem::path& path,
+    IMP_Result write_footprint(const storage::DbSession& session, const std::filesystem::path& path,
                                const core::Footprint& fp);
 
     // In-memory pools, loaded once before the footprint phase — replace
-    // per-file find_by_name / find_by_path queries
-    std::unordered_map<std::string, core::Footprint> fp_by_name_;
+    // per-file find_by_name / find_by_path queries.
+    // 封装按来源键索引：同名不同 .pretty 目录是两个对象。
+    std::unordered_map<std::string, core::Footprint> fp_by_source_;
     std::unordered_map<std::string, core::Model3D> models_by_path_;
 
     struct ImportCounts
@@ -164,6 +165,8 @@ private:
     bool file_unchanged(const std::filesystem::path& p);
     // Record the file's current mtime as imported
     void record_file(const std::filesystem::path& p);
+    // 同上，但复用调用方的 session —— 让快照与业务行落在同一事务
+    void record_file(const storage::DbSession& session, const std::filesystem::path& p);
     // True when the orchestrator requested a stop
     bool cancelled() const { return cancel_ && cancel_->load(std::memory_order_relaxed); }
     // Resolve a footprint's 3D model reference to an existing absolute path

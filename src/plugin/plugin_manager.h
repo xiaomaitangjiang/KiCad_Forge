@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -66,6 +67,11 @@ public:
 
     // --- Query ---
 
+    /// Expose the host API endpoint to plugin subprocesses via KFORGE_API_URL.
+    /// Called once the HTTP server has bound its port; plugins use it to call
+    /// host search APIs (no-op for port <= 0).
+    void set_api_port(int port);
+
     /// Check if a plugin is loaded/available.
     bool is_loaded(const std::string& plugin_id) const;
 
@@ -83,6 +89,7 @@ private:
     };
 
     mutable std::mutex mutex_;
+    std::atomic<int> api_port_{0};
     std::vector<std::filesystem::path> search_paths_;
     std::unordered_map<std::string, PluginManifest> available_;
     std::unordered_map<std::string, std::filesystem::path> plugin_dirs_;  // id → directory

@@ -5,7 +5,6 @@
 #include <nlohmann/json.hpp>
 #include <sqlite3.h>
 
-#include "core/model/type_registry.h"
 
 namespace kforge::storage {
 using Kind = util::Error::Kind;
@@ -98,28 +97,6 @@ static inline void bind_text_nullable(sqlite3_stmt* stmt, int idx,
 // Enum ↔ string conversions
 // ============================================================
 
-static std::string component_type_to_string(core::ComponentType t) {
-    int idx = static_cast<int>(t);
-    return core::component_type_name(idx);
-}
-
-static core::ComponentType string_to_component_type(const std::string& s) {
-    int idx = core::component_type_index(s);
-    if (idx < 0) return core::ComponentType::Unknown;
-    return static_cast<core::ComponentType>(idx);
-}
-
-static std::string package_type_to_string(core::PackageType t) {
-    int idx = static_cast<int>(t);
-    return core::package_type_name(idx);
-}
-
-static core::PackageType string_to_package_type(const std::string& s) {
-    int idx = core::package_type_index(s);
-    if (idx < 0) return core::PackageType::Unknown;
-    return static_cast<core::PackageType>(idx);
-}
-
 /// Serialize a string→string properties map to JSON.
 static std::string properties_to_json(
     const std::unordered_map<std::string, std::string>& props)
@@ -156,16 +133,21 @@ json_to_properties(const std::string& json)
 // LibraryRepository
 // ============================================================
 
-LibraryRepository::LibraryRepository(sqlite3* db) : db_(db) {}
-
 util::Result<core::LibraryMeta> LibraryRepository::insert(const core::LibraryMeta& lib) {
-    // Check if library with this name already exists (dedup by name)
-    auto all = find_all();
-    if (all) for (auto& existing : *all) {
-        if (existing.name == lib.name) return existing;
-    }
-    const char* sql = "INSERT OR IGNORE INTO libraries(id,name,file_path,component_library_id,description) VALUES(?1,?2,?3,?4,?5)";
+    // 身份是来源路径，不是名字：同名不同来源的库必须落在不同行上。
+    // 未落盘的虚拟库来源键为空，此时身份就是 UUID，不做去重。
     core::LibraryMeta l = lib;
+    if (l.source_key.empty())
+        l.source_key = existing_source_key(l.file_path);
+    if (!l.source_key.empty()) {
+        if (auto existing = find_by_source_key(l.source_key)) {
+            return *existing;  // 同一来源已在册 —— 保留原 UUID
+        }
+    }
+
+    const char* sql =
+        "INSERT INTO libraries(id,name,file_path,component_library_id,description,source_key) "
+        "VALUES(?1,?2,?3,?4,?5,?6)";
     if (l.id.empty()) l.id = make_uuid();
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
@@ -173,13 +155,93 @@ util::Result<core::LibraryMeta> LibraryRepository::insert(const core::LibraryMet
     bind_text(stmt, 1, l.id); bind_text(stmt, 2, l.name);
     bind_text(stmt, 3, l.file_path.string()); bind_text_nullable(stmt, 4, l.component_library_id);
     bind_text(stmt, 5, l.description);
+    bind_text_nullable(stmt, 6, l.source_key);
     rc = sqlite3_step(stmt);
     if (rc != SQLITE_DONE) return std::unexpected(util::Error::make<Kind::DbError>(sqlite3_errmsg(db_)));
     return l;
 }
 
+util::Result<core::LibraryMeta> LibraryRepository::find_by_source_key(const std::string& key) {
+    if (key.empty()) {
+        return std::unexpected(util::Error::make<Kind::NotFound>("Library has no source key"));
+    }
+    const char* sql =
+        "SELECT id,name,file_path,component_library_id,description,source_key FROM libraries "
+        "WHERE source_key = ?1";
+    ScopedStmt stmt;
+    if (sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr) != SQLITE_OK) {
+        return std::unexpected(util::Error::make<Kind::DbError>(
+            "Find library by source key prepare: " + std::string(sqlite3_errmsg(db_))));
+    }
+    sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_TRANSIENT);
+    int rc = sqlite3_step(stmt);
+    if (rc == SQLITE_ROW) {
+        core::LibraryMeta m;
+        m.id = col_text(stmt, 0); m.name = col_text(stmt, 1);
+        m.file_path = col_text(stmt, 2); m.component_library_id = col_text(stmt, 3);
+        m.description = col_text(stmt, 4); m.source_key = col_text(stmt, 5);
+        return m;
+    }
+    if (rc != SQLITE_DONE) {
+        return std::unexpected(util::Error::make<Kind::DbError>(
+            "Find library by source key step: " + std::string(sqlite3_errmsg(db_))));
+    }
+    return std::unexpected(util::Error::make<Kind::NotFound>("Library not found: " + key));
+}
+
+util::Result<core::LibraryMeta> LibraryRepository::upsert_by_source_key(
+    const core::LibraryMeta& lib) {
+    core::LibraryMeta incoming = lib;
+    if (incoming.source_key.empty())
+        incoming.source_key = existing_source_key(incoming.file_path);
+    if (incoming.source_key.empty())
+        return insert(incoming);  // 虚拟库：按 UUID 落行
+
+    auto existing = find_by_source_key(incoming.source_key);
+    if (!existing)
+        return insert(incoming);
+
+    // 同一源文件被配置到两个不同组件库：报归属冲突，不暗中改 owner
+    if (!existing->component_library_id.empty() && !incoming.component_library_id.empty() &&
+        existing->component_library_id != incoming.component_library_id)
+    {
+        return std::unexpected(util::Error::make<Kind::ValidationError>(
+            "Source belongs to component library " + existing->component_library_id +
+            ", cannot reassign to " + incoming.component_library_id + ": " +
+            incoming.source_key));
+    }
+
+    // 命中同一来源：保留 UUID，刷新显示名、路径与归属
+    core::LibraryMeta updated = *existing;
+    updated.name = incoming.name;
+    updated.file_path = incoming.file_path;
+    updated.description = incoming.description;
+    if (!incoming.component_library_id.empty())
+        updated.component_library_id = incoming.component_library_id;
+
+    const char* sql =
+        "UPDATE libraries SET name=?1, file_path=?2, component_library_id=?3, description=?4, "
+        "updated_at=datetime('now') WHERE id=?5";
+    ScopedStmt stmt;
+    if (sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr) != SQLITE_OK) {
+        return std::unexpected(util::Error::make<Kind::DbError>(
+            "Upsert library prepare: " + std::string(sqlite3_errmsg(db_))));
+    }
+    bind_text(stmt, 1, updated.name);
+    bind_text(stmt, 2, updated.file_path.string());
+    bind_text_nullable(stmt, 3, updated.component_library_id);
+    bind_text(stmt, 4, updated.description);
+    bind_text(stmt, 5, updated.id);
+    if (sqlite3_step(stmt) != SQLITE_DONE) {
+        return std::unexpected(util::Error::make<Kind::DbError>(
+            "Upsert library step: " + std::string(sqlite3_errmsg(db_))));
+    }
+    return updated;
+}
+
 util::Result<std::vector<core::LibraryMeta>> LibraryRepository::find_all() {
-    const char* sql = "SELECT id,name,file_path,component_library_id,description FROM libraries ORDER BY name";
+    const char* sql = "SELECT id,name,file_path,component_library_id,description,source_key "
+                      "FROM libraries ORDER BY name";
     std::vector<core::LibraryMeta> result;
     ScopedStmt stmt;
     if (sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr) != SQLITE_OK) return result;
@@ -187,7 +249,7 @@ util::Result<std::vector<core::LibraryMeta>> LibraryRepository::find_all() {
         core::LibraryMeta m;
         m.id = col_text(stmt, 0); m.name = col_text(stmt, 1);
         m.file_path = col_text(stmt, 2); m.component_library_id = col_text(stmt, 3);
-        m.description = col_text(stmt, 4);
+        m.description = col_text(stmt, 4); m.source_key = col_text(stmt, 5);
         result.push_back(m);
     }
     return result;
@@ -214,8 +276,6 @@ util::Result<void> LibraryRepository::remove(const core::Uuid& id) {
 // SymbolRepository
 // ============================================================
 
-SymbolRepository::SymbolRepository(sqlite3* db) : db_(db) {}
-
 core::Symbol SymbolRepository::row_to_symbol(sqlite3_stmt* stmt) const {
     core::Symbol sym;
     // Column order matches the SELECT list in all queries:
@@ -236,8 +296,8 @@ core::Symbol SymbolRepository::row_to_symbol(sqlite3_stmt* stmt) const {
     sym.set_reference_prefix(col_text(stmt, 9));
     sym.set_power(col_int(stmt, 10) != 0);
     int db_pin_count = col_int(stmt, 11);
-    sym.component_type = string_to_component_type(col_text(stmt, 12));
-    sym.package_type   = string_to_package_type(col_text(stmt, 13));
+    sym.component_type_id = col_text(stmt, 12);
+    sym.package_type_id   = col_text(stmt, 13);
     auto props = json_to_properties(col_text(stmt, 14));
     // Restore pin definitions from properties JSON
     auto pins_json = props.find("_pins_json");
@@ -287,8 +347,8 @@ void SymbolRepository::bind_symbol_params(sqlite3_stmt* stmt,
     bind_text(stmt, 10, sym.reference_prefix());
     sqlite3_bind_int(stmt, 11, sym.is_power() ? 1 : 0);
     sqlite3_bind_int(stmt, 12, sym.pin_count());
-    bind_text(stmt, 13, component_type_to_string(sym.component_type));
-    bind_text(stmt, 14, package_type_to_string(sym.package_type));
+    bind_text(stmt, 13, sym.component_type_id);
+    bind_text(stmt, 14, sym.package_type_id);
     // Serialize pin definitions as JSON inside properties
     auto props = sym.properties();
     if (!sym.pins().empty()) {
@@ -366,8 +426,8 @@ util::Result<void> SymbolRepository::update(const core::Symbol& sym) {
     bind_text(stmt, 7,  sym.reference_prefix());
     sqlite3_bind_int(stmt, 8,  sym.is_power() ? 1 : 0);
     sqlite3_bind_int(stmt, 9,  sym.pin_count());
-    bind_text(stmt, 10, component_type_to_string(sym.component_type));
-    bind_text(stmt, 11, package_type_to_string(sym.package_type));
+    bind_text(stmt, 10, sym.component_type_id);
+    bind_text(stmt, 11, sym.package_type_id);
     bind_text(stmt, 12, properties_to_json(sym.properties()));
     bind_text(stmt, 13, sym.Kicad_Forge_ID());
     bind_text(stmt, 14, sym.Pre_Kicad_Forge_ID());
@@ -484,6 +544,16 @@ util::Result<std::vector<core::Symbol>> SymbolRepository::find_by_library(
     return result;
 }
 
+int SymbolRepository::count_by_component_type(const std::string& type_id) const {
+    ScopedStmt stmt;
+    if (sqlite3_prepare_v2(db_, "SELECT COUNT(*) FROM symbols WHERE component_type = ?1", -1,
+                           stmt.ref(), nullptr) != SQLITE_OK)
+        return 0;
+    bind_text(stmt, 1, type_id);
+    if (sqlite3_step(stmt) == SQLITE_ROW) return sqlite3_column_int(stmt, 0);
+    return 0;
+}
+
 util::Result<std::vector<core::Symbol>> SymbolRepository::find_all() {
     const char* sql =
         "SELECT id, library_id, name, lib_id, default_value, footprint_ref, "
@@ -560,7 +630,10 @@ int SymbolRepository::count() const {
 // FootprintRepository
 // ============================================================
 
-FootprintRepository::FootprintRepository(sqlite3* db) : db_(db) {}
+// 所有封装查询共用的列顺序（row_to_footprint 按下标读取）
+static constexpr char kFootprintColumns[] =
+    "id, name, library_path, description, tags, pad_count, courtyard_w, courtyard_h, "
+    "package_type, properties_json, source_key, footprint_lib_name";
 
 core::Footprint FootprintRepository::row_to_footprint(sqlite3_stmt* stmt) const {
     core::Footprint fp;
@@ -576,17 +649,20 @@ core::Footprint FootprintRepository::row_to_footprint(sqlite3_stmt* stmt) const 
     // pad_count at index 5 — derived from pads_ vector, not stored
     fp.courtyard_width  = col_double(stmt, 6);
     fp.courtyard_height = col_double(stmt, 7);
-    fp.package_type = string_to_package_type(col_text(stmt, 8));
+    fp.package_type_id = col_text(stmt, 8);
     for (auto& [k, v] : json_to_properties(col_text(stmt, 9))) fp.set_property(k, v);
+    fp.set_source_key(col_text(stmt, 10));
+    fp.set_footprint_lib_name(col_text(stmt, 11));
     return fp;
 }
 
 util::Result<core::Footprint> FootprintRepository::insert(
     const core::Footprint& fp) {
     const char* sql =
-        "INSERT INTO footprints (id, name, library_path, description, tags, "
-        "pad_count, courtyard_w, courtyard_h, package_type, properties_json) "
-        "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)";
+        "INSERT OR IGNORE INTO footprints (id, name, library_path, description, tags, "
+        "pad_count, courtyard_w, courtyard_h, package_type, properties_json, "
+        "source_key, footprint_lib_name) "
+        "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)";
 
     core::Footprint f = fp;
     if (f.id().empty()) f.set_id(make_uuid());
@@ -606,8 +682,11 @@ util::Result<core::Footprint> FootprintRepository::insert(
     sqlite3_bind_int(stmt, 6, f.pad_count());
     sqlite3_bind_double(stmt, 7, f.courtyard_width);
     sqlite3_bind_double(stmt, 8, f.courtyard_height);
-    bind_text(stmt, 9, package_type_to_string(f.package_type));
+    bind_text(stmt, 9, f.package_type_id);
     bind_text(stmt, 10, properties_to_json(f.properties()));
+    // 未落盘的封装保持 NULL，由 UUID 识别（部分唯一索引只约束已落盘来源）
+    bind_text_nullable(stmt, 11, f.source_key());
+    bind_text(stmt, 12, f.footprint_lib_name());
 
     rc = sqlite3_step(stmt);
     if (rc != SQLITE_DONE) {
@@ -617,10 +696,36 @@ util::Result<core::Footprint> FootprintRepository::insert(
     return f;
 }
 
+util::Result<core::Footprint> FootprintRepository::find_by_source_key(
+    const std::string& key) {
+    if (key.empty()) {
+        return std::unexpected(util::Error::make<Kind::NotFound>("Footprint has no source key"));
+    }
+    std::string sql =
+        std::string("SELECT ") + kFootprintColumns + " FROM footprints WHERE source_key = ?1";
+
+    ScopedStmt stmt;
+    if (sqlite3_prepare_v2(db_, sql.c_str(), -1, stmt.ref(), nullptr) != SQLITE_OK) {
+        return std::unexpected(util::Error::make<Kind::DbError>(
+            "Find footprint by source key prepare: " + std::string(sqlite3_errmsg(db_))));
+    }
+    sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_TRANSIENT);
+    int rc = sqlite3_step(stmt);
+    if (rc == SQLITE_ROW) {
+        return row_to_footprint(stmt);
+    }
+    if (rc != SQLITE_DONE) {
+        return std::unexpected(util::Error::make<Kind::DbError>(
+            "Find footprint by source key step: " + std::string(sqlite3_errmsg(db_))));
+    }
+    return std::unexpected(util::Error::make<Kind::NotFound>("Footprint not found: " + key));
+}
+
 util::Result<void> FootprintRepository::update(const core::Footprint& fp) {
     const char* sql =
         "UPDATE footprints SET name=?1, description=?2, tags=?3, "
-        "pad_count=?4, package_type=?5, properties_json=?6, library_path=?8 WHERE id=?7";
+        "pad_count=?4, package_type=?5, properties_json=?6, library_path=?8, "
+        "source_key=?9, footprint_lib_name=?10 WHERE id=?7";
 
     ScopedStmt stmt;
     int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
@@ -633,10 +738,12 @@ util::Result<void> FootprintRepository::update(const core::Footprint& fp) {
     bind_text(stmt, 2, fp.description());
     bind_text(stmt, 3, fp.tags());
     sqlite3_bind_int(stmt, 4, fp.pad_count());
-    bind_text(stmt, 5, package_type_to_string(fp.package_type));
+    bind_text(stmt, 5, fp.package_type_id);
     bind_text(stmt, 6, properties_to_json(fp.properties()));
     bind_text(stmt, 7, fp.id());
     bind_text(stmt, 8, fp.library_path());
+    bind_text_nullable(stmt, 9, fp.source_key());
+    bind_text(stmt, 10, fp.footprint_lib_name());
 
     rc = sqlite3_step(stmt);
     if (rc != SQLITE_DONE) {
@@ -668,13 +775,10 @@ util::Result<void> FootprintRepository::remove(const core::Uuid& id) {
 
 util::Result<core::Footprint> FootprintRepository::find_by_id(
     const core::Uuid& id) {
-    const char* sql =
-        "SELECT id, name, library_path, description, tags, "
-        "pad_count, courtyard_w, courtyard_h, package_type, properties_json "
-        "FROM footprints WHERE id = ?1";
+    std::string sql = std::string("SELECT ") + kFootprintColumns + " FROM footprints WHERE id = ?1";
 
     ScopedStmt stmt;
-    int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
+    int rc = sqlite3_prepare_v2(db_, sql.c_str(), -1, stmt.ref(), nullptr);
     if (rc != SQLITE_OK) {
         return std::unexpected(util::Error::make<Kind::DbError>(
             "Find footprint by id prepare: " + std::string(sqlite3_errmsg(db_))));
@@ -696,13 +800,11 @@ util::Result<core::Footprint> FootprintRepository::find_by_id(
 
 util::Result<core::Footprint> FootprintRepository::find_by_name(
     const std::string& name) {
-    const char* sql =
-        "SELECT id, name, library_path, description, tags, "
-        "pad_count, courtyard_w, courtyard_h, package_type, properties_json "
-        "FROM footprints WHERE name = ?1";
+    std::string sql =
+        std::string("SELECT ") + kFootprintColumns + " FROM footprints WHERE name = ?1";
 
     ScopedStmt stmt;
-    int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
+    int rc = sqlite3_prepare_v2(db_, sql.c_str(), -1, stmt.ref(), nullptr);
     if (rc != SQLITE_OK) {
         return std::unexpected(util::Error::make<Kind::DbError>(
             "Find footprint by name prepare: " + std::string(sqlite3_errmsg(db_))));
@@ -722,16 +824,24 @@ util::Result<core::Footprint> FootprintRepository::find_by_name(
         "Find footprint by name step: " + std::string(sqlite3_errmsg(db_))));
 }
 
+int FootprintRepository::count_by_package_type(const std::string& type_id) const {
+    ScopedStmt stmt;
+    if (sqlite3_prepare_v2(db_, "SELECT COUNT(*) FROM footprints WHERE package_type = ?1", -1,
+                           stmt.ref(), nullptr) != SQLITE_OK)
+        return 0;
+    bind_text(stmt, 1, type_id);
+    if (sqlite3_step(stmt) == SQLITE_ROW) return sqlite3_column_int(stmt, 0);
+    return 0;
+}
+
 util::Result<std::vector<core::Footprint>> FootprintRepository::find_all() {
-    const char* sql =
-        "SELECT id, name, library_path, description, tags, "
-        "pad_count, courtyard_w, courtyard_h, package_type, properties_json "
-        "FROM footprints ORDER BY name";
+    std::string sql =
+        std::string("SELECT ") + kFootprintColumns + " FROM footprints ORDER BY name";
 
     std::vector<core::Footprint> result;
 
     ScopedStmt stmt;
-    int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
+    int rc = sqlite3_prepare_v2(db_, sql.c_str(), -1, stmt.ref(), nullptr);
     if (rc != SQLITE_OK) {
         return std::unexpected(util::Error::make<Kind::DbError>(
             "Find all footprints prepare: " + std::string(sqlite3_errmsg(db_))));
@@ -749,17 +859,15 @@ util::Result<std::vector<core::Footprint>> FootprintRepository::find_all() {
 
 util::Result<std::vector<core::Footprint>> FootprintRepository::search(
     const std::string& keyword) {
-    const char* sql =
-        "SELECT id, name, library_path, description, tags, "
-        "pad_count, courtyard_w, courtyard_h, package_type, properties_json "
-        "FROM footprints "
-        "WHERE name LIKE ?1 OR description LIKE ?2 OR tags LIKE ?3 "
-        "ORDER BY name";
+    std::string sql = std::string("SELECT ") + kFootprintColumns +
+                      " FROM footprints "
+                      "WHERE name LIKE ?1 OR description LIKE ?2 OR tags LIKE ?3 "
+                      "ORDER BY name";
 
     std::vector<core::Footprint> result;
 
     ScopedStmt stmt;
-    int rc = sqlite3_prepare_v2(db_, sql, -1, stmt.ref(), nullptr);
+    int rc = sqlite3_prepare_v2(db_, sql.c_str(), -1, stmt.ref(), nullptr);
     if (rc != SQLITE_OK) {
         return std::unexpected(util::Error::make<Kind::DbError>(
             "Search footprints prepare: " + std::string(sqlite3_errmsg(db_))));
@@ -795,8 +903,6 @@ int FootprintRepository::count() const {
 // ============================================================
 // Model3DRepository
 // ============================================================
-
-Model3DRepository::Model3DRepository(sqlite3* db) : db_(db) {}
 
 core::Model3D Model3DRepository::row_to_model(sqlite3_stmt* stmt) const {
     core::Model3D m;
@@ -1016,8 +1122,6 @@ int Model3DRepository::count() const {
 // RelationshipRepository
 // ============================================================
 
-RelationshipRepository::RelationshipRepository(sqlite3* db) : db_(db) {}
-
 // --- Symbol ↔ Footprint ---
 
 util::Result<void> RelationshipRepository::link_symbol_to_footprint(
@@ -1166,6 +1270,23 @@ RelationshipRepository::find_all_symbol_links() {
     }
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         links[col_text(stmt, 0)] = col_text(stmt, 1);
+    }
+    return links;
+}
+
+util::Result<std::unordered_map<std::string, std::vector<std::string>>>
+RelationshipRepository::find_all_model_links() {
+    std::unordered_map<std::string, std::vector<std::string>> links;
+    ScopedStmt stmt;
+    int rc = sqlite3_prepare_v2(db_,
+        "SELECT footprint_id, model_id FROM footprint_model_links",
+        -1, stmt.ref(), nullptr);
+    if (rc != SQLITE_OK) {
+        return std::unexpected(util::Error::make<Kind::DbError>(
+            "Find all model links prepare: " + std::string(sqlite3_errmsg(db_))));
+    }
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        links[col_text(stmt, 0)].push_back(col_text(stmt, 1));
     }
     return links;
 }
@@ -1352,8 +1473,6 @@ bool is_kicad_official(const std::string& p)
 }
 }  // namespace
 
-ComponentLibraryRepository::ComponentLibraryRepository(sqlite3* db) : db_(db) {}
-
 ComponentLibraryRepository::ComponentLibrary
 ComponentLibraryRepository::row_to_library(sqlite3_stmt* stmt) const {
     ComponentLibrary lib;
@@ -1519,8 +1638,6 @@ int ComponentLibraryRepository::count() const {
 // ============================================================
 // ImportedFilesRepository
 // ============================================================
-
-ImportedFilesRepository::ImportedFilesRepository(sqlite3* db) : db_(db) {}
 
 static constexpr char kImportedFilesSchema[] =
     "CREATE TABLE IF NOT EXISTS imported_files("

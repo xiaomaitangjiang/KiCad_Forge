@@ -1,7 +1,7 @@
 {
   "id": "com.kicad_forge.git_version",
   "name": "Git Version Control",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "author": "KiCad Forge",
   "description": "Track symbol library changes with Git — init, commit, history, diff.",
   "license": "MIT",
@@ -11,38 +11,50 @@
   "one_click": true,
   "actions": [
     {
-      "id": "init",
-      "name": "Git Init",
-      "description": "Initialize a Git repository in the library directory and make a first commit.",
-      "trigger": "inline",
-      "button": { "show": true, "style": "both", "location": "sidebar", "tooltip": "Initialize Git" }
-    },
-    {
       "id": "commit",
       "name": "Git Commit",
       "description": "Stage all changes and commit with a message.",
       "trigger": "dialog",
+      "preflight": "status",
+      "auto_args": ["target_library"],
       "button": { "show": true, "style": "both", "location": "sidebar", "tooltip": "Commit changes" },
       "schema": {
         "fields": [
-          { "key": "target_library", "label": "Library", "type": "library_picker", "required": true },
           { "key": "message", "label": "Commit Message", "type": "text", "required": true }
         ]
       }
+    },
+    {
+      "id": "status",
+      "name": "Git Status",
+      "description": "Repository overview: initialised, branch, last commit, working-tree changes.",
+      "trigger": "inline",
+      "auto_args": ["target_library"],
+      "button": { "show": false }
+    },
+    {
+      "id": "init",
+      "name": "Git Init",
+      "description": "Initialize a Git repository in the library directory and make a first commit.",
+      "trigger": "inline",
+      "auto_args": ["target_library"],
+      "button": { "show": false, "style": "both", "location": "sidebar", "tooltip": "Initialize Git" }
     },
     {
       "id": "history",
       "name": "Git History",
       "description": "Show the last 20 commits.",
       "trigger": "inline",
-      "button": { "show": true, "style": "both", "location": "sidebar", "tooltip": "View commit history" }
+      "auto_args": ["target_library"],
+      "button": { "show": false, "style": "both", "location": "sidebar", "tooltip": "View commit history" }
     },
     {
       "id": "diff",
       "name": "Git Diff",
       "description": "Show unstaged changes in the working tree.",
       "trigger": "inline",
-      "button": { "show": true, "style": "both", "location": "sidebar", "tooltip": "Show unstaged changes" }
+      "auto_args": ["target_library"],
+      "button": { "show": false, "style": "both", "location": "sidebar", "tooltip": "Show unstaged changes" }
     }
   ]
 }

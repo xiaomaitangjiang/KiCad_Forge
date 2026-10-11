@@ -33,6 +33,9 @@ plugins/**/*.dylib
 
 # Auto-generated resources
 resources/app.ico
+*.pyc
+.claude/
+.codegraph/
 
 # Runtime data
 *.db

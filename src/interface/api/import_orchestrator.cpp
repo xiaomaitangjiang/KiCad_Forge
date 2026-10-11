@@ -1,3 +1,4 @@
+#include "core/db/database.h"
 #include "core/repo/repositories.h"
 #include "interface/api/import_orchestrator.h"
 #include "util/config_store.h"
@@ -34,11 +35,14 @@ void ImportOrchestrator::start()
         {
             try
             {
-                storage::ComponentLibraryRepository cl_repo(db_);
-                auto libs = cl_repo.find_enabled();
+                auto libs = [this]
+                {
+                    auto session = db_->session();
+                    return storage::ComponentLibraryRepository(session).find_enabled();
+                }();
 
                 bool write_kf_id = config_ ? config_->get_bool("write_kf_id_to_file", false) : false;
-                services::ImportPipeline pipe(db_, &cancel_, write_kf_id);
+                services::ImportPipeline pipe(*db_, &cancel_, write_kf_id);
                 if (libs && !libs->empty())
                 {
                     for (auto& l : *libs)
@@ -69,6 +73,7 @@ void ImportOrchestrator::start()
                 // In-process signal: MgrHolder watches this to refresh the
                 // SymbolBindingManager in-memory index after each import.
                 import_seq_.fetch_add(1, std::memory_order_relaxed);
+                db_->bump_data_version();
                 kforge::util::log_info{}("Auto-import done: +{} new symbols, +{} new footprints, "
                                          "{} skipped (up to date)",
                                          sym_count_.load(), fp_count_.load(), result.skipped);
@@ -100,11 +105,14 @@ services::ImportPipeline::Result ImportOrchestrator::run_now()
 {
     stop();
     cancel_ = false;
-    storage::ComponentLibraryRepository cl_repo(db_);
-    auto libs = cl_repo.find_enabled();
+    auto libs = [this]
+    {
+        auto session = db_->session();
+        return storage::ComponentLibraryRepository(session).find_enabled();
+    }();
 
     const bool write_kf_id = config_ && config_->get_bool("write_kf_id_to_file", false);
-    services::ImportPipeline pipe(db_, &cancel_, write_kf_id);
+    services::ImportPipeline pipe(*db_, &cancel_, write_kf_id);
     if (libs && !libs->empty())
     {
         for (auto& l : *libs)
@@ -126,6 +134,7 @@ services::ImportPipeline::Result ImportOrchestrator::run_now()
 
     auto result = pipe | services::execute;
     import_seq_.fetch_add(1, std::memory_order_relaxed);
+    db_->bump_data_version();
     return result;
 }
 

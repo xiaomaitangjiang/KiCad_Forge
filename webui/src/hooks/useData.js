@@ -1,22 +1,33 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { api } from '../api'
 
+/// 请求状态：data / error / loading 三者都暴露 ——
+/// 只吞掉异常会让「加载失败」和「本来就是空的」看起来一样。
+/// load() 仍返回本次结果（失败为 null），方便调用方直接使用新值。
 export function useRequest(fn, deps = []) {
   const [data, setData] = useState(null)
+  const [error, setError] = useState(null)
+  const [loading, setLoading] = useState(false)
   const loadId = useRef(0)
 
   const load = useCallback(async (...args) => {
     const id = ++loadId.current
+    setLoading(true)
     try {
       const result = await fn(...args)
-      if (id === loadId.current) setData(result)
+      if (id === loadId.current) { setData(result); setError(null) }
       return result
-    } catch { return null }
+    } catch (cause) {
+      if (id === loadId.current) setError(cause)
+      return null
+    } finally {
+      if (id === loadId.current) setLoading(false)
+    }
   }, deps) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { load() }, [load]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  return { data, load, setData }
+  return { data, error, loading, load, setData, setError }
 }
 
 export function useStatus() {
@@ -25,13 +36,15 @@ export function useStatus() {
 }
 
 export function useSymbols() {
-  const { data: symbols, load: loadSymbols, setData: setSymbols } = useRequest(api.symbols)
-  return { symbols: Array.isArray(symbols) ? symbols : [], loadSymbols, setSymbols }
+  const { data: symbols, error, loading, load: loadSymbols, setData: setSymbols } = useRequest(api.symbols)
+  return { symbols: Array.isArray(symbols) ? symbols : [], symbolsError: error,
+           symbolsLoading: loading, loadSymbols, setSymbols }
 }
 
 export function useLibraries() {
-  const { data: libraries, load: loadLibraries, setData: setLibraries } = useRequest(api.libraries)
-  return { libraries: Array.isArray(libraries) ? libraries : [], loadLibraries, setLibraries }
+  const { data: libraries, error, load: loadLibraries, setData: setLibraries } = useRequest(api.libraries)
+  return { libraries: Array.isArray(libraries) ? libraries : [], librariesError: error,
+           loadLibraries, setLibraries }
 }
 
 export function usePlugins() {

@@ -17,6 +17,9 @@
     "match": "匹配",
     "componentTypes": "元件类型",
     "libraries": "元件库",
+    "workspace": "工作库",
+    "allWorkspaces": "全部工作库",
+    "noLibraries": "该工作库下暂无符号库，请在设置中导入",
     "newLibrary": "+ 新建库",
     "tools": "工具",
     "rules": "规则",
@@ -68,6 +71,13 @@
   "plugin": {
     "cancel": "取消",
     "execute": "执行",
+    "analyze": "分析",
+    "analyzeTooltip": "下载元件（不写入库）并按名称相似度排序已有封装",
+    "analyzeHint": "点击“分析”按相似度排序已有封装，或直接在下方搜索。",
+    "newFootprint": "＋ 新建封装",
+    "footprintReused": "复用已有封装：{{name}}",
+    "footprintNew": "新建封装：{{name}}",
+    "noGitRepo": "⚠ 此处没有 Git 仓库 — 请先在插件面板运行 Git Init。",
     "noPlugins": "未安装插件",
     "pluginHint": "将 .kfplug 文件放入 plugins 目录",
     "select": "-- 请选择 --"
@@ -82,6 +92,7 @@
     "3dPath": "3D 模型路径",
     "3dPathHint": "包含 .step / .wrl 文件的目录",
     "saveImport": "保存并导入",
+    "tools": "工具",
     "utilities": "工具",
     "resetDb": "重置数据库",
     "resetDbHint": "删除所有导入的元数据。原始 .kicad_sym 文件不会被修改。重置后请重启应用。",
@@ -125,6 +136,7 @@
     "deleteLibrary": "从列表中移除库 \"{{name}}\"？\n",
     "resetDb": "重置数据库？所有元数据将丢失。\n磁盘上的 .kicad_sym 文件是安全的。\n重置后请重启应用。",
     "deleteCompLibrary": "删除元件库 \"{{name}}\"？仅删除配置，不影响已导入的数据。",
+    "deleteComponentLibraryHint": "仅从 KiCad Forge 移除该工作库的登记。\n不会修改或删除磁盘上的任何文件。",
     "deleteLibraryTitle": "删除元件库 \"{{name}}\"？",
     "deleteLibraryHint": "默认仅从 KiCad Forge 移除该库的登记。\n勾选下方复选框可同时删除磁盘上的 .kicad_sym 文件。",
     "deleteLibraryFile": "同时删除本地 .kicad_sym 文件",
@@ -133,12 +145,14 @@
   },
   "status": {
     "filtered": "{{count}} 个元件{{filter}}",
-    "total": "共 {{count}} 个"
+    "total": "共 {{count}} 个",
+    "loadFailed": "数据加载失败：{{error}}"
   },
   "toast": {
     "classifying": "正在分类...",
     "classified": "分类完成: {{matched}}/{{total}} 已匹配",
     "noIssues": "未发现问题",
+    "loadFailed": "加载失败，请重试",
     "issuesFound": "发现 {{count}} 个问题",
     "matchSuggestions": "{{count}} 个匹配建议",
     "saved": "已保存 — 导入 {{symbols}} 元件, {{footprints}} 封装",
@@ -146,6 +160,7 @@
     "networkError": "网络错误",
     "added": "已添加 {{name}}",
     "removed": "已移除 {{name}}",
+    "typeInUse": "该类型仍被 {{count}} 个元件引用，请先重新分类",
     "fetching": "正在获取 {{id}}...",
     "imported": "已导入 {{id}}: {{count}} 到库",
     "failed": "失败: {{error}}",

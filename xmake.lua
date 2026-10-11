@@ -47,6 +47,38 @@ target("KiCad_Forge")
             end
         end
     end)
+    -- 前端：dist 落后于源码就重建；缺依赖时按 lockfile 安装（npm ci）。
+    -- 不做这一步，发布构建会直接打包上一次留下的 dist。
+    before_build(function(target)
+        local root = os.projectdir()
+        local webui = path.join(root, "webui")
+        local index = path.join(webui, "dist", "index.html")
+        local stale = not os.isfile(index)
+        if not stale then
+            local built = os.mtime(index)
+            local inputs = os.files(path.join(webui, "src", "**"))
+            table.join2(inputs, os.files(path.join(webui, "index.html")))
+            table.join2(inputs, os.files(path.join(webui, "package.json")))
+            table.join2(inputs, os.files(path.join(webui, "package-lock.json")))
+            for _, f in ipairs(inputs) do
+                if os.mtime(f) > built then stale = true break end
+            end
+        end
+        if not stale then return end
+
+        local npm = is_host("windows") and "npm.cmd" or "npm"
+        if not os.isdir(path.join(webui, "node_modules")) then
+            print("  -> npm ci (webui)")
+            if not os.execv(npm, {"ci"}, {curdir = webui}) then
+                raise("webui: npm ci failed — 前端依赖无法按 lockfile 安装")
+            end
+        end
+        print("  -> npm run build (webui)")
+        if not os.execv(npm, {"run", "build"}, {curdir = webui}) then
+            raise("webui: npm run build failed — 界面产物缺失或过期")
+        end
+    end)
+
     add_files("resources/app.rc")  -- Windows exe icon
 
     add_includedirs("src", "src/third_party", sys_inc)
@@ -73,6 +105,10 @@ target("KiCad_Forge")
         -- Plugins (remove existing dir to ensure new files like icons sync)
         os.rm(path.join(root, "plugins"))
         os.cp("$(projectdir)/plugins", path.join(root, "plugins"))
+        -- Type config seeds：运行期可改的配置住在数据目录，这里只放首次运行的种子。
+        -- 先删再拷：目标已存在时 os.cp 会往里再套一层
+        os.rm(path.join(root, "config"))
+        os.cp("$(projectdir)/config", path.join(root, "config"))
         -- Portable data directory (DB, settings go here)
         os.mkdir(path.join(root, "data"))
         -- Copy required MinGW DLLs so exe runs standalone (no MSYS2 PATH needed)
@@ -90,6 +126,7 @@ target("bench_import")
     add_files("src/core/model/type_registry.cpp")
     add_files("src/core/io/sexpr/**.cpp")
     add_files("src/core/io/parser/**.cpp")
+    add_files("src/core/io/source_mutation.cpp")
     add_files("src/core/repo/**.cpp")
     add_files("src/core/db/**.cpp")
     add_files("src/interface/service/library/service.cpp")
@@ -161,6 +198,7 @@ target("test_data_integrity")
     set_kind("binary")
     add_files("tests/test_config_store.cpp", "tests/test_text_util.cpp", "tests/test_library_workflows.cpp")
     add_files("src/interface/service/library/binding.cpp", "src/interface/service/classification/service.cpp")
+    add_files("src/interface/api/staged_import.cpp", "src/plugin/plugin_manager.cpp")
     add_files("src/core/db/**.cpp", "src/core/repo/**.cpp", "src/core/io/**.cpp")
     add_files("src/core/model/symbol.cpp", "src/core/model/type_registry.cpp")
     add_files("src/interface/api/import_manager.cpp", "src/interface/api/import_orchestrator.cpp")

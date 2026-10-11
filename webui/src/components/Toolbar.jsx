@@ -3,22 +3,22 @@ import { api } from '../api'
 
 const DEFAULT_ICON = <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
 
-export default function Toolbar({ plugins, loadLibraries, setPluginAction, setPluginFormData, classify, checkCorrespondence, autoMatch, targetLib, status, search, setSearch, loadSymbols }) {
+export default function Toolbar({ plugins, loadLibraries, setPluginAction, setPluginFormData, classify, checkCorrespondence, autoMatch, targetLib, status, search, setSearch, loadSymbols, onSearch }) {
   const { t } = useTranslation()
 
   return (
     <div className="toolbar">
       <button className="btn-primary" onClick={classify}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-        {t('toolbar.autoClassify')}
+        <span>{t('toolbar.autoClassify')}</span>
       </button>
       <button className="btn-ghost" onClick={checkCorrespondence}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-        {t('toolbar.check')}
+        <span>{t('toolbar.check')}</span>
       </button>
       <button className="btn-ghost" onClick={autoMatch}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-        {t('toolbar.autoMatch')}
+        <span>{t('toolbar.autoMatch')}</span>
       </button>
       <span className="sep" />
 
@@ -52,9 +52,14 @@ export default function Toolbar({ plugins, loadLibraries, setPluginAction, setPl
       <span className="sep" />
 
       <input placeholder={t('toolbar.searchPlaceholder')} value={search}
-        onChange={e => { setSearch(e.target.value); loadSymbols(e.target.value) }} />
+        onChange={e => {
+          setSearch(e.target.value)
+          // Search stays within the current library context (unified query state)
+          if (onSearch) onSearch(e.target.value)
+          else loadSymbols(e.target.value)
+        }} />
       <span className="sep" />
-      <span style={{ fontSize:11, color:'var(--text2)', whiteSpace:'nowrap' }}>
+      <span className="toolbar-status" style={{ fontSize:11, color:'var(--text2)', whiteSpace:'nowrap' }}>
         {t('toolbar.symbolsFootprints', { symbols: status.symbols, footprints: status.footprints })}
       </span>
     </div>

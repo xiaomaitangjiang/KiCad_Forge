@@ -3,16 +3,38 @@ const BASE = '/api'
 let loadingCb = null
 export function setLoadingCallback(cb) { loadingCb = cb }
 
+/// 结构化错误：区分网络失败、HTTP 失败与响应解析失败，
+/// 并保留服务端给出的原因 —— 统一压成 "Network error" 会让
+/// 「被拒绝的写入」和「断网」看起来一模一样。
+function requestError(message, kind, extra = {}) {
+  const error = new Error(message)
+  error.kind = kind
+  return Object.assign(error, extra)
+}
+
 async function request(url, opts = {}) {
   loadingCb?.(true)
+  let response
   try {
-    const r = await fetch(`${BASE}${url}`, opts)
+    response = await fetch(`${BASE}${url}`, opts)
+  } catch (cause) {
     loadingCb?.(false)
-    if (!r.ok) throw new Error(`HTTP ${r.status}`)
-    return r.json()
-  } catch {
-    loadingCb?.(false)
-    throw new Error('Network error')
+    throw requestError('Network error', 'network', { cause })
+  }
+  loadingCb?.(false)
+
+  if (!response.ok) {
+    // 服务端的失败原因通常放在 JSON 的 error 字段里，别丢
+    let detail = ''
+    try { detail = (await response.json())?.error || '' } catch { /* 无 JSON 体 */ }
+    throw requestError(detail || `HTTP ${response.status}`, 'http',
+      { status: response.status, detail })
+  }
+
+  try {
+    return await response.json()
+  } catch (cause) {
+    throw requestError('Invalid JSON response', 'parse', { cause })
   }
 }
 
@@ -21,7 +43,8 @@ export const api = {
   symbols:      (q, lib)        => request(`/symbols?${q ? 'q=' + encodeURIComponent(q) : ''}${lib ? '&library=' + lib : ''}`),
   libraries:    ()              => request('/libraries'),
   createLibrary:(name)          => request('/libraries', { method: 'POST', body: JSON.stringify({ name }) }),
-  deleteLibrary:(id)            => request('/libraries', { method: 'POST', body: JSON.stringify({ action: 'delete', id }) }),
+  // delete_file=false → unregister only (the .kicad_sym file on disk stays)
+  deleteLibrary:(id, deleteFile = true) => request('/libraries', { method: 'POST', body: JSON.stringify({ action: 'delete', id, delete_file: deleteFile }) }),
   deleteSymbol: (id)            => request('/libraries', { method: 'POST', body: JSON.stringify({ action: 'delete_symbol', id }) }),
   plugins:      ()              => request('/plugins'),
   executePlugin:(id, body)      => request(`/plugins/execute?id=${id}`, { method: 'POST', body: JSON.stringify(body) }),

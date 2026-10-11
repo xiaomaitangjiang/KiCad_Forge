@@ -48,6 +48,14 @@ public:
     const std::string& library_path() const { return library_path_; }
     void set_library_path(std::string p) { library_path_ = std::move(p); }
 
+    /// 来源规范路径标识（见 core/db/source_key.h）；未落盘时为空
+    const std::string& source_key() const { return source_key_; }
+    void set_source_key(std::string k) { source_key_ = std::move(k); }
+
+    /// .pretty 库名（父目录名），用于解析 "Pkg:Name" 引用
+    const std::string& footprint_lib_name() const { return footprint_lib_name_; }
+    void set_footprint_lib_name(std::string n) { footprint_lib_name_ = std::move(n); }
+
     // --- Description ---
     const std::string& description() const { return description_; }
     void set_description(std::string d) { description_ = std::move(d); }
@@ -85,12 +93,15 @@ public:
     double courtyard_height{0.0};
 
     // --- Classification ---
-    PackageType package_type{PackageType::Unknown};
+    /// 封装类型 ID（见 core/model/type_registry.h）；未分类为空
+    std::string package_type_id;
 
 private:
     Uuid id_;
     std::string name_;
     std::string library_path_;
+    std::string source_key_;          // 规范路径标识
+    std::string footprint_lib_name_;  // .pretty 库名
     std::string description_;
     std::string tags_;
     std::vector<Pad> pads_;

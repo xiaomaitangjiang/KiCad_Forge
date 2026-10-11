@@ -6,6 +6,8 @@
 #include "core/io/parser/symbol_lib_parser.h"
 #include "core/io/sexpr/path_util.h"
 #include "core/io/sexpr/text_util.h"
+#include "core/io/source_mutation.h"
+#include "core/model/type_registry.h"
 #include "interface/service/import/pipeline.h"
 #include "interface/service/library/source_policy.h"
 #include "core/db/database.h"
@@ -16,6 +18,7 @@
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <future>
 #include <sqlite3.h>
 #include <unordered_map>
@@ -68,7 +71,8 @@ ImportPipeline::Result ImportPipeline::operator|(execute_t /*unused*/)
     // Load per-file mtime snapshots once — file_unchanged()/record_file() then
     // hit memory instead of one SQLite query per file
     {
-        storage::ImportedFilesRepository ifr(db_);
+        auto session = db_->session();
+        storage::ImportedFilesRepository ifr(session);
         if (auto snapshots = ifr.all())
         {
             file_mtimes_ = std::move(*snapshots);
@@ -110,15 +114,21 @@ ImportPipeline::Result ImportPipeline::operator|(execute_t /*unused*/)
     // In-memory pools loaded once — replace per-file find_by_name / find_by_path
     // SQLite queries during the footprint phase
     {
-        storage::FootprintRepository fr(db_);
+        auto session = db_->session();
+        storage::FootprintRepository fr(session);
         if (auto fps = fr.find_all())
         {
             for (auto& f : *fps)
             {
-                fp_by_name_.emplace(f.name(), std::move(f));
+                auto key = f.source_key();
+                if (key.empty())
+                    key = storage::existing_source_key(f.library_path());
+                if (key.empty())
+                    continue;  // 无来源的旧行不参与按来源刷新
+                fp_by_source_.emplace(key, std::move(f));
             }
         }
-        storage::Model3DRepository mr(db_);
+        storage::Model3DRepository mr(session);
         if (auto models = mr.find_all())
         {
             for (auto& m : *models)
@@ -165,24 +175,40 @@ ImportPipeline::Result ImportPipeline::operator|(execute_t /*unused*/)
     // new links written in one transaction (idempotent — never re-links).
     if (!cancelled() && (r.symbols > 0 || r.footprints > 0))
     {
-        std::unordered_map<std::string, core::Uuid> fp_id_by_name;
-        fp_id_by_name.reserve(fp_by_name_.size());
-        for (auto& [name, fp] : fp_by_name_)
+        // 引用解析：先按 ".pretty 库名/封装名" 精确定位；
+        // 无库名前缀时只在全库唯一的情况下自动链接 —— 歧义留给人工确认
+        std::unordered_map<std::string, core::Uuid> fp_id_by_ref;
+        std::unordered_map<std::string, core::Uuid> fp_id_by_unique_name;
+        std::unordered_map<std::string, int> name_uses;
+        fp_id_by_ref.reserve(fp_by_source_.size());
+        for (auto& [key, fp] : fp_by_source_)
         {
-            fp_id_by_name[name] = fp.id();
+            fp_id_by_ref[fp.footprint_lib_name() + "/" + fp.name()] = fp.id();
+            name_uses[fp.name()]++;
+            fp_id_by_unique_name[fp.name()] = fp.id();
+        }
+        for (auto& [name, uses] : name_uses)
+        {
+            if (uses > 1)
+                fp_id_by_unique_name.erase(name);
         }
 
-        storage::RelationshipRepository rr(db_);
+        auto session = db_->session();
+        storage::RelationshipRepository rr(session);
         std::unordered_map<std::string, std::string> existing_links;
         if (auto links = rr.find_all_symbol_links())
         {
             existing_links = std::move(*links);
         }
 
-        storage::SymbolRepository sym_repo(db_);
+        storage::SymbolRepository sym_repo(session);
         if (auto syms = sym_repo.find_all())
         {
-            sqlite3_exec(db_, "BEGIN", nullptr, nullptr, nullptr);
+            if (auto begun = session.begin(); !begun)
+            {
+                kforge::util::log_error{}("Import link phase: {}", begun.error().format_message());
+                return r;
+            }
             for (auto& sym : *syms)
             {
                 if (cancelled())
@@ -193,22 +219,36 @@ ImportPipeline::Result ImportPipeline::operator|(execute_t /*unused*/)
                 {
                     continue;
                 }
-                // Strip library prefix: "Package_SO:SOIC-8" → "SOIC-8"
-                auto colon = sym.footprint().find(':');
-                std::string short_name = (colon != std::string::npos)
-                                             ? sym.footprint().substr(colon + 1)
-                                             : sym.footprint();
-                auto it = fp_id_by_name.find(short_name);
-                if (it == fp_id_by_name.end())
+                // "Package_SO:SOIC-8" → 库名 Package_SO、封装名 SOIC-8
+                const auto& reference = sym.footprint();
+                auto lib_name = storage::footprint_lib_name_of(reference);
+                std::string short_name = lib_name.empty()
+                                             ? reference
+                                             : reference.substr(lib_name.size() + 1);
+                core::Uuid target;
+                if (!lib_name.empty())
                 {
-                    it = fp_id_by_name.find(sym.footprint());
+                    if (auto it = fp_id_by_ref.find(lib_name + "/" + short_name);
+                        it != fp_id_by_ref.end())
+                    {
+                        target = it->second;
+                    }
                 }
-                if (it != fp_id_by_name.end())
+                else if (auto it = fp_id_by_unique_name.find(short_name);
+                         it != fp_id_by_unique_name.end())
                 {
-                    auto _ = rr.link_symbol_to_footprint(sym.id(), it->second, "imported", 1.0);
+                    target = it->second;
+                }
+                if (!target.empty())
+                {
+                    auto _ = rr.link_symbol_to_footprint(sym.id(), target, "imported", 1.0);
                 }
             }
-            sqlite3_exec(db_, "COMMIT", nullptr, nullptr, nullptr);
+            if (auto committed = session.commit(); !committed)
+            {
+                kforge::util::log_error{}("Import link phase: {}",
+                                          committed.error().format_message());
+            }
         }
     }
 
@@ -262,73 +302,116 @@ IMP_Result ImportPipeline::write_symbol_library(ParsedSymbolLib& lib,
     const fs::path& path = lib.path;
     kforge::util::log_info{}("IMPORT: {} -> {} items", path.string(), lib.items.size());
 
-    storage::LibraryRepository lr(db_);
-    std::string lib_id = lib.lib_name;
-    {
-        core::LibraryMeta meta;
-        meta.name = lib_id;
-        meta.file_path = path;
-        meta.component_library_id = comp_lib_id;
-        meta.description = "Imported from " + path.filename().string();
-        auto lib_ins = lr.insert(meta);
-        if (!lib_ins)
-        {
-            kforge::util::log_error{}("Cannot create library");
-            return imp_failed("Cannot create library");
-        }
-        lib_id = lib_ins->id;
-    }
-
-    storage::SymbolRepository repo(db_);
-    std::unordered_set<std::string> seen;
-    std::unordered_map<std::string, std::string> id_by_name;  // name → existing row id
-    {
-        auto existing = repo.find_by_library(lib_id);
-        if (existing)
-        {
-            for (auto& s : *existing)
-            {
-                seen.insert(s.name());
-                id_by_name[s.name()] = s.id();
-            }
-        }
-    }
-
-    sqlite3_exec(db_, "BEGIN", nullptr, nullptr, nullptr);
     int imported = 0;
-    for (auto& sym : lib.items)
+    bool locked = false;
     {
-        if (sym.component_type == core::ComponentType::Unknown)
+        auto session = db_->session();
+        storage::LibraryRepository lr(session);
+        std::string lib_id = lib.lib_name;
         {
-            sym.component_type = classifier::guess_type_from_name(sym.name());
-        }
-        sym.set_library_id(lib_id);
-        if (sym.Kicad_Forge_ID().empty())
-            sym.set_Kicad_Forge_ID(core::Symbol::compute_hash(sym));
-
-        if (seen.contains(sym.name()))
-        {
-            // File changed since last import — refresh the existing row
-            sym.set_id(id_by_name[sym.name()]);
-            if (repo.update(sym))
+            core::LibraryMeta meta;
+            meta.name = lib_id;
+            meta.file_path = path;
+            meta.component_library_id = comp_lib_id;
+            meta.description = "Imported from " + path.filename().string();
+            // 身份是来源路径：同一文件重复导入保留原 UUID，
+            // 同名不同来源则各自成行
+            auto lib_ins = lr.upsert_by_source_key(meta);
+            if (!lib_ins)
             {
-                imported++;
+                kforge::util::log_error{}("Cannot register library {}: {}", path.string(),
+                                          lib_ins.error().format_message());
+                return imp_failed(lib_ins.error().format_message());
             }
-            continue;
+            lib_id = lib_ins->id;
         }
-        seen.insert(sym.name());
-        auto ins = repo.insert(sym);
-        if (ins)
-        {
-            imported++;  // linking happens in Phase 4
-        }
-    }
-    sqlite3_exec(db_, "COMMIT", nullptr, nullptr, nullptr);
 
-    // 开关只允许未锁定用户库写回；标准库始终只读。
-    if (write_kf_id_to_file_ && std::filesystem::exists(path))
+        storage::SymbolRepository repo(session);
+        std::unordered_set<std::string> seen;
+        // 库里已有行：更新时只写文件里有依据的字段，库内元数据（类型 ID 等）
+        // 从旧行带回 —— 文件里根本没有这些信息，覆盖就等于丢数据
+        struct Existing
+        {
+            std::string id;
+            std::string component_type_id;
+            std::string package_type_id;
+        };
+        std::unordered_map<std::string, Existing> existing_by_name;
+        {
+            auto existing = repo.find_by_library(lib_id);
+            if (existing)
+            {
+                for (auto& s : *existing)
+                {
+                    seen.insert(s.name());
+                    existing_by_name[s.name()] =
+                        Existing{s.id(), s.component_type_id, s.package_type_id};
+                }
+            }
+        }
+
+        if (auto begun = session.begin(); !begun)
+        {
+            return imp_failed(begun.error().format_message());
+        }
+        for (auto& sym : lib.items)
+        {
+            sym.set_library_id(lib_id);
+            if (sym.Kicad_Forge_ID().empty())
+                sym.set_Kicad_Forge_ID(core::Symbol::compute_hash(sym));
+
+            if (seen.contains(sym.name()))
+            {
+                // File changed since last import — refresh the existing row.
+                // 文件里没有类型信息：库内已有的分类结果（含认不出的 ID）原样带回
+                const auto& previous = existing_by_name[sym.name()];
+                sym.set_id(previous.id);
+                if (sym.component_type_id.empty())
+                    sym.component_type_id = previous.component_type_id;
+                if (sym.package_type_id.empty())
+                    sym.package_type_id = previous.package_type_id;
+                if (repo.update(sym))
+                {
+                    imported++;
+                }
+                continue;
+            }
+            seen.insert(sym.name());
+            // 新行才按名字猜一个内置类型；已有行上面的合并已经保证不覆盖
+            if (sym.component_type_id.empty())
+            {
+                sym.component_type_id =
+                    core::builtin_component_id(classifier::guess_type_from_name(sym.name()));
+            }
+            auto ins = repo.insert(sym);
+            if (ins)
+            {
+                imported++;  // linking happens in Phase 4
+            }
+        }
+        if (auto committed = session.commit(); !committed)
+        {
+            return imp_failed(committed.error().format_message());
+        }
+
+        // 开关只允许未锁定用户库写回；标准库始终只读。
+        if (auto locked_result = source_is_locked(session, path, comp_lib_id); locked_result)
+        {
+            locked = *locked_result;
+        }
+        else
+        {
+            kforge::util::log_error{}("Lock check failed: {}",
+                                      locked_result.error().format_message());
+            return imp_failed(locked_result.error().format_message());
+        }
+
+        // 快照与符号行同一事务记账（A04）
+        record_file(session, path);
+    }
+
+    if (write_kf_id_to_file_ && !locked && std::filesystem::exists(path))
     {
-        auto locked = source_is_locked(db_, path, comp_lib_id);
         std::unordered_map<std::string, std::string> name_to_kf;
         for (auto& s : lib.items)
         {
@@ -338,20 +421,37 @@ IMP_Result ImportPipeline::write_symbol_library(ParsedSymbolLib& lib,
                 name_to_kf[s.name()] = kf;
             }
         }
-        if (locked && !*locked && !name_to_kf.empty())
+        if (!name_to_kf.empty())
         {
-            try
+            // 读 + 改在锁外算好，落盘交给统一变更服务（备份 + 恢复日志）
+            std::string original;
             {
-                sexpr::patch_kf_id_to_file(path, name_to_kf);
+                std::ifstream in(path, std::ios::binary);
+                original.assign(std::istreambuf_iterator<char>(in), {});
             }
-            catch (const std::exception& error)
+            std::string patched = original;
+            int changed = sexpr::patch_kf_id_content(patched, name_to_kf);
+            if (changed > 0)
             {
-                kforge::util::log_error{}("KF ID write failed: {}", error.what());
+                io::SourceMutationService mutations(*db_);
+                auto written = mutations.apply(
+                    {io::FileChange{.path = path,
+                                    .content = std::move(patched),
+                                    .expected_digest = io::content_digest(original)}},
+                    [](storage::DbSession&) -> util::Result<void> { return {}; });
+                if (written)
+                {
+                    record_file(path);  // 文件已改写，刷新快照避免下次重复解析
+                }
+                else
+                {
+                    kforge::util::log_error{}("KF ID write failed for {}: {}", path.string(),
+                                              written.error().format_message());
+                }
             }
         }
     }
 
-    record_file(path);
     return imported > 0 ? imp_added() : imp_skipped();
 }
 
@@ -363,7 +463,17 @@ IMP_Result ImportPipeline::import_footprint(const std::string& path_str)
     {
         return imp_skipped();  // unchanged or parse error
     }
-    return write_footprint(path, *fp);
+    auto session = db_->session();
+    if (auto begun = session.begin(); !begun)
+    {
+        return imp_failed(begun.error().format_message());
+    }
+    auto result = write_footprint(session, path, *fp);
+    if (auto committed = session.commit(); !committed)
+    {
+        return imp_failed(committed.error().format_message());
+    }
+    return result;
 }
 
 std::optional<core::Footprint> ImportPipeline::parse_footprint_file(const fs::path& path)
@@ -382,17 +492,27 @@ std::optional<core::Footprint> ImportPipeline::parse_footprint_file(const fs::pa
     return std::move(*result);
 }
 
-IMP_Result ImportPipeline::write_footprint(const fs::path& path, const core::Footprint& fp_in)
+IMP_Result ImportPipeline::write_footprint(const storage::DbSession& session, const fs::path& path,
+                                           const core::Footprint& fp_in)
 {
     core::Footprint fp = fp_in;  // mutable copy for id assignment
     fp.set_library_path(path.string());
-    storage::FootprintRepository repo(db_);
+    // 来源身份：规范路径 + .pretty 库名（同名不同目录靠它区分）
+    fp.set_source_key(storage::existing_source_key(path));
+    if (fp.footprint_lib_name().empty() && path.parent_path().extension() == ".pretty")
+    {
+        fp.set_footprint_lib_name(path.parent_path().stem().string());
+    }
+    storage::FootprintRepository repo(session);
     std::string fp_id;
-    auto it = fp_by_name_.find(fp.name());
-    if (it != fp_by_name_.end())
+    auto it = fp.source_key().empty() ? fp_by_source_.end() : fp_by_source_.find(fp.source_key());
+    if (it != fp_by_source_.end())
     {
         // File changed since last import — refresh the existing row
         fp.set_id(it->second.id());
+        // 文件里没有类型信息：旧行的分类结果原样带回
+        if (fp.package_type_id.empty())
+            fp.package_type_id = it->second.package_type_id;
         if (!repo.update(fp))
         {
             return imp_failed("Update failed");
@@ -400,7 +520,7 @@ IMP_Result ImportPipeline::write_footprint(const fs::path& path, const core::Foo
         fp_id = it->second.id();
 
         // Clear old model links — the refs may have changed
-        storage::RelationshipRepository rr(db_);
+        storage::RelationshipRepository rr(session);
         if (auto olds = rr.find_models_for_footprint(fp_id))
         {
             for (auto& mid : *olds)
@@ -418,7 +538,10 @@ IMP_Result ImportPipeline::write_footprint(const fs::path& path, const core::Foo
             return imp_failed("Insert failed");
         }
         fp_id = ins->id();
-        fp_by_name_.emplace(ins->name(), std::move(*ins));
+        if (!ins->source_key().empty())
+        {
+            fp_by_source_.emplace(ins->source_key(), std::move(*ins));
+        }
     }
     kforge::util::log_info{}("FP: {} -> {}", path.filename().string(), fp.name());
 
@@ -426,8 +549,8 @@ IMP_Result ImportPipeline::write_footprint(const fs::path& path, const core::Foo
     // if it is not in the DB yet — no stem fallback (user requirement)
     int model_refs = 0;
     int model_linked = 0;
-    storage::RelationshipRepository rr(db_);
-    storage::Model3DRepository mrepo(db_);
+    storage::RelationshipRepository rr(session);
+    storage::Model3DRepository mrepo(session);
     for (auto& m : fp.models_3d())
     {
         if (m.path.empty())
@@ -459,7 +582,7 @@ IMP_Result ImportPipeline::write_footprint(const fs::path& path, const core::Foo
             {
                 model_id = nins->id();
                 model_ref_imported_++;
-                record_file(resolved);  // snapshot so the scan phase skips it
+                record_file(session, resolved);  // snapshot so the scan phase skips it
                 models_by_path_.emplace(resolved.string(), std::move(*nins));
             }
         }
@@ -474,7 +597,7 @@ IMP_Result ImportPipeline::write_footprint(const fs::path& path, const core::Foo
         kforge::util::log_info{}("FP 3D: {} refs, {} linked for {}", model_refs, model_linked,
                                  fp.name());
     }
-    record_file(path);
+    record_file(session, path);
     return imp_added();
 }
 
@@ -610,14 +733,21 @@ ImportPipeline::ImportDirResult ImportPipeline::import_directory(const std::stri
         int skipped = static_cast<int>(files.size()) - static_cast<int>(pending.size());
         if (!pending.empty())
         {
-            sqlite3_exec(db_, "BEGIN", nullptr, nullptr, nullptr);
+            auto session = db_->session();
+            auto begun = session.begin();
+            if (!begun)
+            {
+                kforge::util::log_error{}("FP import: {}", begun.error().format_message());
+                skipped += static_cast<int>(pending.size());
+                return std::pair<int, int>{added, skipped};
+            }
             for (auto& p : pending)
             {
                 if (cancelled())
                 {
                     break;
                 }
-                if (write_footprint(p.path, p.fp).is(ImportStatus::Added))
+                if (write_footprint(session, p.path, p.fp).is(ImportStatus::Added))
                 {
                     added++;
                 }
@@ -626,7 +756,10 @@ ImportPipeline::ImportDirResult ImportPipeline::import_directory(const std::stri
                     skipped++;  // write failure
                 }
             }
-            sqlite3_exec(db_, "COMMIT", nullptr, nullptr, nullptr);
+            if (auto committed = session.commit(); !committed)
+            {
+                kforge::util::log_error{}("FP import: {}", committed.error().format_message());
+            }
         }
         return std::pair<int, int>{added, skipped};
     };
@@ -670,10 +803,7 @@ int ImportPipeline::scan_3d_models(const std::string& dir_str)
         return 0;
     }
 
-    storage::Model3DRepository repo(db_);
-
-    // Reuse the shared in-memory hash pool (models_by_path_) — it already
-    // contains the ref-imported models from the footprint phase
+    // 走目录期间不持数据库锁：只有确实要写库的那几个文件才开 session
     int imported = 0;
     int skipped = 0;
     for (const auto& entry : fs::recursive_directory_iterator(dir))
@@ -706,8 +836,10 @@ int ImportPipeline::scan_3d_models(const std::string& dir_str)
                 skipped++;
                 continue;
             }
+            auto session = db_->session();
+            storage::Model3DRepository repo(session);
             auto _ = repo.update(it->second);
-            record_file(store_path);
+            record_file(session, store_path);
             imported++;
             continue;
         }
@@ -716,10 +848,12 @@ int ImportPipeline::scan_3d_models(const std::string& dir_str)
         m.set_format(format);
         m.set_description(entry.path().stem().string());
         m.set_source("filesystem");
+        auto session = db_->session();
+        storage::Model3DRepository repo(session);
         auto ins = repo.insert(m);
         if (ins)
         {
-            record_file(store_path);
+            record_file(session, store_path);
             models_by_path_.emplace(store_path.string(), std::move(*ins));
             imported++;
         }
@@ -747,6 +881,12 @@ bool ImportPipeline::file_unchanged(const fs::path& p)
 
 void ImportPipeline::record_file(const fs::path& p)
 {
+    auto session = db_->session();
+    record_file(session, p);
+}
+
+void ImportPipeline::record_file(const storage::DbSession& session, const fs::path& p)
+{
     std::error_code ec;
     auto ft = fs::last_write_time(p, ec);
     if (ec)
@@ -760,7 +900,7 @@ void ImportPipeline::record_file(const fs::path& p)
         std::lock_guard lock(mtimes_mtx_);
         file_mtimes_[p.string()] = mtime_s;
     }
-    storage::ImportedFilesRepository ifr(db_);
+    storage::ImportedFilesRepository ifr(session);
     auto _ = ifr.upsert(p.string(), mtime_s);
 }
 
