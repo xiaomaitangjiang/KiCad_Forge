@@ -73,7 +73,8 @@ def fix_pin_types(block: str) -> str:
 
 def merge_into_file(blocks: list, target: str):
     if os.path.exists(target):
-        text = open(target, encoding='utf-8').read()
+        with open(target, encoding='utf-8') as source:
+            text = source.read()
     else:
         text = '(kicad_symbol_lib\n\t(version 20231120)\n\t(generator "KiCad_Forge")\n)\n'
 
@@ -87,7 +88,8 @@ def merge_into_file(blocks: list, target: str):
     if pos < 0: raise ValueError("no closer")
 
     text = text[:pos] + "\n" + "\n".join(blocks) + "\n" + text[pos:]
-    open(target, 'w', encoding='utf-8').write(text)
+    with open(target, 'w', encoding='utf-8') as output:
+        output.write(text)
 
 
 # ============================================================
@@ -117,8 +119,8 @@ def prepare(lcsc_id: str, output_dir: str) -> dict:
     if not syms:
         return {"ok": False, "error": f"No .kicad_sym. {(r.stderr or '')[:200]}"}
 
-    sym_path = os.path.join(output_dir, syms[0])
-    blocks = extract_symbol_blocks(open(sym_path, encoding='utf-8').read())
+    with open(os.path.join(output_dir, syms[0]), encoding='utf-8') as source:
+        blocks = extract_symbol_blocks(source.read())
     if not blocks:
         return {"ok": False, "error": "No (symbol ...) blocks"}
 
@@ -346,6 +348,7 @@ if __name__ == "__main__":
             cleanup_fetched(keep=5)
             print(json.dumps(result))
     elif action == "info":
-        print(open(os.path.join(PLUGIN_DIR, "manifest.json")).read())
+        with open(os.path.join(PLUGIN_DIR, "manifest.json"), encoding='utf-8') as source:
+            print(source.read())
     else:
         print(json.dumps({"ok": False, "error": f"Unknown: {action}"}))

@@ -2,7 +2,7 @@
 #include "core/io/sexpr/dom/dom.h"
 #include "core/io/sexpr/dom/dom_builder.h"
 
-#include <charconv>
+#include <fast_float/fast_float.h>
 #include <fstream>
 #include <sstream>
 
@@ -13,7 +13,8 @@ using Kind = util::Error::Kind;
 static double sv_to_double(std::string_view sv)
 {
     double v = 0;
-    std::from_chars(sv.data(), sv.data() + sv.size(), v);
+    // Apple's libc++ does not provide floating-point std::from_chars on all SDKs.
+    fast_float::from_chars(sv.data(), sv.data() + sv.size(), v);
     return v;  // invalid input → 0, from_chars never throws
 }
 

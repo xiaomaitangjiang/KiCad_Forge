@@ -11,12 +11,12 @@
 | macOS Apple Silicon | macOS 15 | Apple Clang / libc++ | Debug、Release |
 | macOS Intel | macOS 15 Intel | Apple Clang / libc++ | Debug、Release |
 
-每个环境均构建 React/Vite 前端、C++ 应用、四个 doctest 测试程序以及导入 benchmark。
+每个环境均构建 React/Vite 前端、C++ 应用和四个 doctest 测试程序，检查全部 Python 插件的语法并运行插件测试。
 随后执行全部单元测试，把应用打包并复制到带空格的临时路径，以 `--headless` 启动，检查：
 
 - `/api/status`、`/api/libraries`、`/api/plugins`。
 - 打包的前端 HTML 和静态资源可以通过 HTTP 读取。
-- 打包的插件被正确发现。
+- 打包的插件被正确发现，且 C++ 主程序可以通过子进程实际调用两个 Python 插件的 `info` 入口。
 - SQLite 初始化、核心表和数据库完整性。
 - `/api/bye` 能让应用以退出码 0 正常退出。
 
@@ -40,7 +40,7 @@ Linux/macOS 当前使用系统浏览器，启动图形界面需要相应的桌�
 ## 本地构建
 
 需要 xmake 3.1.1+、Node.js 24 和支持 C++23 显式对象参数及 `std::forward_like` 的编译器。
-spdlog、nlohmann/json、toml++、SQLite 和 doctest 由 xmake 安装，版本固定在 `xmake.lua` 中。
+spdlog、nlohmann/json、toml++、fast_float、SQLite 和 doctest 由 xmake 安装，版本固定在 `xmake.lua` 中。
 
 ```sh
 cd webui
@@ -53,21 +53,21 @@ xmake f -y -c -p linux -m debug --cc=gcc-14 --cxx=g++-14 --ld=g++-14 --sh=g++-14
 # macOS：使用 Xcode 16.4+ 命令行工具
 # xmake f -y -c -p macosx -m debug
 
-xmake build -y --all
+xmake build -y
 xmake test -v
 ```
 
 Windows 在 MSYS2 MINGW64 环境安装 `mingw-w64-x86_64-clang`、`mingw-w64-x86_64-lld`、
-`mingw-w64-x86_64-gcc` 和 `mingw-w64-x86_64-cairo`，另安装标准 Python 后配置：
+`mingw-w64-x86_64-gcc`，另安装标准 Python 后配置：
 
 ```sh
-python -m pip install cairosvg Pillow
-export CAIROCFFI_DLL_DIRECTORIES="$(cygpath -w "$MINGW_PREFIX/bin")"
-python scripts/svg2ico.py
 xmake f -y -c -p mingw -a x86_64 -m debug --mingw="$(cygpath -m "$MINGW_PREFIX")"
-xmake build -y --all
+xmake build -y
 xmake test -v
 ```
+
+正常构建直接使用仓库中已有的 `resources/app.ico`，不安装 CairoSVG、Pillow 或 Cairo。
+只有修改图标素材时才需要自行运行 `scripts/svg2ico.py`。导入 benchmark 可按需单独构建，不属于本工作流检查范围。
 
 以 Linux Debug 为例，可复现打包与冒烟检查：
 

@@ -27,9 +27,10 @@ end
 -- Versions are explicit so every platform uses the same dependencies.
 add_requires("spdlog 1.17.0", {configs = {header_only = true}})
 add_requires("nlohmann_json 3.12.0", "toml++ 3.4.0", "doctest 2.5.3")
+add_requires("fast_float 8.3.0")
 add_requires("sqlite3 3.53.0+400", {configs = {shared = false}})
 add_includedirs("src", "src/third_party")
-add_packages("spdlog", "nlohmann_json", "toml++")
+add_packages("spdlog", "nlohmann_json", "toml++", "fast_float")
 set_targetdir("build/$(plat)/$(arch)/$(mode)")
 
 target("KiCad_Forge")
@@ -53,16 +54,8 @@ target("KiCad_Forge")
         if is_mode("release") then
             add_ldflags("-mwindows")
         end
-        before_build(function (target)
-            local svg = path.join(os.projectdir(), "webui/public/favicon.svg")
-            local ico = path.join(os.projectdir(), "resources/app.ico")
-            if not os.isfile(ico) or os.mtime(svg) > os.mtime(ico) then
-                import("lib.detect.find_tool")
-                local python = assert(find_tool("python") or find_tool("python3"), "Python is required to generate app.ico")
-                os.vrunv(python.program, {"scripts/svg2ico.py"})
-                os.touch(path.join(os.projectdir(), "resources/app.rc"))
-            end
-        end)
+        -- app.ico is tracked. Regenerate it manually when changing the artwork;
+        -- normal application builds do not need CairoSVG or Pillow.
     end
 
     after_build(function (target)

@@ -161,7 +161,7 @@ KiCad_Forge
 **Build**
 
 - `xmake` for C++, `npm`/Vite for frontend
-- `before_build` regenerates `app.ico` when source SVG changes
+- Normal builds use the tracked `app.ico`; run `scripts/svg2ico.py` manually when changing the artwork
 - `after_build` copies webui + plugins + DLLs to output
 
 ### Pre-submit Checklist

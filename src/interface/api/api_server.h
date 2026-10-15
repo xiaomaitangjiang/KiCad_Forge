@@ -64,6 +64,7 @@ private:
     util::ConfigStore* config_{nullptr};
     ImportManager* import_manager_{nullptr};
     std::atomic<bool> shutting_down_{false};
+    std::atomic<bool> stopped_{false};
     std::atomic<int64_t> last_heartbeat_{0};
     // Set by destroy()/move-out: the destructor must not touch dependencies
     // then — sibling service instances live in per-type static stores whose

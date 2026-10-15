@@ -235,6 +235,11 @@ void ApiServer::wait()
 // 停 HTTP 服务与线程；依赖的导入/插件由各自服务销毁（此处仅作为 ApiServer 依赖的连带停止）
 void ApiServer::shutdown()
 {
+    // Launcher stops the server before its dependencies and logger are destroyed.
+    // A later static-store destructor must not touch those expired dependencies.
+    if (!srv_ || stopped_.exchange(true))
+        return;
+
     kforge::util::log_info{}("Shutdown: stopping plugins...");
     if (plugins_)
     {

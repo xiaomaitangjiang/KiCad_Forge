@@ -8,6 +8,7 @@ import re
 import shutil
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.error
@@ -31,7 +32,8 @@ def smoke_test(binary, log_dir):
         if os.name == "nt":
             # A missing bundled DLL must not be hidden by the build toolchain's PATH.
             system_root = env["SystemRoot"]
-            env["PATH"] = os.pathsep.join((system_root, str(Path(system_root) / "System32")))
+            env["PATH"] = os.pathsep.join((system_root, str(Path(system_root) / "System32"),
+                                         str(Path(sys.executable).parent)))
         stdout_path = log_dir / "smoke-stdout.log"
         with stdout_path.open("w", encoding="utf-8") as stdout:
             process = subprocess.Popen([str(application), "--headless"], cwd=bundle,
@@ -71,6 +73,15 @@ def smoke_test(binary, log_dir):
                     for p in (bundle / "plugins").glob("*/manifest.json")
                 }
                 require(expected_plugins <= {p["id"] for p in plugins}, "Bundled plugins were not discovered")
+                for plugin_id in expected_plugins:
+                    request = urllib.request.Request(
+                        url + "/api/plugins/execute?id=" + plugin_id,
+                        data=json.dumps({"action": "info"}).encode("utf-8"),
+                        headers={"Content-Type": "application/json"}, method="POST")
+                    with opener.open(request, timeout=5) as response:
+                        result = json.load(response)
+                    require(result.get("plugin_result", {}).get("id") == plugin_id,
+                            "Native-to-Python plugin execution failed: " + str(result))
                 with opener.open(url + "/", timeout=3) as response:
                     require("text/html" in response.headers.get("Content-Type", ""), "Frontend is not HTML")
                     html = response.read().decode("utf-8")
