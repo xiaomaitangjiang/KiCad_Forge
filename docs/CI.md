@@ -77,6 +77,7 @@ python scripts/smoke_test.py --binary dist/KiCad_Forge-linux-x64-debug/KiCad_For
 ```
 
 `--headless` 提供同一套本机 HTTP 服务，不打开浏览器或 WebView2 窗口。
+主体通过 UTF-8 模式启动 Python 插件，避免 Windows 系统编码影响 JSON 通信。
 仍需发送 `/api/status` 心跳维持运行，可通过 `POST /api/bye` 正常退出。
 ZIP 包不包含用户数据库或日志；Python 插件需要用户自行安装 Python 和对应的插件依赖。
 

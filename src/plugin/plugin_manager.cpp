@@ -342,7 +342,8 @@ util::Result<std::string> PluginManager::execute(const std::string& plugin_id,
 
 #ifdef _WIN32
     // CommandLineToArgvW-compatible quoting per argument — no shell involved
-    std::string cmd = "python " + escape_win_arg(script_path.string()) + " " +
+    // The JSON protocol is UTF-8, independent of the Windows system code page.
+    std::string cmd = "python -X utf8 " + escape_win_arg(script_path.string()) + " " +
                       escape_win_arg(action) + " " + escape_win_arg(json_args);
     kforge::util::log_debug{}("[plugin] Execute: {}", cmd);
 
@@ -435,7 +436,8 @@ util::Result<std::string> PluginManager::execute(const std::string& plugin_id,
         return std::unexpected(util::Error::make<Kind::IoError>("Failed to launch plugin"));
     return output;
 #else
-    // fork + execvp: argv passed directly, no shell parsing, no quoting surface
+    // fork + execvp: argv passed directly, no shell parsing, no quoting surface.
+    // Match the UTF-8 plugin protocol used on Windows.
     kforge::util::log_debug{}("[plugin] Execute: python {} {} {}", script_path.string(), action,
                               json_args);
     int fds[2];
@@ -455,7 +457,7 @@ util::Result<std::string> PluginManager::execute(const std::string& plugin_id,
         dup2(fds[1], STDERR_FILENO);
         close(fds[0]);
         close(fds[1]);
-        execlp("python", "python", script_path.string().c_str(), action.c_str(),
+        execlp("python", "python", "-X", "utf8", script_path.string().c_str(), action.c_str(),
                json_args.c_str(), static_cast<char*>(nullptr));
         _exit(127);  // exec failed
     }
