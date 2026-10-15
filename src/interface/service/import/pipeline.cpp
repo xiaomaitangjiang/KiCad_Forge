@@ -872,7 +872,7 @@ bool ImportPipeline::file_unchanged(const fs::path& p)
         return false;  // unreadable mtime → treat as changed (re-import)
     }
     auto mtime_s = std::chrono::duration_cast<std::chrono::seconds>(
-                       std::chrono::clock_cast<std::chrono::system_clock>(ft).time_since_epoch())
+                       std::chrono::file_clock::to_sys(ft).time_since_epoch())
                        .count();
     std::lock_guard lock(mtimes_mtx_);
     auto it = file_mtimes_.find(p.string());
@@ -894,7 +894,7 @@ void ImportPipeline::record_file(const storage::DbSession& session, const fs::pa
         return;  // unreadable mtime — don't record; the file will be re-parsed next run
     }
     auto mtime_s = std::chrono::duration_cast<std::chrono::seconds>(
-                       std::chrono::clock_cast<std::chrono::system_clock>(ft).time_since_epoch())
+                       std::chrono::file_clock::to_sys(ft).time_since_epoch())
                        .count();
     {
         std::lock_guard lock(mtimes_mtx_);

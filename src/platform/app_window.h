@@ -198,7 +198,7 @@ public:
 
         // Heartbeat monitor runs on a background thread — webview_run() blocks
         std::thread monitor_thread(
-            [this](F is_alive_copy)
+            [this, is_alive_copy = std::forward<F>(is_alive)]
             {
                 // Wait for the first heartbeat (window may still be opening)
                 auto deadline = steady_clock::now() + seconds(30);
@@ -229,8 +229,7 @@ public:
                         },
                         nullptr);
                 }
-            },
-            std::forward<F>(is_alive));
+            });
 
         webview_run(w_);  // returns when the window is closed
         // Wake the monitor thread so join() below returns promptly — without

@@ -113,7 +113,6 @@ KiCad_Forge
 
 - `build/` 构建产物
 - `*.db`、`*.db-wal`、`*.db-shm` 运行时数据库
-- `resources/app.ico`（构建时自动生成）
 - IDE 文件（`.idea/`、`*.user`）
 - DLL 和 exe 等二进制文件
 
@@ -215,7 +214,6 @@ Reference: [plugins/lcsc_import/](plugins/lcsc_import/)
 
 - `build/` directory
 - `*.db`, `*.db-wal`, `*.db-shm`
-- `resources/app.ico` (auto-generated)
 - IDE files (`.idea/`, `*.user`)
 - DLL and exe binaries
 
