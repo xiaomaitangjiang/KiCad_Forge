@@ -1,6 +1,7 @@
 """Test a relocated application bundle: startup, assets, API, DB and shutdown."""
 
 import argparse
+from contextlib import closing
 import json
 import os
 from pathlib import Path
@@ -97,7 +98,7 @@ def smoke_test(binary, log_dir):
                 require(process.wait(timeout=15) == 0, f"Application exit code: {process.returncode}")
                 database = bundle / "data/meta.db"
                 require(database.is_file(), "Portable database was not created")
-                with sqlite3.connect(database) as db:
+                with closing(sqlite3.connect(database)) as db:
                     require(db.execute("PRAGMA integrity_check").fetchone()[0] == "ok", "Database integrity check failed")
                     tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
                     require({"symbols", "footprints", "libraries"} <= tables, "Database migrations were not applied")
