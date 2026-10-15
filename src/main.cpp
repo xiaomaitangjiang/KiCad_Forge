@@ -11,8 +11,10 @@
 
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <thread>
 
 #ifdef _WIN32
@@ -80,6 +82,22 @@ static int run_server()
     }
     kforge::util::log_info{}("Server responding on http://127.0.0.1:{}", PORT);
 
+    auto is_alive = [&]
+    {
+        return !l.get<api::ApiServer>().should_stop() &&
+               l.get<api::ApiServer>().ms_since_heartbeat() < kHeartbeatTimeoutMs;
+    };
+    // Keep the same heartbeat and /api/bye lifecycle without opening a window.
+    if (headless)
+    {
+        l.get<api::ImportManager>().start_async();
+        while (is_alive())
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        return 0;
+    }
+
     //打开应用界面, 界面关闭时关闭后端进程
     kforge::platform::WindowConfig win_cfg;
     win_cfg.url = "http://127.0.0.1:" + std::to_string(PORT);
@@ -107,23 +125,32 @@ static int run_server()
     return 0;
 }
 
-#ifdef _WIN32
-int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
+static int run_application(int argc, char* argv[])
 {
-    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-    int ret = run_server();
-    CoUninitialize();
-    return ret;
-}
-#endif
-int main()
-{
+    bool headless = false;
+    for (int i = 1; i < argc; ++i)
+    {
+        if (std::string_view(argv[i]) == "--headless")
+            headless = true;
+    }
 #ifdef _WIN32
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-    int ret = run_server();
+    int ret = run_server(headless);
     CoUninitialize();
     return ret;
 #else
-    return run_server();
+    return run_server(headless);
 #endif
 }
+
+int main(int argc, char* argv[])
+{
+    return run_application(argc, argv);
+}
+
+#ifdef _WIN32
+int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
+{
+    return run_application(__argc, __argv);
+}
+#endif

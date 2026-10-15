@@ -1,48 +1,91 @@
-set_toolchains("clang", {target = "x86_64-w64-windows-gnu"})
-set_plat("mingw")
-add_ldflags("-fuse-ld=lld")
-add_rules("mode.debug", "mode.release")
-set_optimize("faster")  -- -O2
-add_rules("plugin.compile_commands.autoupdate")
-local mode="DEBUG"
-set_defaultmode(mode)
+set_xmakever("3.1.1")
+set_project("KiCad_Forge")
 set_languages("cxx23")
+set_defaultmode("debug")
+add_rules("mode.debug", "mode.release")
+add_rules("plugin.compile_commands.autoupdate")
 
-local msys2 = os.getenv("MSYS2_DIR") or "D:/msys64/mingw64"
-local sys_inc = msys2 .. "/include"
-local sys_lib = msys2 .. "/lib"
+-- Keep the existing Windows toolchain while letting Unix hosts build natively.
+if is_host("windows") then
+    set_plat("mingw")
+end
+if is_plat("mingw") then
+    set_toolchains("clang", {target = "x86_64-w64-windows-gnu"})
+    add_cxflags("--target=x86_64-w64-windows-gnu")
+    add_ldflags("-fuse-ld=lld")
+    add_defines("_WIN32_WINNT=0x0A00")
+    add_syslinks("ws2_32", "ole32", "oleaut32", "shell32", "uuid", "imm32", "shlwapi", "version")
+end
+if is_plat("linux", "mingw") then
+    add_syslinks("pthread")
+end
+if is_plat("linux") then
+    add_syslinks("dl")
+end
 
--- Run with:  xmake f -p mingw -c
---            xmake build
--- Or just:   .\make.ps1
+-- Header-only logging avoids a dependency on a machine-specific fmt DLL.
+-- Versions are explicit so every platform uses the same dependencies.
+add_requires("spdlog 1.17.0", {configs = {header_only = true}})
+add_requires("nlohmann_json 3.12.0", "toml++ 3.4.0", "doctest 2.5.3")
+add_requires("sqlite3 3.53.0+400", {configs = {shared = false}})
+add_includedirs("src", "src/third_party")
+add_packages("spdlog", "nlohmann_json", "toml++")
+set_targetdir("build/$(plat)/$(arch)/$(mode)")
 
 target("KiCad_Forge")
     set_kind("binary")
-
     add_files("src/main.cpp")
     add_files("src/interface/**.cpp")
     add_files("src/core/io/**.cpp")
     add_files("src/core/repo/**.cpp")
     add_files("src/core/db/**.cpp")
-    add_files("src/core/model/symbol.cpp")
-    add_files("src/core/model/type_registry.cpp")
+    add_files("src/core/model/**.cpp")
     add_files("src/util/**.cpp")
     add_files("src/classifier/**.cpp")
     add_files("src/correspondence/**.cpp")
     add_files("src/plugin/plugin_manager.cpp")
-    -- Auto-generate app.ico from favicon.svg before building
-    before_build(function(target)
-        local svg = path.join(os.projectdir(), "webui", "public", "favicon.svg")
-        local ico = path.join(os.projectdir(), "resources", "app.ico")
-        local script = path.join(os.projectdir(), "scripts", "svg2ico.py")
-        if os.isfile(svg) and (not os.isfile(ico) or os.mtime(svg) > os.mtime(ico)) then
-            -- Try Windows Python first, then system python
-            local python = os.getenv("LOCALAPPDATA") .. "\\Programs\\Python\\Python313\\python.exe"
-            if not os.isfile(python) then python = "python" end
-            local ok = os.execv(python, {script})
-            if ok then
-                print("  ✓ icon regenerated from favicon.svg")
-                os.touch(path.join(os.projectdir(), "resources", "app.rc"))
+    add_packages("sqlite3")
+
+    if is_plat("mingw") then
+        add_sysincludedirs("src/third_party/webview", "src/third_party/webview2")
+        add_defines("WEBVIEW_EDGE")
+        add_files("resources/app.rc")
+        if is_mode("release") then
+            add_ldflags("-mwindows")
+        end
+        before_build(function (target)
+            local svg = path.join(os.projectdir(), "webui/public/favicon.svg")
+            local ico = path.join(os.projectdir(), "resources/app.ico")
+            if not os.isfile(ico) or os.mtime(svg) > os.mtime(ico) then
+                import("lib.detect.find_tool")
+                local python = assert(find_tool("python") or find_tool("python3"), "Python is required to generate app.ico")
+                os.vrunv(python.program, {"scripts/svg2ico.py"})
+                os.touch(path.join(os.projectdir(), "resources/app.rc"))
+            end
+        end)
+    end
+
+    after_build(function (target)
+        local root = path.directory(target:targetfile())
+        for _, name in ipairs({"webui", "plugins", "config"}) do
+            os.rm(path.join(root, name))
+        end
+        os.cp("$(projectdir)/webui/dist", path.join(root, "webui/dist"))
+        os.cp("$(projectdir)/plugins", path.join(root, "plugins"))
+        os.cp("$(projectdir)/config", path.join(root, "config"))
+        for _, dir in ipairs(os.dirs(path.join(root, "plugins/**/__pycache__"))) do
+            os.rm(dir)
+        end
+        os.mkdir(path.join(root, "data"))
+
+        if target:is_plat("mingw") then
+            local cxx = target:tool("cxx")
+            local bindir = path.directory(cxx)
+            -- MinGW's C++ runtime must also be available outside the MSYS2 shell.
+            for _, dll in ipairs({"libstdc++-6.dll", "libgcc_s_seh-1.dll", "libwinpthread-1.dll"}) do
+                local source = path.join(bindir, dll)
+                assert(os.isfile(source), "Missing MinGW runtime: " .. source)
+                os.cp(source, path.join(root, dll))
             end
         end
     end)
@@ -120,92 +163,30 @@ target("KiCad_Forge")
 
 target("bench_import")
     set_kind("binary")
+    set_default(false)
     add_files("tests/bench_import.cpp")
-    add_files("src/core/model/symbol.cpp")
-    add_files("src/core/model/type_registry.cpp")
-    add_files("src/core/io/sexpr/**.cpp")
-    add_files("src/core/io/parser/**.cpp")
-    add_files("src/core/io/source_mutation.cpp")
+    add_files("src/core/model/**.cpp")
+    add_files("src/core/io/**.cpp")
     add_files("src/core/repo/**.cpp")
     add_files("src/core/db/**.cpp")
     add_files("src/interface/service/library/service.cpp")
     add_files("src/interface/service/import/pipeline.cpp")
     add_files("src/classifier/**.cpp")
     add_files("src/correspondence/**.cpp")
-    add_includedirs("src", "src/third_party", sys_inc)
-    add_linkdirs(sys_lib)
-    add_defines("_WIN32_WINNT=0x0A00")
-    add_syslinks("pthread", "ws2_32", "ole32", "oleaut32", "shell32", "uuid")
-    add_links(sys_lib .. "/libsqlite3.a", sys_lib .. "/libfmt.dll.a")
+    add_packages("sqlite3")
 
-target("test_logger")
-    set_kind("binary")
-    add_files("tests/test_logger.cpp")
-    add_includedirs("src", "src/third_party", sys_inc)
-    add_linkdirs(sys_lib)
-    add_defines("_WIN32_WINNT=0x0A00")
-    add_syslinks("pthread")
-    add_links(sys_lib .. "/libfmt.dll.a")
-
-target("test_plugin_manager")
-    set_kind("binary")
-    add_files("tests/test_plugin_manager.cpp")
-    add_files("src/plugin/plugin_manager.cpp")
-    add_includedirs("src", "src/third_party", sys_inc)
-    add_linkdirs(sys_lib)
-    add_defines("_WIN32_WINNT=0x0A00")
-    add_syslinks("pthread")
-    add_links(sys_lib .. "/libfmt.dll.a")
-
-target("test_launcher")
-    set_kind("binary")
-    add_files("tests/test_launcher.cpp")
-    add_files("tests/test_launcher_lifecycle.cpp")
-    add_includedirs("src", "src/third_party", sys_inc)
-    add_linkdirs(sys_lib)
-    add_defines("_WIN32_WINNT=0x0A00")
-    add_syslinks("pthread")
-    add_links(sys_lib .. "/libfmt.dll.a")
-
-target("test_symbol_hash")
-    set_kind("binary")
-    add_files("tests/test_symbol_hash.cpp")
-    add_files("src/core/model/symbol.cpp")
-    add_files("src/core/model/type_registry.cpp")
-    add_includedirs("src", "src/third_party", sys_inc)
-    add_linkdirs(sys_lib)
-    add_defines("_WIN32_WINNT=0x0A00")
-    add_syslinks("pthread")
-    add_links(sys_lib .. "/libfmt.dll.a")
-
-target("test_service_startup")
-    set_kind("binary")
-    add_files("tests/test_service_startup.cpp")
-    add_files("src/core/db/**.cpp", "src/core/repo/**.cpp", "src/core/io/**.cpp")
-    add_files("src/core/model/symbol.cpp", "src/core/model/type_registry.cpp")
-    add_files("src/interface/api/import_manager.cpp", "src/interface/api/import_orchestrator.cpp")
-    add_files("src/interface/service/import/pipeline.cpp", "src/interface/service/library/service.cpp")
-    add_files("src/util/config_store.cpp")
-    add_files("src/classifier/**.cpp", "src/correspondence/**.cpp")
-    add_includedirs("src", "src/third_party", sys_inc)
-    add_defines("_WIN32_WINNT=0x0A00")
-    add_syslinks("pthread", "ws2_32", "ole32", "oleaut32", "shell32", "uuid")
-    add_links(sys_lib .. "/libsqlite3.a", sys_lib .. "/libfmt.dll.a")
-    add_runenvs("PATH", msys2 .. "/bin")
-
-target("test_data_integrity")
-    set_kind("binary")
-    add_files("tests/test_config_store.cpp", "tests/test_text_util.cpp", "tests/test_library_workflows.cpp")
-    add_files("src/interface/service/library/binding.cpp", "src/interface/service/classification/service.cpp")
-    add_files("src/interface/api/staged_import.cpp", "src/plugin/plugin_manager.cpp")
-    add_files("src/core/db/**.cpp", "src/core/repo/**.cpp", "src/core/io/**.cpp")
-    add_files("src/core/model/symbol.cpp", "src/core/model/type_registry.cpp")
-    add_files("src/interface/api/import_manager.cpp", "src/interface/api/import_orchestrator.cpp")
-    add_files("src/interface/service/import/pipeline.cpp", "src/interface/service/library/service.cpp")
-    add_files("src/util/config_store.cpp")
-    add_files("src/classifier/**.cpp", "src/correspondence/**.cpp")
-    add_includedirs("src", "src/third_party", sys_inc)
-    add_defines("_WIN32_WINNT=0x0A00")
-    add_syslinks("pthread", "ws2_32", "ole32", "oleaut32", "shell32", "uuid")
-    add_links(sys_lib .. "/libsqlite3.a", sys_lib .. "/libfmt.dll.a")
-    add_runenvs("PATH", msys2 .. "/bin")
+target_end()
+for _, name in ipairs({"test_logger", "test_plugin_manager", "test_launcher", "test_symbol_hash"}) do
+    target(name)
+        set_kind("binary")
+        add_files("tests/" .. name .. ".cpp")
+        add_packages("doctest")
+        set_rundir("$(projectdir)")
+        add_tests("default", {run_timeout = 60000})
+        if name == "test_plugin_manager" then
+            add_files("src/plugin/plugin_manager.cpp")
+        elseif name == "test_symbol_hash" then
+            add_files("src/core/model/**.cpp")
+        end
+    target_end()
+end

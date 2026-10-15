@@ -1,5 +1,5 @@
 // Cross-platform app window — CRTP for compile-time dispatch.
-// Windows: WebView2 via webview library | macOS: WKWebView | Linux: GTK WebKit
+// Windows: embedded WebView2 | macOS / Linux: system browser
 #pragma once
 
 #include "../util/logger.h"
@@ -15,6 +15,12 @@
 #include <utility>
 #include <vector>
 
+#if defined(__APPLE__) || defined(__linux__)
+#include <csignal>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
+
 #ifdef _WIN32
 // Prevent MinGW's eventtoken.h from defining EventRegistrationToken
 // inside extern "C" — webview library needs it in global C++ namespace.
@@ -24,6 +30,7 @@ struct EventRegistrationToken { INT64 value; };
 #include <windows.h>
 #include <shellapi.h>
 #include <shlobj.h>
+#include "webview/webview.h"
 #endif
 
 namespace kforge::platform
@@ -74,13 +81,11 @@ protected:
 // ============================================================
 #if defined(__APPLE__) || defined(__linux__)
 
-#include <sys/wait.h>
-#include <unistd.h>
-
 class UnixBrowserWindow : public AppWindow<UnixBrowserWindow>
 {
 public:
-    using AppWindow::AppWindow;
+    explicit UnixBrowserWindow(WindowConfig cfg) : AppWindow(std::move(cfg)) {}
+    using AppWindow::monitor;
 
     bool open()
     {
@@ -126,8 +131,6 @@ using NativeWindow = UnixBrowserWindow;
 // Windows: WebView2 via webview library
 // ============================================================
 #ifdef _WIN32
-
-#include "webview/webview.h"
 
 class WinWebView2Window : public AppWindow<WinWebView2Window>
 {

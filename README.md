@@ -12,6 +12,8 @@ Kicad_Forge 是一个现代化的元件库图形管理工具，旨在为 KiCad �
 
 简体中文 ~ [English](docs/README_en.md)
 
+[跨平台构建、自动测试与手动发布 / Cross-platform CI and releases](docs/CI.md)
+
 ![screenshot](resources/main_view.png)
 
 [功能](#功能) **·** [快速开始](#快速开始) **·** [下载](#下载) **·** [贡献](CONTRIBUTING.md) **·** [注意事项](docs/Attention.md)
