@@ -31,7 +31,7 @@ def smoke_test(binary, log_dir):
         env = os.environ.copy()
         if os.name == "nt":
             # A missing bundled DLL must not be hidden by the build toolchain's PATH.
-            system_root = env["SystemRoot"]
+            system_root = env["SYSTEMROOT"]
             env["PATH"] = os.pathsep.join((system_root, str(Path(system_root) / "System32"),
                                          str(Path(sys.executable).parent)))
         stdout_path = log_dir / "smoke-stdout.log"
