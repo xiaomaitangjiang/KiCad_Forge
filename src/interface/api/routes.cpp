@@ -183,7 +183,7 @@ static std::string short_uuid()
     static std::mt19937_64 gen(rd());
     static std::uniform_int_distribution<uint64_t> dis;
     char buf[17];
-    snprintf(buf, sizeof(buf), "%016llX", dis(gen));
+    snprintf(buf, sizeof(buf), "%016llX", static_cast<unsigned long long>(dis(gen)));
     return buf;
 }
 

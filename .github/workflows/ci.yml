@@ -76,7 +76,6 @@ jobs:
           cache-dependency-path: webui/package-lock.json
 
       - uses: actions/setup-python@v7
-        if: runner.os != 'Windows'
         with:
           python-version: "3.12"
 
@@ -96,8 +95,7 @@ jobs:
             mingw-w64-x86_64-clang
             mingw-w64-x86_64-lld
             mingw-w64-x86_64-gcc
-            mingw-w64-x86_64-python-cairosvg
-            mingw-w64-x86_64-python-pillow
+            mingw-w64-x86_64-cairo
 
       - uses: xmake-io/github-action-setup-xmake@v1
         with:
@@ -111,18 +109,25 @@ jobs:
           npm ci
           npm run build
 
+      - name: Generate the Windows icon
+        if: runner.os == 'Windows'
+        run: |
+          python -m pip install cairosvg Pillow
+          export CAIROCFFI_DLL_DIRECTORIES="$(cygpath -w "$MINGW_PREFIX/bin")"
+          python scripts/svg2ico.py
+
       - name: Configure the native build
         run: |
           if [[ "${{ runner.os }}" == "Windows" ]]; then
             xmake f -y -c -p mingw -a x86_64 -m "${{ matrix.mode }}" --mingw="$(cygpath -m "$MINGW_PREFIX")"
           elif [[ "${{ runner.os }}" == "Linux" ]]; then
-            xmake f -y -c -p linux -a x86_64 -m "${{ matrix.mode }}" --cc=gcc-14 --cxx=g++-14
+            xmake f -y -c -p linux -a x86_64 -m "${{ matrix.mode }}" --cc=gcc-14 --cxx=g++-14 --ld=g++-14 --sh=g++-14
           else
             xmake f -y -c -p macosx -a "${{ matrix.platform.arch }}" -m "${{ matrix.mode }}"
           fi
 
       - name: Compile the application, tests and benchmark
-        run: xmake build -y --all
+        run: xmake build -y --all -j 2
 
       - name: Run all four unit test executables
         run: xmake test -v

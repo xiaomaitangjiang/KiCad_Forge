@@ -49,7 +49,7 @@ npm run build
 cd ..
 
 # Linux：安装 GCC 14 后
-xmake f -y -c -p linux -m debug --cc=gcc-14 --cxx=g++-14
+xmake f -y -c -p linux -m debug --cc=gcc-14 --cxx=g++-14 --ld=g++-14 --sh=g++-14
 # macOS：使用 Xcode 16.4+ 命令行工具
 # xmake f -y -c -p macosx -m debug
 
@@ -58,9 +58,12 @@ xmake test -v
 ```
 
 Windows 在 MSYS2 MINGW64 环境安装 `mingw-w64-x86_64-clang`、`mingw-w64-x86_64-lld`、
-`mingw-w64-x86_64-gcc`、`mingw-w64-x86_64-python-cairosvg` 和 `mingw-w64-x86_64-python-pillow` 后配置：
+`mingw-w64-x86_64-gcc` 和 `mingw-w64-x86_64-cairo`，另安装标准 Python 后配置：
 
 ```sh
+python -m pip install cairosvg Pillow
+export CAIROCFFI_DLL_DIRECTORIES="$(cygpath -w "$MINGW_PREFIX/bin")"
+python scripts/svg2ico.py
 xmake f -y -c -p mingw -a x86_64 -m debug --mingw="$(cygpath -m "$MINGW_PREFIX")"
 xmake build -y --all
 xmake test -v
