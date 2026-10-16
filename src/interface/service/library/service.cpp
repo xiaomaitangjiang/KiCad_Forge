@@ -7,6 +7,7 @@
 #include "interface/service/import/pipeline.h"
 #include "core/io/sexpr/text_util.h"
 #include "core/db/database.h"
+#include "core/io/source_mutation.h"
 #include "core/repo/repositories.h"
 #include "util/logger.h"
 
@@ -24,20 +25,20 @@ LibraryService::LibraryService(storage::Database* db) : db_(db) {}
 
 util::Result<int> LibraryService::import_symbol_library(const std::filesystem::path& path,
                                                          const std::string& comp_lib_id) {
-    auto r = ImportPipeline(db_->handle())
+    auto r = ImportPipeline(*db_)
         | symbols_from{path.string(), comp_lib_id}
         | execute;
     return r.symbols;
 }
 
 util::Result<int> LibraryService::import_footprint(const std::filesystem::path& path) {
-    auto r = ImportPipeline(db_->handle()).operator|(execute);
+    auto r = ImportPipeline(*db_).operator|(execute);
     return 0;  // footprints_from handles directories, not single files
 }
 
 util::Result<LibraryService::ImportStats> LibraryService::import_directory(
     const std::filesystem::path& dir, const std::string& comp_lib_id) {
-    auto r = ImportPipeline(db_->handle())
+    auto r = ImportPipeline(*db_)
         | symbols_from{dir.string(), comp_lib_id}
         | execute;
     ImportStats stats;
@@ -47,7 +48,7 @@ util::Result<LibraryService::ImportStats> LibraryService::import_directory(
 }
 
 util::Result<int> LibraryService::scan_3d_models(const std::filesystem::path& dir) {
-    auto r = ImportPipeline(db_->handle())
+    auto r = ImportPipeline(*db_)
         | models_from{dir.string()}
         | execute;
     return r.models_3d;
@@ -59,33 +60,44 @@ util::Result<int> LibraryService::scan_3d_models(const std::filesystem::path& di
 
 util::Result<LibraryService::DeleteLibResult> LibraryService::delete_library(
     const core::Uuid& lib_id) {
-    storage::LibraryRepository lr(db_->handle());
-    storage::SymbolRepository sr(db_->handle());
-
-    auto libs = lr.find_all();
     std::string file_path;
-    if (libs)
-        for (auto& l : *libs)
-            if (l.id == lib_id) file_path = l.file_path.string();
-    if (file_path.empty())
-        return std::unexpected(util::Error::make<Kind::NotFound>("Library not found: " + lib_id));
-
-    int removed = 0;
-    auto syms = sr.find_by_library(lib_id);
-    if (syms)
-        for (auto& s : *syms)
-            if (sr.remove(s.id())) removed++;
-
-    bool file_deleted = false;
-    if (std::filesystem::exists(file_path)) {
-        std::filesystem::remove(file_path);
-        file_deleted = true;
+    {
+        auto session = db_->session();
+        auto libs = storage::LibraryRepository(session).find_all();
+        if (libs)
+            for (auto& l : *libs)
+                if (l.id == lib_id) file_path = l.file_path.string();
+        if (file_path.empty())
+            return std::unexpected(
+                util::Error::make<Kind::NotFound>("Library not found: " + lib_id));
     }
 
-    auto db_result = lr.remove(lib_id);
-    if (!db_result) return std::unexpected(db_result.error());
+    int removed = 0;
+    auto drop_rows = [&](storage::DbSession& session) -> util::Result<void>
+    {
+        storage::LibraryRepository lr(session);
+        storage::SymbolRepository sr(session);
+        auto syms = sr.find_by_library(lib_id);
+        if (!syms) return std::unexpected(syms.error());
+        for (auto& s : *syms)
+            if (sr.remove(s.id())) removed++;
+        if (auto result = lr.remove(lib_id); !result) return result;
+        return {};
+    };
 
-    return DeleteLibResult{removed, file_deleted ? file_path : ""};
+    if (!std::filesystem::is_regular_file(file_path)) {
+        // 没有源文件：只清数据库行
+        auto session = db_->session();
+        if (auto dropped = drop_rows(session); !dropped)
+            return std::unexpected(dropped.error());
+        return DeleteLibResult{removed, ""};
+    }
+
+    // 文件删除与行删除同一次变更：任一步失败两边一起回退
+    io::SourceMutationService mutations(*db_);
+    auto applied = mutations.apply({io::FileChange{.path = file_path, .remove = true}}, drop_rows);
+    if (!applied) return std::unexpected(applied.error());
+    return DeleteLibResult{removed, file_path};
 }
 
 // ============================================================
@@ -93,41 +105,62 @@ util::Result<LibraryService::DeleteLibResult> LibraryService::delete_library(
 // ============================================================
 
 util::Result<void> LibraryService::delete_symbol(const core::Uuid& sym_id) {
-    storage::LibraryRepository lr(db_->handle());
-    storage::SymbolRepository sr(db_->handle());
+    std::string sym_name;
+    std::filesystem::path source_file;
+    {
+        auto session = db_->session();
+        storage::SymbolRepository sr(session);
+        auto sym = sr.find_by_id(sym_id);
+        if (!sym) return std::unexpected(util::Error::make<Kind::NotFound>("Symbol not found"));
+        sym_name = sym->name();
+        auto libs = storage::LibraryRepository(session).find_all();
+        if (libs)
+            for (auto& l : *libs) {
+                if (l.id != sym->library_id() || l.file_path.empty()) continue;
+                source_file = l.file_path;
+                break;
+            }
+    }
 
-    auto sym = sr.find_by_id(sym_id);
-    if (!sym) return std::unexpected(util::Error::make<Kind::NotFound>("Symbol not found"));
+    auto remove_row = [&](storage::DbSession& session) -> util::Result<void>
+    {
+        storage::SymbolRepository sr(session);
+        if (!sr.remove(sym_id))
+            return std::unexpected(util::Error::make<Kind::DbError>("Failed to remove symbol"));
+        return {};
+    };
 
-    std::string sym_name = sym->name();
-    std::string lib_id = sym->library_id();
+    // 没有源文件（或节点不在文件里）：只删数据库行
+    std::string original;
+    if (source_file.empty() || !std::filesystem::is_regular_file(source_file)) {
+        auto session = db_->session();
+        return remove_row(session);
+    }
+    {
+        std::ifstream in(source_file, std::ios::binary);
+        original.assign(std::istreambuf_iterator<char>(in), {});
+    }
+    auto node_start = sexpr::find_node(original, "symbol", sym_name);
+    if (!node_start)
+    {
+        auto session = db_->session();
+        return remove_row(session);
+    }
+    auto node_end = sexpr::find_matching_paren(original, *node_start);
+    if (node_end == std::string_view::npos)
+    {
+        return std::unexpected(util::Error::make<Kind::ParseError>(
+            "Malformed symbol node in " + source_file.string()));
+    }
 
-    if (!sr.remove(sym_id))
-        return std::unexpected(util::Error::make<Kind::DbError>("Failed to remove symbol"));
-
-    auto libs = lr.find_all();
-    if (libs)
-        for (auto& l : *libs) {
-            if (l.id != lib_id || l.file_path.empty()) continue;
-            if (!std::filesystem::exists(l.file_path)) continue;
-
-            std::ifstream f(l.file_path, std::ios::binary);
-            std::string text((std::istreambuf_iterator<char>(f)),
-                             std::istreambuf_iterator<char>());
-            f.close();
-
-            auto node_start = sexpr::find_node(text, "symbol", sym_name);
-            if (!node_start) continue;
-
-            auto node_end = sexpr::find_matching_paren(text, *node_start);
-            if (node_end == std::string_view::npos) continue;
-
-            text = sexpr::remove_node(text, *node_start, node_end + 1);
-            std::ofstream out(l.file_path, std::ios::binary);
-            out << text;
-            break;
-        }
-    return {};
+    // 文件删除 + 行删除一起提交：失败时文件与库行都回到原状
+    std::string updated = sexpr::remove_node(original, *node_start, node_end + 1);
+    io::SourceMutationService mutations(*db_);
+    return mutations.apply(
+        {io::FileChange{.path = source_file,
+                        .content = std::move(updated),
+                        .expected_digest = io::content_digest(original)}},
+        remove_row);
 }
 
 // ============================================================
@@ -250,23 +283,52 @@ util::Result<int> LibraryService::merge_into_library(const std::filesystem::path
     }
 
     target_text.insert(last_paren, insertion);
-    std::ofstream out(target_sym, std::ios::binary);
-    if (!out.is_open())
-        return std::unexpected(util::Error::make<Kind::IoError>("Cannot write: " + target_sym.string()));
-    out << target_text;
+
+    // 目标文件的改写同样归统一变更服务：备份、日志、失败回退都有据可查。
+    // 目标是新文件时允许不存在；已存在则必须是已登记来源（或调用方先登记）。
+    std::error_code exists_error;
+    bool existed = std::filesystem::is_regular_file(target_sym, exists_error) && !exists_error;
+    io::FileChange change{.path = target_sym,
+                          .content = std::move(target_text),
+                          .allow_missing = !existed};
+    io::SourceMutationService mutations(*db_);
+    auto written = mutations.apply({std::move(change)},
+                                   [](storage::DbSession&) -> util::Result<void> { return {}; });
+    if (!written)
+        return std::unexpected(written.error());
     kforge::util::log_info{}("MERGED: {} symbols into {}", src->items.size(), target_sym.string());
     return (int)src->items.size();
 }
 
 // ============================================================
-// patch_kf_id_to_file — delegates to sexpr::patch_kf_id_to_file
-// (kept as LibraryService method for API compatibility)
+// patch_kf_id_to_file — 走统一变更服务落盘（读/改在锁外完成）
 // ============================================================
 
 int LibraryService::patch_kf_id_to_file(
     const std::filesystem::path& sym_file,
     const std::unordered_map<std::string, std::string>& name_to_kf_id) {
-    return sexpr::patch_kf_id_to_file(sym_file, name_to_kf_id);
+    if (!std::filesystem::is_regular_file(sym_file)) return 0;
+    std::ifstream in(sym_file, std::ios::binary);
+    if (!in.is_open()) return 0;
+    std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    in.close();
+
+    std::string original = text;
+    int patched = sexpr::patch_kf_id_content(text, name_to_kf_id);
+    if (patched == 0) return 0;
+
+    io::SourceMutationService mutations(*db_);
+    auto written = mutations.apply({io::FileChange{.path = sym_file,
+                                                   .content = std::move(text),
+                                                   .expected_digest = io::content_digest(original)}},
+                                   [](storage::DbSession&) -> util::Result<void> { return {}; });
+    if (!written)
+    {
+        kforge::util::log_error{}("KF ID write failed for {}: {}", sym_file.string(),
+                                  written.error().format_message());
+        return 0;
+    }
+    return patched;
 }
 
 // ============================================================
@@ -274,17 +336,20 @@ int LibraryService::patch_kf_id_to_file(
 // ============================================================
 
 int LibraryService::symbol_count() const {
-    storage::SymbolRepository repo(db_->handle());
+    auto session = db_->session();
+    storage::SymbolRepository repo(session);
     return repo.count();
 }
 
 int LibraryService::footprint_count() const {
-    storage::FootprintRepository repo(db_->handle());
+    auto session = db_->session();
+    storage::FootprintRepository repo(session);
     return repo.count();
 }
 
 int LibraryService::model_3d_count() const {
-    storage::Model3DRepository repo(db_->handle());
+    auto session = db_->session();
+    storage::Model3DRepository repo(session);
     return repo.count();
 }
 

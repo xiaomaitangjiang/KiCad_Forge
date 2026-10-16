@@ -2,7 +2,7 @@
 #include "core/io/sexpr/dom/dom.h"
 #include "core/io/sexpr/dom/dom_builder.h"
 
-#include <charconv>
+#include <fast_float/fast_float.h>
 #include <fstream>
 #include <sstream>
 
@@ -13,7 +13,8 @@ using Kind = util::Error::Kind;
 static double sv_to_double(std::string_view sv)
 {
     double v = 0;
-    std::from_chars(sv.data(), sv.data() + sv.size(), v);
+    // Apple's libc++ does not provide floating-point std::from_chars on all SDKs.
+    fast_float::from_chars(sv.data(), sv.data() + sv.size(), v);
     return v;  // invalid input → 0, from_chars never throws
 }
 
@@ -36,7 +37,9 @@ util::Result<core::Footprint> FootprintParser::parse_buffer(std::string_view buf
         return std::unexpected(root_result.error());
 
     auto& root = *root_result;
-    if (root->type() != "footprint")
+    // KiCad 5 的 (module ...) 与 v6+ 的 (footprint ...) 结构一致；
+    // 老库文件（以及部分第三方转换器输出）仍是 module，直接兼容
+    if (root->type() != "footprint" && root->type() != "module")
         return std::unexpected(util::Error::make<Kind::ParseError>(
             std::string("expected (footprint ...), got (") + std::string(root->type()) + ")"));
 
@@ -44,11 +47,22 @@ util::Result<core::Footprint> FootprintParser::parse_buffer(std::string_view buf
 
     auto name_opt = root->property("name");
     if (name_opt)
-        fp.set_name(std::string(*name_opt));
+    {
+        std::string raw(*name_opt);
+        // 旧格式把库名一起写在名字里："easyeda2kicad:SOT-23" → "SOT-23"
+        if (auto colon = raw.find(':'); colon != std::string::npos)
+            raw = raw.substr(colon + 1);
+        fp.set_name(std::move(raw));
+    }
     else if (root->is_atom())
         fp.set_name(std::string(root->atom_value()));
     else if (!root->children().empty() && root->children()[0]->is_atom())
-        fp.set_name(std::string(root->children()[0]->atom_value()));
+    {
+        std::string raw(root->children()[0]->atom_value());
+        if (auto colon = raw.find(':'); colon != std::string::npos)
+            raw = raw.substr(colon + 1);
+        fp.set_name(std::move(raw));
+    }
 
     auto desc_opt = root->property("descr");
     if (desc_opt)

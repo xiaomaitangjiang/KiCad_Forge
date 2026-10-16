@@ -9,8 +9,8 @@
 namespace kforge::api
 {
 
-ImportManager::ImportManager(sqlite3* db, util::ConfigStore* config)
-    : db_(db), config_(config), orch_(std::make_unique<ImportOrchestrator>(db, config))
+ImportManager::ImportManager(storage::Database& db, util::ConfigStore* config)
+    : db_(&db), config_(config), orch_(std::make_unique<ImportOrchestrator>(db, config))
 {
 }
 
@@ -20,9 +20,9 @@ ImportManager::~ImportManager() = default;
 util::Result<void> ImportManager::build(storage::DbService& db, util::ConfigStore& cfg)
 {
     auto& self = kforge::launcher::util::instance_store<ImportManager>().value();
-    self.db_ = db.handle();
+    self.db_ = &db.database();
     self.config_ = &cfg;
-    self.orch_ = std::make_unique<ImportOrchestrator>(self.db_, self.config_);
+    self.orch_ = std::make_unique<ImportOrchestrator>(*self.db_, self.config_);
     return {};
 }
 
@@ -42,7 +42,8 @@ void ImportManager::start_async()
 
 void ImportManager::stop_async()
 {
-    orch_->stop();
+    if (orch_)
+        orch_->stop();
 }
 
 bool ImportManager::is_running() const
@@ -66,6 +67,7 @@ services::ImportPipeline::Result ImportManager::import_all(const Options& opts)
 {
     if (opts.force)
     {
+        orch_->stop();
         clear_imported_files_cache();  // mtime snapshots gone → full re-import
     }
     return orch_->run_now();
@@ -73,15 +75,17 @@ services::ImportPipeline::Result ImportManager::import_all(const Options& opts)
 
 services::ImportPipeline::Result ImportManager::import_directory(const std::string& dir)
 {
-    services::ImportPipeline pipe(db_);
+    services::ImportPipeline pipe(*db_);
     pipe | services::symbols_from{.dir = dir, .comp_lib_id = ""};
     return pipe | services::execute;
 }
 
 void ImportManager::clear_imported_files_cache()
 {
+    auto session = db_->session();
     char* errmsg = nullptr;
-    if (sqlite3_exec(db_, "DELETE FROM imported_files", nullptr, nullptr, &errmsg) != SQLITE_OK)
+    if (sqlite3_exec(session.handle(), "DELETE FROM imported_files", nullptr, nullptr, &errmsg) !=
+        SQLITE_OK)
     {
         kforge::util::log_error{}("Failed to clear imported_files cache: {}",
                                   errmsg != nullptr ? errmsg : "SQL error");

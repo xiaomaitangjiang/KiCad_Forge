@@ -20,8 +20,8 @@ export default function App() {
 
   // Data hooks
   const { status, loadStatus } = useStatus()
-  const { symbols, loadSymbols, setSymbols } = useSymbols()
-  const { libraries, loadLibraries, setLibraries } = useLibraries()
+  const { symbols, symbolsError, loadSymbols, setSymbols } = useSymbols()
+  const { libraries, librariesError, loadLibraries, setLibraries } = useLibraries()
   const { plugins, loadPlugins } = usePlugins()
   const { issues, loadIssues } = useIssues()
   const { matches, loadMatches } = useMatches()
@@ -60,15 +60,20 @@ export default function App() {
     })
   }, [])
 
-  // Two-step delete: default = DB-only unregister; tick = also fs::remove file
-  const confirmDeleteLib = useCallback(async (deleteFile) => {
-    const lib = pendingDeleteLib
-    if (!lib) return
+  // Two-step delete — the request carries the object kind so the right API is
+  // used: 'symbol' → /api/libraries (unregister; file removal is opt-in),
+  // 'component' → /api/component-libraries (registration only, never files).
+  const confirmDeleteLib = (async (deleteFile) => {
+    const req = pendingDeleteLib
+    if (!req) return
     setPendingDeleteLib(null)
-    if (deleteFile) {
-      const r = await api.deleteLibrary(lib.id)
+    const { kind, lib } = req
+    if (kind === 'symbol') {
+      const r = await api.deleteLibrary(lib.id, deleteFile)
       if (r?.ok) {
-        toastMsg(t('toast.deleted', { name: lib.name, extra: r.deleted_file ? ' (+file)' : '' }))
+        toastMsg(deleteFile
+          ? t('toast.deleted', { name: lib.name, extra: r.deleted_file ? ' (+file)' : '' })
+          : t('toast.removed', { name: lib.name }))
         loadLibraries(); loadSymbols(); setTargetLib('')
       } else toastMsg(r?.error || t('toast.failedUnknown'))
     } else {
@@ -93,6 +98,51 @@ export default function App() {
   // Loading callback
   useEffect(() => { setLoadingCallback(setLoading) }, [])
 
+  // Workspace bootstrap: config (active workspace) + component library list
+  // load once on mount — both hooks are lazy otherwise (SettingsModal-only)
+  useEffect(() => { loadSettings(); loadCompLibraries() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Active workspace — three distinct states:
+  //   undefined → never chosen: default to the first workspace
+  //   ''        → the user explicitly picked "All workspaces"
+  //   <id>      → a concrete workspace (falls back if it was deleted)
+  const activeLib = useMemo(() => {
+    const configured = settings.active_component_library
+    if (configured === undefined) return compLibraries[0]?.id || ''
+    if (configured === '') return ''
+    return compLibraries.some(c => c.id === configured) ? configured : (compLibraries[0]?.id || '')
+  }, [settings.active_component_library, compLibraries])
+
+  // Libraries of the active workspace — symbols are filtered by their library ids.
+  // A concrete workspace with no libraries shows an EMPTY list (never falls back
+  // to symbols of other workspaces).
+  const workspaceLibraryIds = useMemo(
+    () => new Set(libraries.filter(l => l.component_library_id === activeLib).map(l => l.id)),
+    [libraries, activeLib])
+  const visibleSymbols = useMemo(
+    () => (!activeLib ? symbols : symbols.filter(s => workspaceLibraryIds.has(s.library_id))),
+    [symbols, activeLib, workspaceLibraryIds])
+
+  async function switchWorkspace(id) {
+    setSettings(prev => ({ ...prev, active_component_library: id }))
+    // Context change → reset the whole query state (selection, keyword, lib)
+    setSelected(null); setTargetLib(''); setFilter(''); setSearch('')
+    await api.saveConfig({ active_component_library: id })
+    loadLibraries(); loadSymbols()
+  }
+
+  // ---- Unified query state: keyword + library travel together ----
+  // Refreshes keep the current search/library context; a context change
+  // (library / workspace switch) resets the selection.
+  const refreshSymbols = useCallback(
+    () => loadSymbols(search, targetLib),
+    [search, targetLib, loadSymbols])
+
+  async function selectLibrary(libId) {
+    setFilter(''); setSelected(null); setTargetLib(libId)
+    loadSymbols(search, libId)
+  }
+
   // Heartbeat + shutdown signal
   // Use recursive setTimeout — browsers throttle setInterval in background tabs
   useEffect(() => {
@@ -114,8 +164,13 @@ export default function App() {
 
   async function classify() {
     toastMsg(t('toast.classifying'))
-    const r = await api.classify()
-    if (r) { setClassifyResult(r); loadSymbols(); loadStatus() }
+    try {
+      const r = await api.classify()
+      if (r?.error) { toastMsg(t('toast.failed', { error: r.error })); return }
+      setClassifyResult(r); loadSymbols(); loadStatus()
+    } catch (cause) {
+      toastMsg(t('toast.failed', { error: cause.message }))
+    }
   }
   function toggleIssues() {
     setIssueFilter(prev => !prev)
@@ -124,8 +179,10 @@ export default function App() {
   }
 
   async function checkCorrespondence() {
-    await loadIssues()
-    toastMsg(issues.length === 0 ? t('toast.noIssues') : t('toast.issuesFound', { count: issues.length }))
+    // 用本次请求的返回值，不要读刷新前的 issues 状态
+    const list = await loadIssues()
+    if (!list) { toastMsg(t('toast.loadFailed')); return }
+    toastMsg(list.length === 0 ? t('toast.noIssues') : t('toast.issuesFound', { count: list.length }))
   }
   async function autoMatch() {
     // useRequest.load returns the fresh data — the `matches` state is stale here
@@ -145,16 +202,26 @@ export default function App() {
   // Type management
   async function loadCompTypes() { const d = await api.compTypes(); if (d) setCompTypes(d) }
   async function loadPkgTypes() { const d = await api.pkgTypes(); if (d) setPkgTypes(d) }
-  async function manageType(url, action, name) {
-    const r = await api.manageType(url, action, name)
+  async function manageType(url, action, name, extra) {
+    const r = await api.manageType(url, action, name, extra)
     if (r?.ok) { toastMsg(t(action === 'add' ? 'toast.added' : 'toast.removed', { name })); return true }
-    toastMsg(r?.error || 'Failed'); return false
+    // 被引用的类型不能删：返回引用数量
+    toastMsg(r?.references ? t('toast.typeInUse', { count: r.references }) : (r?.error || 'Failed'))
+    return false
   }
 
   // Filtered data — memoized: rebuilt only when symbols change, not per render
+  // 按类型 ID 归组（改名不影响筛选）；[id, name, count]
   const typeList = useMemo(() => {
-    const typeCounts = {}; symbols.forEach(s => { typeCounts[s.type] = (typeCounts[s.type]||0) + 1 })
-    return Object.entries(typeCounts).sort((a, b) => b[1] - a[1])
+    const byId = new Map()
+    symbols.forEach(s => {
+      const id = s.type_id || s.type
+      const entry = byId.get(id) || { name: s.type || id, count: 0 }
+      entry.count += 1
+      byId.set(id, entry)
+    })
+    return [...byId.entries()].map(([id, e]) => [id, e.name, e.count])
+      .sort((a, b) => b[2] - a[2])
   }, [symbols])
 
   return (
@@ -162,9 +229,12 @@ export default function App() {
       <div id="loading" style={{ display: loading ? 'block' : 'none' }} />
 
       <Sidebar {...{filter, setFilter, clearFilters: () => { setFilter(''); setIssueFilter(false) }, setSelected, setTargetLib, loadSymbols: (q, lib) => loadSymbols(q, lib),
+        onSelectLibrary: selectLibrary,
         status, issues, checkCorrespondence: toggleIssues, matches, autoMatch, typeList, issueFilter,
         targetLib, setTargetLibRaw: setTargetLib, libraries,
         onRequestDelete: setPendingDeleteLib,
+        plugins, setPluginAction, setPluginFormData,
+        compLibraries, activeLib, onSwitchWorkspace: switchWorkspace,
         loadRules, setShowRules, loadPlugins, setShowPlugins,
         loadCompTypes: () => { loadCompTypes(); setShowCompTypes(true) },
         setShowCompTypes, loadPkgTypes: () => { loadPkgTypes(); setShowPkgTypes(true) },
@@ -172,35 +242,49 @@ export default function App() {
         dark, toggleDark, api, loadLibraries, loadSymbols, toastMsg, showConfirm }} />
 
       <div className="main">
-        <Toolbar {...{plugins, loadLibraries, setPluginAction, setPluginFormData, classify, checkCorrespondence, autoMatch, targetLib, status, search, setSearch, loadSymbols}} />
-        <SymbolTable {...{symbols, filter, issueFilter, selected, setSelected}} />
+        <Toolbar {...{plugins, loadLibraries, setPluginAction, setPluginFormData, classify, checkCorrespondence, autoMatch, targetLib, status, search, setSearch, loadSymbols,
+          onSearch: (q) => loadSymbols(q, targetLib)}} />
+        <SymbolTable {...{symbols: visibleSymbols, filter, issueFilter, selected, setSelected}} />
         <div className="statusbar">
-          <span>{t('status.filtered', { count: (filter ? symbols.filter(s => s.type === filter) : symbols).length, filter: filter ? ` · filtered by "${filter}"` : '' })}</span>
-          <span style={{ marginLeft: 'auto' }}>{t('status.total', { count: symbols.length })}</span>
+          <span>{t('status.filtered', { count: (filter ? visibleSymbols.filter(s => (s.type_id || s.type) === filter) : visibleSymbols).length, filter: filter ? ` · filtered by "${(typeList.find(([id]) => id === filter) || [])[1] || filter}"` : '' })}</span>
+          {/* 加载失败要显示出来：空列表和「请求挂了」不是一回事 */}
+          {(symbolsError || librariesError) && (
+            <span style={{ marginLeft: 12, color: 'var(--red)' }}>
+              {t('status.loadFailed', { error: (symbolsError || librariesError)?.message || '' })}
+            </span>
+          )}
+          <span style={{ marginLeft: 'auto' }}>{t('status.total', { count: visibleSymbols.length })}</span>
         </div>
       </div>
 
-      <Inspector {...{selected, classify, onDeleteSymbol: deleteSymbol, onRefresh: loadSymbols}} />
+      <Inspector {...{selected, classify, onDeleteSymbol: deleteSymbol, onRefresh: refreshSymbols, toastMsg}} />
 
       <div id="toast" className={toast ? 'show' : ''}>{toast}</div>
 
       <ImportingModal onDone={() => { loadLibraries(); loadSymbols(); loadStatus(); }} />
 
-      <PluginActionModal {...{pluginAction, setPluginAction, pluginFormData, setPluginFormData, libraries, toastMsg, loadSymbols, loadLibraries, loadStatus}} />
+      <PluginActionModal {...{pluginAction, setPluginAction, pluginFormData, setPluginFormData, libraries, toastMsg, loadSymbols, loadLibraries, loadStatus,
+        activeWorkspace: compLibraries.find(c => c.id === activeLib)}} />
 
       {classifyResult && <ClassifyResultModal result={classifyResult} onClose={() => setClassifyResult(null)} />}
       {matchList && <MatchSuggestModal matches={matchList} onClose={() => setMatchList(null)} />}
 
       {showCreateLib && <CreateLibraryModal onClose={() => setShowCreateLib(false)} loadLibraries={loadLibraries} toastMsg={toastMsg} />}
-      {showSettings  && <SettingsModal  {...{settings, setSettings, compLibraries, setCompLibraries, loadCompLibraries, onClose: () => setShowSettings(false), loadSymbols, loadStatus, toastMsg, showConfirm, onRequestDelete: setPendingDeleteLib}} />}
+      {showSettings  && <SettingsModal  {...{settings, setSettings, compLibraries, setCompLibraries, loadCompLibraries, onClose: () => setShowSettings(false), loadSymbols, loadStatus, toastMsg, showConfirm, onRequestDelete: setPendingDeleteLib,
+        onOpenTool: (key) => ({
+          rules:     () => { loadRules(); setShowRules(true) },
+          plugins:   () => { loadPlugins(); setShowPlugins(true) },
+          compTypes: () => { loadCompTypes(); setShowCompTypes(true) },
+          pkgTypes:  () => { loadPkgTypes(); setShowPkgTypes(true) },
+        }[key]?.())}} />}
       {showRules     && <RulesModal     {...{rules, onClose: () => setShowRules(false)}} />}
-      {showPlugins   && <PluginsModal   {...{plugins, onClose: () => setShowPlugins(false)}} />}
+      {showPlugins   && <PluginsModal   {...{plugins, onClose: () => setShowPlugins(false), setPluginAction, setPluginFormData, loadLibraries, targetLib}} />}
       {showCompTypes && <TypeModal title={t('types.componentTypes')} items={compTypes} onClose={()=>setShowCompTypes(false)}
         onAdd={([name])=>manageType('/component-types','add',name).then(ok=>ok&&loadCompTypes())}
-        onRemove={name=>manageType('/component-types','remove',name).then(ok=>ok&&loadCompTypes())} showIcon />}
+        onRemove={item=>manageType('/component-types','remove',item.name,{id:item.id}).then(ok=>ok&&loadCompTypes())} showIcon />}
       {showPkgTypes  && <TypeModal title={t('types.packageTypes')} items={pkgTypes} onClose={()=>setShowPkgTypes(false)}
         onAdd={([name,cat])=>manageType('/package-types','add',name,{category:cat}).then(ok=>ok&&loadPkgTypes())}
-        onRemove={name=>manageType('/package-types','remove',name).then(ok=>ok&&loadPkgTypes())} showCategory />}
+        onRemove={item=>manageType('/package-types','remove',item.name,{id:item.id}).then(ok=>ok&&loadPkgTypes())} showCategory />}
 
       {/* Confirm Dialog */}
       {confirmState.open && (
@@ -216,7 +300,7 @@ export default function App() {
       )}
       {pendingDeleteLib && (
         <DeleteLibraryModal
-          lib={pendingDeleteLib}
+          request={pendingDeleteLib}
           onClose={() => setPendingDeleteLib(null)}
           onConfirm={confirmDeleteLib} />
       )}

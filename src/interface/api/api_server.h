@@ -46,7 +46,7 @@ public:
     bool should_stop() const { return shutting_down_.load(std::memory_order_relaxed); }
 
     // For route handler access
-    sqlite3* db_handle() { return db_->handle(); }
+    storage::Database& database() { return *db_; }
     plugin::PluginManager* plugins() { return plugins_; }
 
 private:
@@ -64,7 +64,12 @@ private:
     util::ConfigStore* config_{nullptr};
     ImportManager* import_manager_{nullptr};
     std::atomic<bool> shutting_down_{false};
+    std::atomic<bool> stopped_{false};
     std::atomic<int64_t> last_heartbeat_{0};
+    // Set by destroy()/move-out: the destructor must not touch dependencies
+    // then — sibling service instances live in per-type static stores whose
+    // destruction order is unspecified (use-after-free at exit).
+    bool closed_{false};
 };
 
 }  // namespace kforge::api

@@ -60,7 +60,8 @@ struct server_result
 template <typename Service, typename... Servers>
 bool failed_by(const server_result<Servers...>& outcome)
 {
-    return std::holds_alternative<typename Server<std::decay_t<Service>>::owned_tag>(outcome.fail);
+    return !outcome.ok() &&
+           std::holds_alternative<typename Server<std::decay_t<Service>>::owned_tag>(outcome.fail);
 }
 
 }  // namespace kforge::launcher

@@ -9,43 +9,29 @@ namespace kforge::services {
 CorrespondenceService::CorrespondenceService(storage::Database* db) : db_(db) {}
 
 util::Result<std::vector<correspondence::Issue>> CorrespondenceService::check_all() {
-    storage::SymbolRepository sr(db_->handle());
-    storage::FootprintRepository fr(db_->handle());
-    storage::RelationshipRepository rr(db_->handle());
+    auto session = db_->session();  // 三次查询读同一快照，不被同进程写入穿插
+    storage::SymbolRepository sr(session);
+    storage::FootprintRepository fr(session);
+    storage::RelationshipRepository rr(session);
 
     auto syms = sr.find_all();
     auto fps = fr.find_all();
-    if (!syms || !fps) return std::vector<correspondence::Issue>{};
-
-    // Build relationship maps from relationship tables
-    std::unordered_map<core::Uuid, core::Uuid> sym_to_fp;
-    std::unordered_map<core::Uuid, std::vector<core::Uuid>> fp_to_models;
-
-    // For each symbol, look up its linked footprint
-    for (auto& sym : *syms) {
-        auto fp_id = rr.find_footprint_for_symbol(sym.id());
-        if (fp_id && *fp_id) {
-            sym_to_fp[sym.id()] = **fp_id;
-        }
-    }
-
-    // For each footprint, look up linked 3D models
-    for (auto& fp : *fps) {
-        auto models = rr.find_models_for_footprint(fp.id());
-        if (models) {
-            fp_to_models[fp.id()] = *models;
-        }
-    }
+    // 批量取关联（替代每行点查），一次会话内读完，锁不跨整个检查过程
+    auto sym_to_fp = rr.find_all_symbol_links();
+    auto fp_to_models = rr.find_all_model_links();
+    if (!syms || !fps || !sym_to_fp || !fp_to_models)
+        return std::vector<correspondence::Issue>{};
 
     std::vector<core::Model3D> models;  // Models come from relationship tables
     return correspondence::CorrespondenceChecker::check(
-        *syms, *fps, models, sym_to_fp, fp_to_models);
+        *syms, *fps, models, *sym_to_fp, *fp_to_models);
 }
 
 util::Result<std::vector<correspondence::MatchSuggestion>>
 CorrespondenceService::suggest_matches() {
-    storage::SymbolRepository sr(db_->handle());
-    storage::FootprintRepository fr(db_->handle());
+    auto session = db_->session();
+    storage::SymbolRepository sr(session);
+    storage::FootprintRepository fr(session);
 
     auto syms = sr.find_all();
     auto fps = fr.find_all();
@@ -65,8 +51,9 @@ CorrespondenceService::suggest_matches() {
 
 util::Result<std::vector<correspondence::MatchSuggestion>>
 CorrespondenceService::suggest_matches_for(const core::Uuid& symbol_id, size_t top_n) {
-    storage::SymbolRepository sr(db_->handle());
-    storage::FootprintRepository fr(db_->handle());
+    auto session = db_->session();
+    storage::SymbolRepository sr(session);
+    storage::FootprintRepository fr(session);
 
     auto sym = sr.find_by_id(symbol_id);
     auto fps = fr.find_all();

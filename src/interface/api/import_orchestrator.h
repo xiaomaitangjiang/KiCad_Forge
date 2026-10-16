@@ -6,14 +6,17 @@
 
 #include "interface/service/import/pipeline.h"
 
-struct sqlite3;
+namespace kforge::storage { class Database; }
 namespace kforge::util { class ConfigStore; }
 
 namespace kforge::api {
 
 class ImportOrchestrator {
 public:
-    ImportOrchestrator(sqlite3* db, util::ConfigStore* config = nullptr) : db_(db), config_(config) {}
+    ImportOrchestrator(storage::Database& db, util::ConfigStore* config = nullptr)
+        : db_(&db), config_(config)
+    {
+    }
     ~ImportOrchestrator();
 
     // Start background import. Safe to call multiple times — skips if already running.
@@ -35,7 +38,7 @@ public:
     services::ImportPipeline::Result run_now();
 
 private:
-    sqlite3* db_;
+    storage::Database* db_;
     util::ConfigStore* config_{nullptr};
     std::thread import_thread_;
     std::atomic<bool> running_{false};

@@ -92,8 +92,11 @@ public:
     }
 
     // --- Classification metadata ---
-    ComponentType component_type{ComponentType::Unknown};
-    PackageType package_type{PackageType::Unknown};
+    // 存的是类型 ID（见 core/model/type_registry.h），不是枚举序号：
+    // 注册表增删/重排类型不会改变这里已有值的含义。
+    // 认不出的 ID 原样保留，不做自动改写。
+    std::string component_type_id;
+    std::string package_type_id;
     std::optional<ValueRange> value_range;
 
     // --- Parent library reference ---

@@ -24,7 +24,14 @@ struct PluginAction {
     std::string name;            // "Import LCSC"
     std::string description;     // tooltip
     std::string icon;            // override default icon, optional
-    std::string trigger;         // "dialog" | "inline" | "panel"
+    std::string trigger;         // "dialog" | "inline" | "panel" | "hidden"
+    std::string ui_template;     // UI template: "form" (default) | "two_step"
+    std::string analyze_action;  // two_step: action id run for the analyze step
+    std::string preflight;       // dialog: action id run on open to show context (e.g. "status")
+    // 宿主侧协议：非空表示该 action 由宿主接管（如 "staged-import-v1"），
+    // 插件只在暂存目录里产出文件，目标库由宿主校验并提交
+    std::string protocol;
+    std::vector<std::string> auto_args;  // args the host fills in automatically (e.g. "target_library")
     bool button_show{true};      // show button in toolbar
     std::string button_style;    // "icon" | "text" | "both" (default "both")
     std::string button_location; // "toolbar" | "sidebar" (default "toolbar")

@@ -1,16 +1,42 @@
 #include "core/db/database.h"
+#include "core/db/source_key_migration.h"
 #include "platform/kicad_detect.h"
 #include "util/logger.h"
 
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <sqlite3.h>
 
 namespace kforge::storage
 {
 using Kind = util::Error::Kind;
 
+namespace
+{
+/// 冲突/未解析行写报告文件留证 —— 迁移不猜目标，交用户显式重定位
+void write_conflict_report(const std::filesystem::path& db_path,
+                           const SourceKeyBackfill& report)
+{
+    if (report.conflicts.empty() && report.libraries_unresolved == 0 &&
+        report.footprints_unresolved == 0)
+        return;
+    std::ofstream out(db_path.string() + ".source-key-report.txt");
+    if (!out)
+        return;
+    out << "# KiCad_Forge 来源身份迁移报告\n";
+    out << "# libraries: " << report.libraries_keyed << " keyed, "
+        << report.libraries_unresolved << " unresolved\n";
+    out << "# footprints: " << report.footprints_keyed << " keyed, "
+        << report.footprints_unresolved << " unresolved\n";
+    for (const auto& line : report.conflicts)
+        out << line << "\n";
+}
+}  // namespace
+
 Database::~Database()
 {
+    std::lock_guard lock(mutex_);  // 等仍在跑的 session 结束再关连接
     if (db_)
     {
         sqlite3_close(db_);
@@ -47,6 +73,7 @@ util::Result<std::unique_ptr<Database>> Database::open(const std::filesystem::pa
 
 util::Result<void> Database::execute(const std::string& sql)
 {
+    std::lock_guard lock(mutex_);
     char* err = nullptr;
     int rc = sqlite3_exec(db_, sql.c_str(), nullptr, nullptr, &err);
     if (rc != SQLITE_OK)
@@ -54,6 +81,44 @@ util::Result<void> Database::execute(const std::string& sql)
         std::string msg(err ? err : "unknown");
         sqlite3_free(err);
         return std::unexpected(util::Error::make<Kind::DbError>("SQL: " + msg));
+    }
+    return {};
+}
+
+util::Result<void> Database::backup_to(const std::filesystem::path& path)
+{
+    std::lock_guard lock(mutex_);
+    std::filesystem::create_directories(path.parent_path());
+
+    sqlite3* dest = nullptr;
+    if (sqlite3_open(path.string().c_str(), &dest) != SQLITE_OK)
+    {
+        std::string message = dest ? sqlite3_errmsg(dest) : "cannot open backup target";
+        if (dest)
+            sqlite3_close(dest);
+        return std::unexpected(util::Error::make<Kind::IoError>("Backup open: " + message));
+    }
+
+    sqlite3_backup* backup = sqlite3_backup_init(dest, "main", db_, "main");
+    if (backup == nullptr)
+    {
+        std::string message = sqlite3_errmsg(dest);
+        sqlite3_close(dest);
+        return std::unexpected(util::Error::make<Kind::DbError>("Backup init: " + message));
+    }
+
+    int rc = SQLITE_OK;
+    do
+    {
+        rc = sqlite3_backup_step(backup, 256);
+    } while (rc == SQLITE_OK || rc == SQLITE_BUSY || rc == SQLITE_LOCKED);
+    sqlite3_backup_finish(backup);
+    std::string message = sqlite3_errmsg(dest);
+    sqlite3_close(dest);
+
+    if (rc != SQLITE_DONE)
+    {
+        return std::unexpected(util::Error::make<Kind::DbError>("Backup step: " + message));
     }
     return {};
 }
@@ -167,6 +232,31 @@ util::Result<void> Database::run_migrations()
         R"SQL(CREATE INDEX IF NOT EXISTS idx_ci_component ON correspondence_issues(component_id))SQL",
         R"SQL(CREATE INDEX IF NOT EXISTS idx_ci_resolved ON correspondence_issues(resolved))SQL",
 
+        // 导入来源映射（C02）：(目标库, provider, 外部编号) → 符号 UUID。
+        // 同源重试/新版本要更新原行，异源同名要报冲突，都靠它判定
+        R"SQL(CREATE TABLE IF NOT EXISTS import_sources (
+            id TEXT PRIMARY KEY, target_library_id TEXT NOT NULL,
+            provider TEXT NOT NULL, external_id TEXT NOT NULL,
+            symbol_id TEXT NOT NULL, symbol_name TEXT NOT NULL,
+            content_digest TEXT NOT NULL,
+            updated_at TEXT DEFAULT (datetime('now')),
+            UNIQUE(target_library_id, provider, external_id)
+        ))SQL",
+
+        // 操作幂等：同一个操作 ID + 同样的请求内容 → 返回原结果；
+        // 同一 ID 换了内容 → 拒绝
+        R"SQL(CREATE TABLE IF NOT EXISTS import_operations (
+            id TEXT PRIMARY KEY, request_digest TEXT NOT NULL, result_json TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now'))
+        ))SQL",
+
+        // 源文件变更恢复日志（A05）：prepared → applied 两态，
+        // 业务变更与 applied 必须落在同一个事务里
+        R"SQL(CREATE TABLE IF NOT EXISTS file_mutations (
+            id TEXT PRIMARY KEY, state TEXT NOT NULL, plan_json TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now'))
+        ))SQL",
+
         // Settings are stored in JSON (util/config_store), not the DB.
         R"SQL(CREATE TABLE IF NOT EXISTS imported_files (
             file_path TEXT PRIMARY KEY,
@@ -221,27 +311,29 @@ util::Result<void> Database::run_migrations()
             sqlite3_free(sql);
             return found;
         };
-        auto safe_alter = [&](const char* col, const char* def)
+        // Target table is explicit — component_library_id belongs to
+        // `libraries`, and hardcoding `symbols` left the real column missing.
+        auto safe_alter = [&](const char* table, const char* col, const char* def)
         {
-            if (has_column(db_, "symbols", col))
+            if (has_column(db_, table, col))
                 return;
             char* err = nullptr;
             char* sql =
-                sqlite3_mprintf("ALTER TABLE symbols ADD COLUMN %s TEXT DEFAULT %Q", col, def);
+                sqlite3_mprintf("ALTER TABLE %s ADD COLUMN %s TEXT DEFAULT %Q", table, col, def);
             int rc = sqlite3_exec(db_, sql, nullptr, nullptr, &err);
             if (rc != SQLITE_OK)
             {
-                kforge::util::log_error{}("DB migration error (ALTER TABLE symbols ADD {}): {}", col,
-                                          err ? err : "unknown");
-                kforge::util::log_warn{}("DB migration: ALTER TABLE ADD {} failed: {}", col,
-                                         err ? err : "unknown");
+                kforge::util::log_error{}("DB migration error (ALTER TABLE {} ADD {}): {}", table,
+                                          col, err ? err : "unknown");
+                kforge::util::log_warn{}("DB migration: ALTER TABLE {} ADD {} failed: {}", table,
+                                         col, err ? err : "unknown");
                 sqlite3_free(err);
             }
             sqlite3_free(sql);
         };
-        safe_alter("Kicad_Forge_ID", "");
-        safe_alter("Pre_Kicad_Forge_ID", "");
-        safe_alter("component_library_id", "");
+        safe_alter("symbols", "Kicad_Forge_ID", "");
+        safe_alter("symbols", "Pre_Kicad_Forge_ID", "");
+        safe_alter("libraries", "component_library_id", "");
 
         // Component library lock flags (official KiCad libraries are locked)
         auto safe_alter_int = [&](const char* table, const char* col, int def)
@@ -271,6 +363,97 @@ util::Result<void> Database::run_migrations()
                      "symbol_path LIKE '%share/kicad%' OR footprint_path LIKE '%share/kicad%' "
                      "OR model_3d_path LIKE '%share/kicad%'",
                      nullptr, nullptr, nullptr);
+
+        // ---- A03：来源身份（source_key / footprint_lib_name）----
+        // 同名不同来源的库/封装必须落在不同行上，身份取规范路径。
+        // 迁移前用 SQLite backup API 留一致性快照（不能直接复制文件：
+        // WAL 里可能还有未检查点的页）。
+        if (!has_column(db_, "libraries", "source_key"))
+        {
+            std::filesystem::path snapshot(path_.string() + ".pre-a03.bak");
+            if (auto backed = backup_to(snapshot); backed)
+                kforge::util::log_info{}("DB: pre-migration snapshot -> {}",
+                                         snapshot.string());
+            else
+                kforge::util::log_error{}("DB: pre-migration snapshot failed: {}",
+                                          backed.error().format_message());
+
+            const char* ddl[] = {
+                "ALTER TABLE libraries ADD COLUMN source_key TEXT",
+                "ALTER TABLE footprints ADD COLUMN source_key TEXT",
+                "ALTER TABLE footprints ADD COLUMN footprint_lib_name TEXT DEFAULT ''",
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_libraries_source_key "
+                "ON libraries(source_key) WHERE source_key IS NOT NULL",
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_footprints_source_key "
+                "ON footprints(source_key) WHERE source_key IS NOT NULL",
+                "CREATE INDEX IF NOT EXISTS ix_footprints_ref "
+                "ON footprints(footprint_lib_name, name)",
+            };
+            bool migrated = sqlite3_exec(db_, "BEGIN IMMEDIATE", nullptr, nullptr, nullptr) ==
+                            SQLITE_OK;
+            std::string failure;
+            if (migrated)
+            {
+                for (const char* sql : ddl)
+                {
+                    char* err = nullptr;
+                    if (sqlite3_exec(db_, sql, nullptr, nullptr, &err) != SQLITE_OK)
+                    {
+                        failure = err ? err : "unknown";
+                        sqlite3_free(err);
+                        break;
+                    }
+                }
+            }
+
+            SourceKeyBackfill report;
+            if (migrated && failure.empty())
+            {
+                report = backfill_source_keys(db_);
+                sqlite3_exec(db_,
+                             "INSERT OR IGNORE INTO schema_migrations(version,name) "
+                             "VALUES(5,'005_source_key.sql')",
+                             nullptr, nullptr, nullptr);
+                if (sqlite3_exec(db_, "COMMIT", nullptr, nullptr, nullptr) != SQLITE_OK)
+                {
+                    failure = sqlite3_errmsg(db_);
+                    migrated = false;
+                }
+            }
+            else if (migrated)
+            {
+                sqlite3_exec(db_, "ROLLBACK", nullptr, nullptr, nullptr);
+                migrated = false;
+            }
+
+            if (!failure.empty())
+            {
+                kforge::util::log_error{}("DB: source_key migration failed: {}", failure);
+            }
+            else
+            {
+                kforge::util::log_info{}("DB: source_key backfill — libraries {} keyed / {} "
+                                         "unresolved, footprints {} keyed / {} unresolved",
+                                         report.libraries_keyed, report.libraries_unresolved,
+                                         report.footprints_keyed, report.footprints_unresolved);
+                write_conflict_report(path_, report);
+            }
+        }
+
+        // 迁移后校验外键完整性
+        {
+            sqlite3_stmt* stmt = nullptr;
+            int violations = 0;
+            if (sqlite3_prepare_v2(db_, "PRAGMA foreign_key_check", -1, &stmt, nullptr) == SQLITE_OK)
+            {
+                while (sqlite3_step(stmt) == SQLITE_ROW)
+                    violations++;
+            }
+            sqlite3_finalize(stmt);
+            if (violations > 0)
+                kforge::util::log_error{}("DB: foreign_key_check reported {} violations",
+                                          violations);
+        }
     }
 
     // Settings are stored in JSON (util/config_store), not the DB.
@@ -286,19 +469,32 @@ util::Result<void> Database::run_migrations()
         std::string fp_path = share.empty() ? "" : share + "/footprints";
         std::string m3d_path = share.empty() ? "" : share + "/3dmodels";
 
-        // Remove stale default row (old migration may have symbol_path but empty fp/m3d)
-        sqlite3_exec(db_, "DELETE FROM component_libraries WHERE id='default'", nullptr, nullptr,
-                     nullptr);
-
-        char* sql =
-            sqlite3_mprintf("INSERT OR IGNORE INTO "
-                            "component_libraries(id,name,symbol_path,footprint_path,"
-                            "model_3d_path,locked,protected) "
-                            "SELECT 'default','KiCad Libraries',%Q,%Q,%Q,1,1 "
-                            "WHERE NOT EXISTS (SELECT 1 FROM component_libraries);",
-                            sym_path.c_str(), fp_path.c_str(), m3d_path.c_str());
-        sqlite3_exec(db_, sql, nullptr, nullptr, nullptr);
-        sqlite3_free(sql);
+        // The default library keeps its stable id 'default'. Never DELETE it —
+        // imported libraries reference component_library_id='default', and a
+        // delete would orphan them (or trip foreign keys). Upsert instead:
+        // refresh the paths each start so a moved KiCad install is picked up.
+        if (!sym_path.empty())
+        {
+            char* sql = sqlite3_mprintf(
+                "INSERT INTO component_libraries(id,name,symbol_path,footprint_path,"
+                "model_3d_path,locked,protected) "
+                "VALUES('default','KiCad Libraries',%Q,%Q,%Q,1,1) "
+                "ON CONFLICT(id) DO UPDATE SET "
+                "symbol_path=excluded.symbol_path, footprint_path=excluded.footprint_path, "
+                "model_3d_path=excluded.model_3d_path",
+                sym_path.c_str(), fp_path.c_str(), m3d_path.c_str());
+            sqlite3_exec(db_, sql, nullptr, nullptr, nullptr);
+            sqlite3_free(sql);
+        }
+        else
+        {
+            // KiCad not found: keep an empty default only when nothing exists
+            sqlite3_exec(db_,
+                         "INSERT OR IGNORE INTO component_libraries(id,name,locked,protected) "
+                         "SELECT 'default','KiCad Libraries',1,1 "
+                         "WHERE NOT EXISTS (SELECT 1 FROM component_libraries);",
+                         nullptr, nullptr, nullptr);
+        }
 
         if (!sym_path.empty())
             kforge::util::log_info{}("DB: default component library -> {}", share);
