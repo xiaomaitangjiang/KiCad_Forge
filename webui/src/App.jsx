@@ -205,7 +205,7 @@ export default function App() {
   async function manageType(url, action, name, extra) {
     const r = await api.manageType(url, action, name, extra)
     if (r?.ok) { toastMsg(t(action === 'add' ? 'toast.added' : 'toast.removed', { name })); return true }
-    // 被引用的类型不能删：把引用数量如实回报，而不是笼统失败
+    // 被引用的类型不能删：返回引用数量
     toastMsg(r?.references ? t('toast.typeInUse', { count: r.references }) : (r?.error || 'Failed'))
     return false
   }

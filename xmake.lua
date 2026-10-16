@@ -12,8 +12,7 @@ local msys2 = os.getenv("MSYS2_DIR") or "D:/msys64/mingw64"
 local sys_inc = msys2 .. "/include"
 local sys_lib = msys2 .. "/lib"
 
--- Run with:  $env:PATH="D:\msys64\mingw64\bin;$env:PATH"
---            xmake f -p mingw -c
+-- Run with:  xmake f -p mingw -c
 --            xmake build
 -- Or just:   .\make.ps1
 

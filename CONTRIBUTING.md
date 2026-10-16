@@ -31,7 +31,7 @@
 - C++23，clang（MSYS2 MinGW 目标）
 - 文件名 `snake_case`，类型名 `PascalCase`，方法名 `snake_case`
 - `#pragma once`，不用 include guard
-- `util::Result<T>` 处理可失败操作，核心逻辑不抛异常
+- `util::Result<T>` 处理可能失败的操作，核心逻辑不抛异常
 - 优先用 `std::filesystem::path`，不用字符串拼接路径
 
 **前端（React）**
@@ -43,7 +43,8 @@
 
 **构建**
 
-- `xmake` 管理 C++ 编译，`npm`/Vite 管理前端
+- `xmake` 管理 C++ 编译
+- `npm`/Vite 管理前端
 - `before_build` 检查 SVG 是否更新，按需重生成 `app.ico`
 - `after_build` 复制 webui、plugins、DLL 到输出目录
 
@@ -105,7 +106,7 @@ KiCad_Forge
    - `manifest.json`（id、name、icon、actions 等）
    - `icon.svg`（24×24 SVG）
    - `plugin.py`（接收 `action` + JSON args，输出 JSON 到 stdout）
-2. 支持的字段类型：`text`、`library_picker`、`select`、`file_picker`
+2. 支持的字段类型：`text`、`library_picker`、`search_picker`
 3. 构建——`after_build` 自动复制 `plugins/`
 
 ### 不应提交的内容
@@ -207,7 +208,7 @@ scripts/                Build helpers
 Reference: [plugins/lcsc_import/](plugins/lcsc_import/)
 
 1. Create `plugins/<name>/` with `manifest.json`, `icon.svg`, `plugin.py`
-2. Supported field types: `text`, `library_picker`, `select`, `file_picker`
+2. Supported field types: `text`, `library_picker`, `search_picker`
 3. Build — `after_build` copies `plugins/` automatically
 
 ### What Not to Commit
