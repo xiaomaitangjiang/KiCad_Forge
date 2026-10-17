@@ -5,13 +5,16 @@
 #include "interface/manager/setup/launcher.hpp"
 #include "platform/app_window.h"
 #include "util/config_store.h"
+#include "util/lifecycle.h"
 #include "util/logger.h"
 #include "util/platform.h"
 
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <thread>
 
 #ifdef _WIN32
@@ -19,11 +22,6 @@
 #endif
 
 // --------------- main entry point ---------------
-
-// Frontend sends heartbeats via recursive setTimeout (immune to browser
-// background-tab throttling), so a 5s timeout is safe; the old 30s made the
-// process linger for ~30s after the window closed.
-static constexpr auto kHeartbeatTimeoutMs = 5000;
 
 static int run_server()
 {
@@ -84,6 +82,22 @@ static int run_server()
     }
     kforge::util::log_info{}("Server responding on http://127.0.0.1:{}", PORT);
 
+    auto is_alive = [&]
+    {
+        return !l.get<api::ApiServer>().should_stop() &&
+               l.get<api::ApiServer>().ms_since_heartbeat() < kHeartbeatTimeoutMs;
+    };
+    // Keep the same heartbeat and /api/bye lifecycle without opening a window.
+    if (headless)
+    {
+        l.get<api::ImportManager>().start_async();
+        while (is_alive())
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        return 0;
+    }
+
     //打开应用界面, 界面关闭时关闭后端进程
     kforge::platform::WindowConfig win_cfg;
     win_cfg.url = "http://127.0.0.1:" + std::to_string(PORT);
@@ -96,34 +110,47 @@ static int run_server()
     }
     kforge::util::log_info{}("Browser window opened");
     l.get<api::ImportManager>().start_async();  // 导入归 ImportManager（窗口后启动）
+    // 正常退出由原生窗口关闭驱动（webview_run 返回）；这里只兜底前端崩溃，
+    // 因此超时放得很宽 —— 导入/分类这类长操作、窗口最小化时的定时器节流
+    // 都不该被当成死亡。
     win.monitor(
         [&]
         {
             return !l.get<api::ApiServer>().should_stop() &&
-                   l.get<api::ApiServer>().ms_since_heartbeat() < kHeartbeatTimeoutMs;
+                   util::frontend_alive(l.get<api::ApiServer>().ms_since_heartbeat(),
+                                        win.is_minimized());
         });
     kforge::util::log_info{}("Shutting down (heartbeat stopped or bye signal received)");
     // 栈析构：~Launcher → 自动调用destroy_all（忽略报错）
     return 0;
 }
 
-#ifdef _WIN32
-int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
+static int run_application(int argc, char* argv[])
 {
-    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-    int ret = run_server();
-    CoUninitialize();
-    return ret;
-}
-#endif
-int main()
-{
+    bool headless = false;
+    for (int i = 1; i < argc; ++i)
+    {
+        if (std::string_view(argv[i]) == "--headless")
+            headless = true;
+    }
 #ifdef _WIN32
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-    int ret = run_server();
+    int ret = run_server(headless);
     CoUninitialize();
     return ret;
 #else
-    return run_server();
+    return run_server(headless);
 #endif
 }
+
+int main(int argc, char* argv[])
+{
+    return run_application(argc, argv);
+}
+
+#ifdef _WIN32
+int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
+{
+    return run_application(__argc, __argv);
+}
+#endif

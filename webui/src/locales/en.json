@@ -17,6 +17,9 @@
     "match": "Match",
     "componentTypes": "Component Types",
     "libraries": "Libraries",
+    "workspace": "Workspace",
+    "allWorkspaces": "All workspaces",
+    "noLibraries": "No symbol libraries in this workspace — import one in Settings",
     "newLibrary": "+ New Library",
     "tools": "Tools",
     "rules": "Rules",
@@ -68,6 +71,13 @@
   "plugin": {
     "cancel": "Cancel",
     "execute": "Execute",
+    "analyze": "Analyze",
+    "analyzeTooltip": "Download the part (no library write) and rank existing footprints by name similarity",
+    "analyzeHint": "Click Analyze to rank existing footprints, or search below.",
+    "newFootprint": "＋ New footprint",
+    "footprintReused": "Reused footprint: {{name}}",
+    "footprintNew": "New footprint: {{name}}",
+    "noGitRepo": "⚠ No Git repository at this location — run Git Init from the Plugins panel first.",
     "noPlugins": "No plugins installed",
     "pluginHint": "Place .kfplug files in the plugins directory",
     "select": "-- Select --"
@@ -82,6 +92,7 @@
     "3dPath": "3D Model Path",
     "3dPathHint": "Directory containing .step / .wrl files",
     "saveImport": "Save & Import",
+    "tools": "Tools",
     "utilities": "Utilities",
     "resetDb": "Reset Database",
     "resetDbHint": "Deletes all imported metadata. Original .kicad_sym files are NOT touched. Restart the app after reset.",
@@ -125,6 +136,7 @@
     "deleteLibrary": "Unregister library \"{{name}}\" from the list?\n",
     "resetDb": "Reset database? All metadata will be lost.\n.kicad_sym files on disk are safe.\nRestart the app after.",
     "deleteCompLibrary": "Delete component library \"{{name}}\"? Only removes config, imported data is kept.",
+    "deleteComponentLibraryHint": "Only unregisters this workspace from KiCad Forge.\nNo files on disk are modified or deleted.",
     "deleteLibraryTitle": "Delete library \"{{name}}\"?",
     "deleteLibraryHint": "By default this only removes the library from KiCad Forge.\nCheck the box below to also delete the .kicad_sym file on disk.",
     "deleteLibraryFile": "Also delete the local .kicad_sym file",
@@ -133,12 +145,14 @@
   },
   "status": {
     "filtered": "{{count}} components{{filter}}",
-    "total": "{{count}} total"
+    "total": "{{count}} total",
+    "loadFailed": "Failed to load data: {{error}}"
   },
   "toast": {
     "classifying": "Classifying...",
     "classified": "Classified: {{matched}}/{{total}} matched",
     "noIssues": "No issues found",
+    "loadFailed": "Loading failed — please retry",
     "issuesFound": "{{count}} issue(s) found",
     "matchSuggestions": "{{count}} match suggestion(s)",
     "saved": "Saved — imported {{symbols}} symbols, {{footprints}} footprints",
@@ -146,6 +160,7 @@
     "networkError": "Network error",
     "added": "Added {{name}}",
     "removed": "Removed {{name}}",
+    "typeInUse": "Still referenced by {{count}} component(s) — reclassify them first",
     "fetching": "Fetching {{id}}...",
     "imported": "Imported {{id}}: {{count}} in library",
     "failed": "Failed: {{error}}",

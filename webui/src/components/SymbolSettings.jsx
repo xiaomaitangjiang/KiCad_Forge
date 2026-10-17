@@ -7,7 +7,7 @@ import { Modal } from './Modals'
 // and the 3D model bound to that footprint (KiCad symbol-properties style).
 // Changes are staged (pendingFp / pendingModel) and applied via an explicit
 // confirm button that only appears when something actually changed.
-export default function SymbolSettings({ open, symbol, binding, onClose, onChanged }) {
+export default function SymbolSettings({ open, symbol, binding, onClose, onChanged, toastMsg }) {
   const { t } = useTranslation()
   const [fpQ, setFpQ] = useState('')
   const [fpResults, setFpResults] = useState([])
@@ -59,18 +59,30 @@ export default function SymbolSettings({ open, symbol, binding, onClose, onChang
   }
 
   async function applyChanges() {
+    // 失败时保留待提交的选择（不 setPendingX(null)），用户可以重试或改选
     try {
+      // The footprint id used for the model step must be the NEWLY bound one —
+      // the `binding` prop is stale until onChanged() refreshes it.
+      let fpId = binding?.footprint_id
       if (pendingFp) {
-        await api.bindFootprint(symbol.id, pendingFp.id)
+        const r = await api.bindFootprint(symbol.id, pendingFp.id)
+        if (!r?.ok) { toastMsg(r?.error || t('toast.failedUnknown')); return }
+        const fresh = await api.getBinding(symbol.id).catch(() => null)
+        fpId = fresh?.footprint_id || pendingFp.id
         setPendingFp(null)
       }
       if (pendingModel) {
-        await api.bindModel(binding.footprint_id, pendingModel.id)
+        if (!fpId) { alert(t('inspector.noFootprintFirst')); return }
+        const r = await api.bindModel(fpId, pendingModel.id)
+        if (!r?.ok) { toastMsg(r?.error || t('toast.failedUnknown')); return }
         setPendingModel(null)
       }
       setFpQ(''); setFpResults([]); setModelQ(''); setModelResults([])
       if (onChanged) onChanged()
-    } catch {}
+    } catch (cause) {
+      // 请求层异常（断网/服务端 5xx）不能静默：告诉用户，保留已选内容
+      toastMsg(t('toast.failed', { error: cause?.message || t('toast.failedUnknown') }))
+    }
   }
 
   const locked = !!symbol?.locked

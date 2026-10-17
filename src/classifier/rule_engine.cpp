@@ -52,7 +52,8 @@ struct ConditionEvaluator {
     const core::Component& comp;
 
     bool operator()(const MatchType& c) const {
-        return core::component_type_name(static_cast<int>(comp.type())) == c.type_name;
+        // 规则的 type 字段比较类型 ID（内置 ID 由静态表给出，与注册表顺序无关）
+        return std::string(core::builtin_component_id(comp.type())) == c.type_name;
     }
     bool operator()(const MatchPackage& c) const {
         return RuleEngine::match_glob(c.pattern, "unknown");
@@ -189,11 +190,8 @@ std::vector<ClassificationResult> RuleEngine::evaluate(
             using T = std::decay_t<decltype(cond)>;
 
             if constexpr (std::is_same_v<T, MatchType>) {
-                // Use TypeRegistry for dynamic type name lookup
-                int rule_idx = core::component_type_index(cond.type_name);
-                if (rule_idx < 0) return false;
-                auto rule_type = static_cast<core::ComponentType>(rule_idx);
-                bool m = (effective_type == rule_type);
+                // 比较类型 ID：推断出的内置 ID 与规则里的 ID 相等才算命中
+                bool m = std::string(core::builtin_component_id(effective_type)) == cond.type_name;
                 if (m) {
                     reason = "Name prefix matches type '" + cond.type_name + "'";
                     confidence = 90;
@@ -282,10 +280,8 @@ std::vector<std::vector<ClassificationResult>> RuleEngine::evaluate_batch(
 }
 
 const char* component_type_to_string(core::ComponentType t) {
-    // Cache the string in a thread_local to support returning const char*
-    static thread_local std::string cached;
-    cached = core::component_type_name(static_cast<int>(t));
-    return cached.c_str();
+    // 内置 ID 的静态映射 —— 不再经注册表下标转名字
+    return core::builtin_component_id(t);
 }
 
 }  // namespace kforge::classifier

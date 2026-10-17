@@ -5,18 +5,13 @@
 
 #include "../src/plugin/plugin_manager.h"
 #include "../src/util/platform.h"
+#include "support/test_environment.h"
 
 #include <filesystem>
 #include <fstream>
 #include <memory>
 #include <string>
 #include <vector>
-
-#ifdef _WIN32
-#include <windows.h>
-#else
-#include <unistd.h>
-#endif
 
 #include <spdlog/sinks/null_sink.h>
 #include <spdlog/spdlog.h>
@@ -25,10 +20,6 @@ namespace fs = std::filesystem;
 
 namespace
 {
-fs::path g_tmp;
-fs::path g_scan_a;  // hello/ (valid) + bad/ (missing id) + stray file
-fs::path g_scan_b;  // auto/ — second search path for merge test
-
 void write_file(const fs::path& p, const std::string& content)
 {
     fs::create_directories(p.parent_path());
@@ -54,9 +45,14 @@ const char* MANIFEST_AUTO = R"({
   "one_click": false
 })";
 
-// 全局 fixture：main 前建临时目录 + 写 manifest + 装 null logger，main 后清理。
+// 每个用例独占临时目录，并在结束后恢复默认 logger。
 struct Fixture
 {
+    test_support::TempDirectory temp;
+    test_support::RestoreDefaultLogger restore;
+    fs::path g_tmp = temp.path();
+    fs::path g_scan_a = g_tmp / "scan_a";
+    fs::path g_scan_b = g_tmp / "scan_b";
     Fixture()
     {
         // PluginManager logs during discover/load — must install a default
@@ -66,41 +62,23 @@ struct Fixture
         logger->set_level(spdlog::level::debug);
         spdlog::set_default_logger(logger);
 
-#ifdef _WIN32
-        auto pid = ::GetCurrentProcessId();
-#else
-        auto pid = ::getpid();
-#endif
-        g_tmp = fs::temp_directory_path() / ("kf_plugin_test_" + std::to_string(pid));
-        g_scan_a = g_tmp / "scan_a";
-        g_scan_b = g_tmp / "scan_b";
-        fs::remove_all(g_tmp);
-
         write_file(g_scan_a / "hello" / "manifest.json", MANIFEST_HELLO);
         write_file(g_scan_a / "hello" / "plugin.py", "print(\"ok\")\n");
         write_file(g_scan_a / "bad" / "manifest.json", MANIFEST_BAD);
         write_file(g_scan_a / "stray.txt", "not a plugin\n");
         write_file(g_scan_b / "auto" / "manifest.json", MANIFEST_AUTO);
     }
-    ~Fixture()
-    {
-        fs::remove_all(g_tmp);
-        spdlog::drop_all();
-    }
 };
-// 全局静态：构造在 RUN_ALL_TESTS 前（建目录 + 装 null logger），
-// 析构在所有测试结束后（清理临时目录 + 释放 logger）。
-static Fixture g_fixture;
 }  // namespace
 
-TEST_CASE("nonexistent search path is skipped silently")
+TEST_CASE_FIXTURE(Fixture, "nonexistent search path is skipped silently")
 {
     kforge::plugin::PluginManager pm(std::vector<fs::path>{g_tmp / "does_not_exist"});
     pm.discover();
     CHECK(pm.available_plugins().empty());
 }
 
-TEST_CASE("empty directory")
+TEST_CASE_FIXTURE(Fixture, "empty directory")
 {
     auto empty_dir = g_tmp / "empty";
     fs::create_directories(empty_dir);
@@ -109,7 +87,7 @@ TEST_CASE("empty directory")
     CHECK(pm.available_plugins().empty());
 }
 
-TEST_CASE("valid plugin discovered + manifest fields parsed")
+TEST_CASE_FIXTURE(Fixture, "valid plugin discovered + manifest fields parsed")
 {
     kforge::plugin::PluginManager pm(std::vector<fs::path>{g_scan_a});
     pm.discover();
@@ -124,7 +102,7 @@ TEST_CASE("valid plugin discovered + manifest fields parsed")
     CHECK(found);
 }
 
-TEST_CASE("invalid manifest (missing id) skipped; stray file skipped")
+TEST_CASE_FIXTURE(Fixture, "invalid manifest (missing id) skipped; stray file skipped")
 {
     kforge::plugin::PluginManager pm(std::vector<fs::path>{g_scan_a});
     pm.discover();
@@ -133,7 +111,7 @@ TEST_CASE("invalid manifest (missing id) skipped; stray file skipped")
     CHECK_EQ(avail[0].id, "hello");
 }
 
-TEST_CASE("load / is_loaded / count / plugin_path")
+TEST_CASE_FIXTURE(Fixture, "load / is_loaded / count / plugin_path")
 {
     kforge::plugin::PluginManager pm(std::vector<fs::path>{g_scan_a});
     pm.discover();
@@ -144,7 +122,7 @@ TEST_CASE("load / is_loaded / count / plugin_path")
     CHECK(pm.plugin_path("hello") == g_scan_a / "hello");
 }
 
-TEST_CASE("load idempotent")
+TEST_CASE_FIXTURE(Fixture, "load idempotent")
 {
     kforge::plugin::PluginManager pm(std::vector<fs::path>{g_scan_a});
     pm.discover();
@@ -155,7 +133,7 @@ TEST_CASE("load idempotent")
     CHECK_EQ(pm.count(), 1u);
 }
 
-TEST_CASE("load unknown id → NotFound")
+TEST_CASE_FIXTURE(Fixture, "load unknown id → NotFound")
 {
     kforge::plugin::PluginManager pm(std::vector<fs::path>{g_scan_a});
     pm.discover();
@@ -164,7 +142,7 @@ TEST_CASE("load unknown id → NotFound")
     CHECK(res.error().kind() == kforge::util::Error::Kind::NotFound);
 }
 
-TEST_CASE("unload")
+TEST_CASE_FIXTURE(Fixture, "unload")
 {
     kforge::plugin::PluginManager pm(std::vector<fs::path>{g_scan_a});
     pm.discover();
@@ -175,7 +153,7 @@ TEST_CASE("unload")
     CHECK_EQ(pm.count(), 0u);
 }
 
-TEST_CASE("shutdown_all clears everything and is idempotent")
+TEST_CASE_FIXTURE(Fixture, "shutdown_all clears everything and is idempotent")
 {
     kforge::plugin::PluginManager pm(std::vector<fs::path>{g_scan_a});
     pm.discover();
@@ -187,7 +165,7 @@ TEST_CASE("shutdown_all clears everything and is idempotent")
     CHECK(pm.available_plugins().empty());
 }
 
-TEST_CASE("discover idempotent (no duplicate entries)")
+TEST_CASE_FIXTURE(Fixture, "discover idempotent (no duplicate entries)")
 {
     kforge::plugin::PluginManager pm(std::vector<fs::path>{g_scan_a});
     pm.discover();
@@ -195,20 +173,21 @@ TEST_CASE("discover idempotent (no duplicate entries)")
     CHECK_EQ(pm.available_plugins().size(), 1u);
 }
 
-TEST_CASE("multiple search paths merged")
+TEST_CASE_FIXTURE(Fixture, "multiple search paths merged")
 {
     kforge::plugin::PluginManager pm(std::vector<fs::path>{g_scan_a, g_scan_b});
     pm.discover();
     CHECK_EQ(pm.available_plugins().size(), 2u);
 }
 
-TEST_CASE("create_default smoke")
+// 这两个环境检查访问真实应用路径，需显式 --no-skip 才运行。
+TEST_CASE_FIXTURE(Fixture, "create_default smoke" * doctest::skip())
 {
     auto pm = kforge::plugin::PluginManager::create_default();
     CHECK(pm != nullptr);
 }
 
-TEST_CASE("platform helpers smoke")
+TEST_CASE_FIXTURE(Fixture, "platform helpers smoke" * doctest::skip())
 {
     CHECK_FALSE(kforge::util::get_exe_dir().empty());
     CHECK_FALSE(kforge::util::get_data_dir().empty());

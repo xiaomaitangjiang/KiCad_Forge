@@ -19,14 +19,15 @@ public:
     struct Result {
         std::string symbol_name;
         std::string target_library;
-        std::string type_name;
-        int confidence;
+        std::string type_id;    // 类型身份
+        std::string type_name;  // 展示名
+        int confidence = 0;
     };
 
     struct Summary {
-        int total;
-        int matched;
-        int type_updated;
+        int total = 0;
+        int matched = 0;
+        int type_updated = 0;
         std::vector<Result> results;
     };
 

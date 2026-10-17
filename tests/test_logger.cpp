@@ -4,6 +4,7 @@
 #include <doctest/doctest.h>
 
 #include "../src/util/logger.h"
+#include "support/test_environment.h"
 
 #include <memory>
 #include <string>
@@ -44,8 +45,8 @@ void capture()
 
 struct LoggerFixture
 {
+    test_support::RestoreDefaultLogger restore;
     LoggerFixture() { capture(); }
-    ~LoggerFixture() { spdlog::drop_all(); }
 };
 
 TEST_CASE_FIXTURE(LoggerFixture, "level mapping + payload")

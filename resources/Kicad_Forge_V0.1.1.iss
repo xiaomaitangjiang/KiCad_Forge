@@ -37,6 +37,8 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "{#SourceDir}\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\*.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\webui\*"; DestDir: "{app}\webui"; Flags: ignoreversion recursesubdirs createallsubdirs
+; 类型配置的首次运行种子（可改的副本会写到用户数据目录）
+Source: "{#SourceDir}\config\*"; DestDir: "{app}\config"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; plugins → %APPDATA%/KiCad_Forge/plugins (user-writable)
 Source: "{#SourceDir}\plugins\*"; DestDir: "{userappdata}\KiCad_Forge\plugins"; Flags: ignoreversion recursesubdirs createallsubdirs
 
@@ -45,10 +47,14 @@ Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [UninstallDelete]
-; Runtime-generated data, logs and plugins are not tracked as installed files
-Type: filesandordirs; Name: "{userappdata}\KiCad_Forge"
-Type: filesandordirs; Name: "{app}\config"
+; Uninstall keeps USER DATA by default — the database, user plugins and logs
+; under {userappdata}\KiCad_Forge are intentionally NOT deleted (uninstalling
+; must never destroy a component library index by accident). To remove them,
+; delete the folder manually after uninstalling.
+;
+; Only app-local runtime leftovers are cleaned up here.
 Type: filesandordirs; Name: "{app}\data"
+
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent

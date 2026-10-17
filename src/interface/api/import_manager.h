@@ -13,8 +13,6 @@
 #include "util/config_store.h"
 #include "util/service_runtime.hpp"
 
-struct sqlite3;
-
 namespace kforge::api {
 
 class ImportOrchestrator;
@@ -27,7 +25,7 @@ public:
 
     ImportManager() = default;  // 右值槽：build 内初始化
     ImportManager(ImportManager&&) = default;  // 自定义析构抑制隐式移动，显式恢复
-    ImportManager(sqlite3* db, util::ConfigStore* config);
+    ImportManager(storage::Database& db, util::ConfigStore* config);
     ~ImportManager();
 
     // Launcher 服务接口
@@ -54,7 +52,7 @@ public:
     void clear_imported_files_cache();
 
 private:
-    sqlite3* db_{nullptr};
+    storage::Database* db_{nullptr};
     util::ConfigStore* config_{nullptr};
     std::unique_ptr<ImportOrchestrator> orch_;
 };

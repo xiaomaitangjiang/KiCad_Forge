@@ -93,12 +93,19 @@ ApiServer::ApiServer(ApiServer&& other) noexcept
       config_(other.config_),
       import_manager_(other.import_manager_),
       shutting_down_(false),   // atomic 不可移动 —— 标量重置
-      last_heartbeat_(0)
+      last_heartbeat_(0),
+      closed_(other.closed_)
 {
+    other.closed_ = true;  // moved-from: destructor must not touch moved-out state
 }
 ApiServer::~ApiServer()
 {
-    // 幂等兜底：launcher destroy 已调 shutdown；析构再调一次无害
+    // launcher destroy()/move 已完成 — dependencies may already be gone,
+    // do NOT touch anything (static store destruction order is unspecified)
+    if (closed_)
+    {
+        return;
+    }
     try
     {
         shutdown();
@@ -125,6 +132,7 @@ util::Result<void> ApiServer::destroy()
 {
     auto& self = kforge::launcher::util::instance_store<ApiServer>().value();
     self.shutdown();
+    self.closed_ = true;  // mark before dependencies (other stores) are torn down
     return {};
 }
 
@@ -208,6 +216,12 @@ util::Result<void> ApiServer::init(storage::DbService& db, util::ConfigStore* cf
             });
     }
     kforge::util::log_info{}("Server bound to 127.0.0.1:{}", port_);
+
+    // Expose the host API to plugin subprocesses (search APIs etc.)
+    if (plugins_)
+    {
+        plugins_->set_api_port(port_);
+    }
     return {};
 }
 
@@ -221,6 +235,11 @@ void ApiServer::wait()
 // 停 HTTP 服务与线程；依赖的导入/插件由各自服务销毁（此处仅作为 ApiServer 依赖的连带停止）
 void ApiServer::shutdown()
 {
+    // Launcher stops the server before its dependencies and logger are destroyed.
+    // A later static-store destructor must not touch those expired dependencies.
+    if (!srv_ || stopped_.exchange(true))
+        return;
+
     kforge::util::log_info{}("Shutdown: stopping plugins...");
     if (plugins_)
     {
@@ -326,14 +345,14 @@ void ApiServer::serve_plugin_icon(const std::filesystem::path& plugin_dir,
 void ApiServer::setup_routes()  // NOLINT(readability-function-cognitive-complexity)
 {
     // ---- Route groups (extracted to src/api/routes.cpp) ----
-    register_library_routes(*srv_, db_->handle(),
+    register_library_routes(*srv_, *db_,
                             import_manager_ ? import_manager_->orchestrator() : nullptr);
-    register_symbol_routes(*srv_, db_->handle());
-    register_plugin_routes(*srv_, plugins_);
-    register_settings_routes(*srv_, db_->handle(), import_manager_, config_);
-    register_type_routes(*srv_, db_->handle());
-    register_status_routes(*srv_, db_->handle());
-    register_classify_routes(*srv_, db_->handle(), import_manager_);
+    register_symbol_routes(*srv_, *db_);
+    register_plugin_routes(*srv_, plugins_, *db_);
+    register_settings_routes(*srv_, *db_, import_manager_, config_);
+    register_type_routes(*srv_, *db_);
+    register_status_routes(*srv_, *db_);
+    register_classify_routes(*srv_, *db_, import_manager_);
 
     // ---- Heartbeat + import status (need ApiServer internals) ----
     srv_->Get("/api/status",
@@ -342,11 +361,19 @@ void ApiServer::setup_routes()  // NOLINT(readability-function-cognitive-complex
                  last_heartbeat_.store(std::chrono::steady_clock::now().time_since_epoch().count(),
                                        std::memory_order_relaxed);
                  json j;
-                 storage::SymbolRepository sr(db_->handle());
-                 j["symbols"] = sr.count();
-                 storage::FootprintRepository fr(db_->handle());
-                 j["footprints"] = fr.count();
                  j["ok"] = true;
+                 // 心跳不能被长事务拖住：限时取会话，拿不到就只回存活
+                 if (auto session = db_->try_session(std::chrono::milliseconds(250)))
+                 {
+                     storage::SymbolRepository sr(*session);
+                     j["symbols"] = sr.count();
+                     storage::FootprintRepository fr(*session);
+                     j["footprints"] = fr.count();
+                 }
+                 else
+                 {
+                     j["busy"] = true;
+                 }
                  r.set_content(j.dump(), "application/json");
              });
 
@@ -355,12 +382,15 @@ void ApiServer::setup_routes()  // NOLINT(readability-function-cognitive-complex
              {
                  json j;
                  j["importing"] = import_manager_ ? import_manager_->is_running() : false;
-                 storage::SymbolRepository sr(db_->handle());
-                 j["symbols"] = sr.count();
-                 storage::FootprintRepository fr(db_->handle());
-                 j["footprints"] = fr.count();
-                 storage::Model3DRepository mr(db_->handle());
-                 j["models"] = mr.count();
+                 if (auto session = db_->try_session(std::chrono::milliseconds(250)))
+                 {
+                     storage::SymbolRepository sr(*session);
+                     j["symbols"] = sr.count();
+                     storage::FootprintRepository fr(*session);
+                     j["footprints"] = fr.count();
+                     storage::Model3DRepository mr(*session);
+                     j["models"] = mr.count();
+                 }
                  r.set_content(j.dump(), "application/json");
              });
 
@@ -393,6 +423,7 @@ void ApiServer::setup_routes()  // NOLINT(readability-function-cognitive-complex
                           json o;
                           o["name"] = res.symbol_name;
                           o["library"] = res.target_library;
+                          o["type_id"] = res.type_id;
                           o["type"] = res.type_name;
                           o["confidence"] = res.confidence;
                           arr.push_back(o);

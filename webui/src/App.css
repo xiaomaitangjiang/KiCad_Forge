@@ -199,8 +199,50 @@
 .toolbar input::placeholder { color: var(--text3); }
 .sep { width: 1px; height: 22px; background: var(--sep); flex-shrink: 0; }
 
+/* ---- Narrow windows: the search field must stay visible ----
+   Side panels shrink first, secondary actions drop their labels, then the
+   status counters fold away. */
+@media (max-width: 1024px) {
+  .sidebar { width: 188px; min-width: 188px; }
+  .inspector { width: 236px; min-width: 236px; }
+}
+@media (max-width: 880px) {
+  .sidebar { width: 156px; min-width: 156px; }
+  .inspector { width: 198px; min-width: 198px; }
+  .toolbar { padding: 8px 10px; gap: 6px; }
+  .toolbar button span { display: none; }      /* icon-only actions */
+  .toolbar-status { display: none; }
+  .toolbar input { max-width: none; flex: 1 1 auto; min-width: 120px; }
+  .symbol-fp { max-width: 140px; }
+}
+
 /* Table */
 .content { flex: 1; overflow: auto; }
+
+/* ---- Component card list (one card per symbol) ---- */
+.symbol-list { display: flex; flex-direction: column; gap: 6px; padding: 8px; }
+.symbol-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--sep);
+  border-radius: 8px;
+  background: var(--card);
+  cursor: pointer;
+  transition: border-color .12s, background .12s;
+}
+.symbol-card:hover { border-color: var(--accent); }
+.symbol-card.selected { border-color: var(--accent); background: var(--accent2); }
+.symbol-status { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+.symbol-status.ok { background: var(--green); }
+.symbol-status.warn { background: var(--orange); }
+.symbol-status.bad { background: var(--red); }
+.symbol-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.symbol-name { font-size: 12.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.symbol-sub { display: flex; gap: 10px; min-width: 0; }
+.symbol-fp { font-family: var(--mono); font-size: 11px; color: var(--text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.symbol-meta { font-family: var(--mono); font-size: 11px; color: var(--text3); flex: 0 0 auto; }
 table { width: 100%; border-collapse: collapse; table-layout: fixed; }
 th {
   position: sticky;

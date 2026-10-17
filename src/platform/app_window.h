@@ -1,5 +1,5 @@
 // Cross-platform app window — CRTP for compile-time dispatch.
-// Windows: WebView2 via webview library | macOS: WKWebView | Linux: GTK WebKit
+// Windows: embedded WebView2 | macOS / Linux: system browser
 #pragma once
 
 #include "../util/logger.h"
@@ -15,6 +15,12 @@
 #include <utility>
 #include <vector>
 
+#if defined(__APPLE__) || defined(__linux__)
+#include <csignal>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
+
 #ifdef _WIN32
 // Prevent MinGW's eventtoken.h from defining EventRegistrationToken
 // inside extern "C" — webview library needs it in global C++ namespace.
@@ -24,6 +30,7 @@ struct EventRegistrationToken { INT64 value; };
 #include <windows.h>
 #include <shellapi.h>
 #include <shlobj.h>
+#include "webview/webview.h"
 #endif
 
 namespace kforge::platform
@@ -74,13 +81,11 @@ protected:
 // ============================================================
 #if defined(__APPLE__) || defined(__linux__)
 
-#include <sys/wait.h>
-#include <unistd.h>
-
 class UnixBrowserWindow : public AppWindow<UnixBrowserWindow>
 {
 public:
-    using AppWindow::AppWindow;
+    explicit UnixBrowserWindow(WindowConfig cfg) : AppWindow(std::move(cfg)) {}
+    using AppWindow::monitor;
 
     bool open()
     {
@@ -111,6 +116,9 @@ public:
         }
     }
 
+    /// 外部浏览器进程：拿不到窗口状态，一律按「可见」处理
+    [[nodiscard]] bool is_minimized() const { return false; }
+
 private:
     pid_t pid_{-1};
 };
@@ -123,8 +131,6 @@ using NativeWindow = UnixBrowserWindow;
 // Windows: WebView2 via webview library
 // ============================================================
 #ifdef _WIN32
-
-#include "webview/webview.h"
 
 class WinWebView2Window : public AppWindow<WinWebView2Window>
 {
@@ -175,6 +181,16 @@ public:
         }
     }
 
+    /// 窗口最小化时不判心跳超时：WebView 会节流页面定时器，
+    /// 稀疏心跳属于正常现象（生命周期由原生关闭事件掌握）
+    [[nodiscard]] bool is_minimized() const
+    {
+        if (!w_)
+            return false;
+        HWND hwnd = static_cast<HWND>(webview_get_window(w_));
+        return hwnd != nullptr && IsIconic(hwnd) != 0;
+    }
+
     template <typename F>
     void monitor(F&& is_alive)
     {
@@ -182,7 +198,7 @@ public:
 
         // Heartbeat monitor runs on a background thread — webview_run() blocks
         std::thread monitor_thread(
-            [this](F is_alive_copy)
+            [this, is_alive_copy = std::forward<F>(is_alive)]
             {
                 // Wait for the first heartbeat (window may still be opening)
                 auto deadline = steady_clock::now() + seconds(30);
@@ -191,19 +207,29 @@ public:
                     std::this_thread::sleep_for(milliseconds(200));
                 }
                 // Poll: exit as soon as the window is gone (webview_run has
-                // returned — see window_closed_ below) or the heartbeat is
-                // lost (frontend crashed/hung without closing the window).
+                // returned — see window_closed_ below) or the frontend stops
+                // responding while the window is still open (crash/hang).
+                // 判死策略见 util/lifecycle.h：最小化时不做心跳判死。
                 while (!window_closed_ && is_alive_copy())
                 {
                     std::this_thread::sleep_for(milliseconds(200));
                 }
                 if (!window_closed_)
                 {
-                    kforge::util::log_info{}("webview: heartbeat lost, terminating...");
-                    webview_terminate(w_);
+                    kforge::util::log_info{}(
+                        "webview: frontend stopped responding, terminating (window still open)");
+                    // webview_terminate posts WM_QUIT to the CALLING thread's
+                    // queue — dispatch it onto the UI thread, otherwise the
+                    // main thread's webview_run loop never exits.
+                    webview_dispatch(
+                        w_,
+                        [](webview_t w, void*)
+                        {
+                            webview_terminate(w);
+                        },
+                        nullptr);
                 }
-            },
-            std::forward<F>(is_alive));
+            });
 
         webview_run(w_);  // returns when the window is closed
         // Wake the monitor thread so join() below returns promptly — without

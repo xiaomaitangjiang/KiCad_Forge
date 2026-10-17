@@ -1,12 +1,26 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api'
 
 // ---- Generic Modal shell ----
+// Dialog semantics + keyboard flow: Escape closes, focus moves into the
+// dialog on open and returns to the trigger on close.
 export function Modal({ title, children, onClose }) {
+  const ref = useRef(null)
+  useEffect(() => {
+    const previous = document.activeElement
+    const first = ref.current?.querySelector('input, select, textarea, button')
+    ;(first || ref.current)?.focus?.()
+    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose() } }
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      previous?.focus?.()
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <div className="modal-overlay show" onClick={e => { if (e.target === e.currentTarget) onClose() }}>
-      <div className="modal">
+      <div className="modal" ref={ref} role="dialog" aria-modal="true" aria-label={title} tabIndex={-1}>
         <div className="modal-header">
           <h3>{title}</h3>
           <button className="modal-close" onClick={onClose}>
@@ -20,7 +34,7 @@ export function Modal({ title, children, onClose }) {
 }
 
 // ---- Settings Modal ----
-export function SettingsModal({ settings, setSettings, compLibraries, setCompLibraries, loadCompLibraries, onClose, loadSymbols, loadStatus, toastMsg, showConfirm, onRequestDelete }) {
+export function SettingsModal({ settings, setSettings, compLibraries, setCompLibraries, loadCompLibraries, onClose, loadSymbols, loadStatus, toastMsg, showConfirm, onRequestDelete, onOpenTool }) {
   const [tab, setTab] = useState('paths')
   const [editingId, setEditingId] = useState(null)  // which library is being edited
   const [draftName, setDraftName] = useState('')
@@ -52,8 +66,9 @@ export function SettingsModal({ settings, setSettings, compLibraries, setCompLib
   // Remove (unregister) a component library from the DB. Locked libraries
   // can also be removed — this only clears the DB registration and does NOT
   // touch the user's local .kicad_sym files on disk.
-  // Two-step via DeleteLibraryModal: default DB-only, opt-in to also delete file
-  const removeLib = (lib) => { onRequestDelete(lib) }
+  // Two-step via DeleteLibraryModal. This entry removes a *component*
+  // library (registration only — no files are touched).
+  const removeLib = (lib) => { onRequestDelete({ kind: 'component', lib }) }
 
   // Toggle library lock; official KiCad libs cannot be unlocked
   const toggleLock = async (lib) => {
@@ -179,6 +194,23 @@ export function SettingsModal({ settings, setSettings, compLibraries, setCompLib
             </div>
           </>:<>
             <div style={{display:'flex',flexDirection:'column',gap:12}}>
+              {/* Tool entries — moved here from the sidebar */}
+              {onOpenTool && (
+                <UtilBox title={t('settings.tools')} desc="">
+                  <div style={{display:'flex',flexWrap:'wrap',gap:8}}>
+                    {[
+                      ['rules', t('sidebar.rules')],
+                      ['plugins', t('sidebar.plugins')],
+                      ['compTypes', t('sidebar.componentTypesMenu')],
+                      ['pkgTypes', t('sidebar.packageTypes')],
+                    ].map(([key, label]) => (
+                      <button key={key} className="btn-ghost"
+                        style={{padding:'6px 14px',fontSize:12,border:'1px solid var(--sep)',borderRadius:6}}
+                        onClick={() => { onClose(); onOpenTool(key) }}>{label}</button>
+                    ))}
+                  </div>
+                </UtilBox>
+              )}
               <UtilBox title={t('settings.resetDb')} desc={t('settings.resetDbHint')}>
                 <button style={{padding:'6px 14px',border:'1px solid var(--red)',borderRadius:6,color:'var(--red)',background:'transparent',cursor:'pointer'}}
                   onClick={async()=>{if(!(await showConfirm(t('confirm.resetDb'))))return;const r=await api.resetDb();toastMsg(r?.ok?r.message:'Reset failed')}}>{t('settings.resetDbButton')}</button>
@@ -244,8 +276,17 @@ export function RulesModal({ rules, onClose }) {
 }
 
 // ---- Plugins Modal ----
-export function PluginsModal({ plugins, onClose }) {
+export function PluginsModal({ plugins, onClose, setPluginAction, setPluginFormData, loadLibraries, targetLib }) {
   const { t } = useTranslation()
+  const runAction = (p, a) => {
+    if (!setPluginAction) return
+    loadLibraries?.()
+    // Pre-fill target_library for inline actions (mirrors the sidebar/toolbar)
+    const prefill = a.trigger === 'inline' ? { target_library: targetLib || '' } : {}
+    setPluginAction({ plugin: p, action: a })
+    setPluginFormData(prefill)
+    onClose()
+  }
   return (
     <Modal title={t('sidebar.plugins')} onClose={onClose}>
       {plugins.map((p,i)=>(
@@ -258,6 +299,17 @@ export function PluginsModal({ plugins, onClose }) {
             <div className="plugin-name">{p.name}</div>
             <div className="plugin-meta">{p.id} · v{p.version} · <span className={`status-${p.status}`}>{p.status}</span></div>
             {p.description && <div className="plugin-meta" style={{marginTop:2}}>{p.description}</div>}
+            {/* All plugin actions are reachable here — including ones hidden
+                from the sidebar (button.show:false) */}
+            {(p.actions || []).length > 0 && (
+              <div style={{display:'flex',flexWrap:'wrap',gap:6,marginTop:8}}>
+                {p.actions.map(a => (
+                  <button key={a.id} className="btn-ghost" title={a.description}
+                    style={{padding:'3px 10px',fontSize:11}}
+                    onClick={() => runAction(p, a)}>{a.name}</button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       ))}
@@ -279,11 +331,11 @@ export function TypeModal({ title, items, onClose, onAdd, onRemove, showIcon, sh
   return (
     <Modal title={title} onClose={onClose}>
       <div className="rules-list" style={{maxHeight:350,overflow:'auto'}}>
-        {items.map((t,i)=>(<div key={i} className="rule-item">
+        {items.map((t,i)=>(<div key={t.id || i} className="rule-item">
           {showIcon&&<span style={{fontSize:16,width:24}}>{t.icon||'○'}</span>}
           <span className="rule-name">{t.name}</span>
           {showCategory&&<span style={{fontSize:11,color:'var(--text2)'}}>{t.category}</span>}
-          <button className="btn-ghost" style={{padding:'3px 10px',fontSize:11,color:'var(--red)'}} onClick={()=>onRemove(t.name)}>×</button>
+          <button className="btn-ghost" style={{padding:'3px 10px',fontSize:11,color:'var(--red)'}} onClick={()=>onRemove(t)}>×</button>
         </div>))}
       </div>
       <div style={{display:'flex',gap:8,marginTop:16}}>
@@ -301,27 +353,184 @@ export function TypeModal({ title, items, onClose, onAdd, onRemove, showIcon, sh
 }
 
 // ---- Plugin Action Modal ----
-export function PluginActionModal({ pluginAction, setPluginAction, pluginFormData, setPluginFormData, libraries, toastMsg, loadSymbols, loadLibraries, loadStatus }) {
+export function PluginActionModal({ pluginAction, setPluginAction, pluginFormData, setPluginFormData, libraries, toastMsg, loadSymbols, loadLibraries, loadStatus, activeWorkspace }) {
   const { t } = useTranslation()
-  if (!pluginAction) return null
-  const { plugin, action } = pluginAction
-  const fields = action.schema?.fields || []
+  // two_step template state (analyze → pick → import). Hooks must run before any early return.
+  const [analyzeResult, setAnalyzeResult] = useState(null)
+  const [analyzing, setAnalyzing] = useState(false)
+  const [fpQuery, setFpQuery] = useState('')
+  const [fpResults, setFpResults] = useState([])
+  const [fpChoice, setFpChoice] = useState(null)   // {mode:'reuse',library,name} | {mode:'new'}
+  const [preflight, setPreflight] = useState(null) // context shown on dialog open (e.g. git status)
+  const action = pluginAction?.action
+  const fields = action?.schema?.fields || []
+  const isTwoStep = action?.template === 'two_step'
 
-  // Auto-execute inline actions with no form fields
+  // Host-filled args (no user prompt): e.g. target_library = active workspace path
+  function autoArgs() {
+    const out = {}
+    for (const k of (action?.auto_args || [])) {
+      if (k === 'target_library' && activeWorkspace?.symbol_path) out.target_library = activeWorkspace.symbol_path
+    }
+    return out
+  }
+
+  // Fresh session per open — no state may leak from a previous dialog
   useEffect(() => {
-    if (action.trigger === 'inline' && fields.length === 0) execute()
-  }, []) // eslint-disable-line
+    setAnalyzeResult(null)
+    setAnalyzing(false)
+    setFpQuery(''); setFpResults([]); setFpChoice(null)
+    setPreflight(null)
+  }, [pluginAction])
+
+  // Auto-execute inline actions with no form fields (depends on the dialog
+  // actually opening — not just on first mount)
+  useEffect(() => {
+    if (pluginAction && action?.trigger === 'inline' && fields.length === 0) execute()
+  }, [pluginAction]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Context preflight: run the declared action on open and show its result
+  useEffect(() => {
+    if (!pluginAction || !action?.preflight) return
+    let stale = false
+    api.executePlugin(pluginAction.plugin.id, { action: action.preflight, ...autoArgs() })
+      .then(r => { if (!stale && r?.ok) setPreflight(r.plugin_result) })
+      .catch(() => {})
+    return () => { stale = true }
+  }, [pluginAction]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (!pluginAction) return null
+  const { plugin } = pluginAction
 
   async function execute() {
     for (const f of fields) { if (f.required && !pluginFormData[f.key]?.trim()) { toastMsg(t('toast.required', { label: f.label })); return } }
     setPluginAction(null); toastMsg(t('toast.executing'))
-    const body = { action: action.id, ...pluginFormData }
-    if (body.target_library) { const lib = libraries.find(l => l.id === body.target_library); if (lib) body.target_library = lib.file_path || body.target_library }
+    const body = { action: action.id, ...pluginFormData, ...autoArgs() }
+    // 宿主按 UUID 认目标库；路径只作为旧插件的兼容参数
+    if (body.target_library) {
+      const lib = libraries.find(l => l.id === body.target_library)
+      if (lib) { body.target_library_id = lib.id; body.target_library = lib.file_path || body.target_library }
+    }
     const r = await api.executePlugin(plugin.id, body)
     if (r?.ok) {
       toastMsg(r.output || t('toast.done', { count: (r.imported_symbols||0) || (r.library_symbols||0) || '' }))
       loadSymbols(); loadLibraries(); loadStatus()
     } else toastMsg(t('toast.failed', { error: r?.error || 'unknown' }))
+  }
+
+  // ---- two_step: analyze (no library write) → pick footprint → import ----
+  async function runAnalyze() {
+    if (!pluginFormData.lcsc_id?.trim()) { toastMsg(t('toast.required', { label: 'lcsc_id' })); return }
+    setAnalyzing(true)
+    try {
+      const r = await api.executePlugin(plugin.id, { action: action.analyze_action || 'analyze', ...autoArgs(), lcsc_id: pluginFormData.lcsc_id })
+      const out = r?.plugin_result
+      if (r?.ok && out?.footprint_name !== undefined) {
+        setAnalyzeResult(out)
+        setFpQuery(out.footprint_name || '')
+        const cands = Array.isArray(out.candidates) ? out.candidates : []
+        setFpResults(cands)
+        // Default-select the most similar existing footprint (top1), else "new"
+        setFpChoice(cands.length ? { mode: 'reuse', library: cands[0].library, name: cands[0].name } : { mode: 'new' })
+      } else toastMsg(t('toast.failed', { error: r?.error || 'analyze failed' }))
+    } finally { setAnalyzing(false) }
+  }
+
+  async function searchFootprints(q) {
+    setFpQuery(q)
+    try { const r = await api.searchFootprints(q, ''); setFpResults(r || []) } catch { setFpResults([]) }
+  }
+
+  async function runImport() {
+    if (!pluginFormData.lcsc_id?.trim()) { toastMsg(t('toast.required', { label: 'lcsc_id' })); return }
+    if (!pluginFormData.target_library?.trim()) { toastMsg(t('toast.required', { label: 'target_library' })); return }
+    setPluginAction(null); toastMsg(t('toast.executing'))
+    const body = { action: 'import', ...pluginFormData, ...autoArgs(), footprint_choice: fpChoice || { mode: 'new' } }
+    const lib = libraries.find(l => l.id === body.target_library)
+    if (lib) { body.target_library_id = lib.id; body.target_library = lib.file_path || body.target_library }
+    const r = await api.executePlugin(plugin.id, body)
+    if (r?.ok) {
+      const out = r.plugin_result || {}
+      const reused = out.mode === 'reuse'
+      toastMsg(t(reused ? 'plugin.footprintReused' : 'plugin.footprintNew',
+                 { name: out.footprint_reference || out.reused_from || '' }))
+      loadSymbols(); loadLibraries(); loadStatus()
+    } else toastMsg(t('toast.failed', { error: r?.error || 'unknown' }))
+  }
+
+  if (isTwoStep) {
+    const simpleFields = fields.filter(f => f.type !== 'search_picker')
+    const picker = fields.find(f => f.type === 'search_picker')
+    return (
+      <Modal title={action.name} onClose={() => setPluginAction(null)}>
+        {/* Step 1 — inputs */}
+        {simpleFields.map(f => (
+          <div key={f.key} className="form-group">
+            <label>{f.label}{f.required ? ' *' : ''}</label>
+            {f.type === 'library_picker' ? (
+              <select value={pluginFormData[f.key]||''} onChange={e => setPluginFormData({...pluginFormData,[f.key]:e.target.value})}
+                style={{width:'100%',padding:'8px 12px',border:'1px solid var(--sep)',borderRadius:7,fontSize:12.5,background:'var(--bg)',color:'var(--text)'}}>
+                <option value="">{t('plugin.select')}</option>
+                {libraries.map(l => <option key={l.id} value={l.id}>{l.name} ({l.symbol_count||0})</option>)}
+              </select>) : (
+              <input value={pluginFormData[f.key]||''} onChange={e => setPluginFormData({...pluginFormData,[f.key]:e.target.value})}
+                placeholder={f.key} onKeyDown={e => { if (e.key === 'Enter') runAnalyze() }} />
+            )}
+          </div>
+        ))}
+        <div className="btn-row" style={{marginBottom:12}}>
+          <button className="btn-ghost" onClick={() => setPluginAction(null)}>{t('plugin.cancel')}</button>
+          <button className="btn-primary" disabled={analyzing} onClick={runAnalyze}
+            title={t('plugin.analyzeTooltip')}>
+            {analyzing ? '…' : t('plugin.analyze')}
+          </button>
+        </div>
+
+        {/* Step 2 — footprint picker: always visible; Analyze fills it with
+            similarity-ranked candidates, manual search also works */}
+        {picker && (
+          <div className="form-group">
+            <label>{picker.label}</label>
+            {analyzeResult?.symbol_names?.length > 0 && (
+              <p style={{fontSize:11,color:'var(--text2)',margin:'0 0 6px 0'}}>
+                {analyzeResult.symbol_names.join(', ')}
+                {analyzeResult.model_name ? ` · 3D: ${analyzeResult.model_name}` : ''}
+              </p>
+            )}
+            {!analyzeResult && (
+              <p style={{fontSize:11,color:'var(--text3)',margin:'0 0 6px 0'}}>
+                {t('plugin.analyzeHint')}
+              </p>
+            )}
+            <input value={fpQuery} onChange={e => searchFootprints(e.target.value)}
+              placeholder={t('inspector.searchFootprint')} />
+            <div style={{maxHeight:220,overflow:'auto',border:'1px solid var(--sep)',borderRadius:6,marginTop:6}}>
+              <div className="search-popover-item"
+                style={{background: fpChoice?.mode === 'new' ? 'var(--accent2)' : 'transparent'}}
+                onClick={() => setFpChoice({ mode: 'new' })}>
+                <span className="search-popover-name">{t('plugin.newFootprint')}</span>
+              </div>
+              {fpResults.map(r => {
+                const chosen = fpChoice?.mode === 'reuse' && fpChoice.name === r.name
+                return (
+                  <div key={r.id || r.name} className="search-popover-item"
+                    style={{background: chosen ? 'var(--accent2)' : 'transparent'}}
+                    onClick={() => setFpChoice({ mode: 'reuse', library: r.library, name: r.name })}>
+                    <span className="search-popover-name">{r.library ? `${r.library}:${r.name}` : r.name}</span>
+                    {r.score != null && <span className="search-popover-extra">{Math.round(r.score * 100)}%</span>}
+                    {r.pad_count != null && <span className="search-popover-extra">{r.pad_count}p</span>}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+        <div className="btn-row">
+          <button className="btn-ghost" onClick={() => setPluginAction(null)}>{t('plugin.cancel')}</button>
+          <button className="btn-primary" onClick={runImport}>{t('plugin.execute')}</button>
+        </div>
+      </Modal>
+    )
   }
 
   // Inline with no fields — just show a brief executing modal
@@ -333,6 +542,23 @@ export function PluginActionModal({ pluginAction, setPluginAction, pluginFormDat
 
   return (
     <Modal title={action.name} onClose={() => setPluginAction(null)}>
+      {/* Preflight context (e.g. git branch / last commit / changes) */}
+      {preflight && (
+        <div style={{ padding:'8px 10px', border:'1px solid var(--sep)', borderRadius:6,
+                      marginBottom:12, fontSize:11.5, lineHeight:1.7 }}>
+          {preflight.initialized ? (
+            <>
+              <div>🌿 <b>{preflight.branch}</b>{preflight.ahead ? ` · ${preflight.ahead} ahead` : ''}</div>
+              <div style={{color:'var(--text2)'}}>{preflight.last_commit}</div>
+              <div style={{color: preflight.changes === 'clean' ? 'var(--green)' : 'var(--orange)'}}>
+                {preflight.changes}
+              </div>
+            </>
+          ) : (
+            <div style={{color:'var(--orange)'}}>{t('plugin.noGitRepo')}</div>
+          )}
+        </div>
+      )}
       {fields.map(f => (
         <div key={f.key} className="form-group">
           <label>{f.label}{f.required ? ' *' : ''}</label>
@@ -539,36 +765,42 @@ function fmtConfidence(c) {
 }
 
 // ---- Two-step Delete Library Confirmation ----
-// Default: removes the library from KiCad Forge only (DB unregister).
-// Tick "Also delete local file" to escalate to fs::remove of .kicad_sym.
-export function DeleteLibraryModal({ lib, onClose, onConfirm }) {
+// request.kind: 'symbol'    → symbol library (.kicad_sym); unregister by
+//                             default, opt-in checkbox removes the file
+//               'component' → component library (workspace registration);
+//                             never touches any file
+export function DeleteLibraryModal({ request, onClose, onConfirm }) {
   const { t } = useTranslation()
   const [deleteFile, setDeleteFile] = useState(false)
+  const { kind, lib } = request
+  const isSymbol = kind === 'symbol'
   return (
     <Modal title={t('confirm.deleteLibraryTitle', { name: lib.name })} onClose={onClose}>
       <p style={{ fontSize: 12, color: 'var(--text2)', margin: '0 0 12px 0', whiteSpace: 'pre-line' }}>
-        {t('confirm.deleteLibraryHint')}
+        {isSymbol ? t('confirm.deleteLibraryHint') : t('confirm.deleteComponentLibraryHint')}
       </p>
-      <label style={{
-        display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer',
-        fontSize: 12, padding: '8px 10px', border: '1px solid var(--sep)', borderRadius: 6,
-        background: deleteFile ? 'rgba(220,38,38,0.08)' : 'transparent'
-      }}>
-        <input type="checkbox" checked={deleteFile}
-          onChange={e => setDeleteFile(e.target.checked)} style={{ marginTop: 2 }} />
-        <span>
-          {t('confirm.deleteLibraryFile')}
-          {lib.file_path && (
-            <span style={{
-              display: 'block', fontSize: 10, color: 'var(--text3)',
-              wordBreak: 'break-all', marginTop: 2
-            }}>
-              {lib.file_path}
-            </span>
-          )}
-        </span>
-      </label>
-      {deleteFile && (
+      {isSymbol && (
+        <label style={{
+          display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer',
+          fontSize: 12, padding: '8px 10px', border: '1px solid var(--sep)', borderRadius: 6,
+          background: deleteFile ? 'rgba(220,38,38,0.08)' : 'transparent'
+        }}>
+          <input type="checkbox" checked={deleteFile}
+            onChange={e => setDeleteFile(e.target.checked)} style={{ marginTop: 2 }} />
+          <span>
+            {t('confirm.deleteLibraryFile')}
+            {lib.file_path && (
+              <span style={{
+                display: 'block', fontSize: 10, color: 'var(--text3)',
+                wordBreak: 'break-all', marginTop: 2
+              }}>
+                {lib.file_path}
+              </span>
+            )}
+          </span>
+        </label>
+      )}
+      {isSymbol && deleteFile && (
         <p style={{ fontSize: 11, color: 'var(--red)', margin: '8px 0 0 0' }}>
           ⚠ {t('confirm.deleteLibraryFileWarning')}
         </p>
@@ -578,7 +810,7 @@ export function DeleteLibraryModal({ lib, onClose, onConfirm }) {
       }}>
         <button className="btn-ghost" onClick={onClose}>{t('plugin.cancel')}</button>
         <button className="btn-primary" style={{ background: 'var(--red)' }}
-          onClick={() => onConfirm(deleteFile)}>
+          onClick={() => onConfirm(isSymbol ? deleteFile : false)}>
           {t('confirm.deleteLibraryOk')}
         </button>
       </div>

@@ -5,21 +5,25 @@
 #include "interface/api/api_server.h"
 #include "interface/api/import_orchestrator.h"
 #include "interface/api/routes.h"
+#include "interface/api/staged_import.h"
 #include "interface/service/classification/service.h"
 #include "interface/service/correspondence/service.h"
 #include "interface/service/import/pipeline.h"
 #include "interface/service/library/binding.h"
 #include "interface/service/library/service.h"
+#include "interface/service/library/source_policy.h"
 #include "platform/folder_dialog.h"
 #include "plugin/plugin_manager.h"
 #include "util/config_store.h"
 #include "util/logger.h"
 #include "util/result.h"
 
+#include <algorithm>
 #include <memory>
 #include <mutex>
 #include <nlohmann/json.hpp>
 #include <sqlite3.h>
+#include <string>
 #include <unordered_map>
 
 using json = nlohmann::json;
@@ -27,32 +31,79 @@ using json = nlohmann::json;
 namespace kforge::api
 {
 
+// ---- Search helpers ----
+
+// Execute a statement with one bound text parameter (?1) — no string splicing.
+// Returns false and fills `error` on failure.
+inline bool exec_param(sqlite3* db, const char* sql, const std::string& param,
+                       std::string& error)
+{
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK)
+    {
+        error = sqlite3_errmsg(db);
+        return false;
+    }
+    sqlite3_bind_text(stmt, 1, param.c_str(), -1, SQLITE_TRANSIENT);
+    int rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    if (rc != SQLITE_DONE)
+    {
+        error = sqlite3_errmsg(db);
+        return false;
+    }
+    return true;
+}
+
+// Clamped "limit" query param (1..500); returns default when absent/invalid.
+inline int param_limit(const httplib::Request& req, int default_limit)
+{
+    auto v = req.get_param_value("limit");
+    if (v.empty())
+    {
+        return default_limit;
+    }
+    try
+    {
+        return std::clamp(std::stoi(v), 1, 500);
+    }
+    catch (const std::exception&)
+    {
+        return default_limit;
+    }
+}
+
 // ---- In-memory index holder: rebuilt when an import has finished, so
 // footprints/models imported after process start become searchable.
 // Defined at namespace scope so its static instance can outlive any local
 // lambda capture and survive the static-init order issues local classes have.
 struct BindingMgrHolder
 {
-    sqlite3* db{nullptr};
+    storage::Database* db{nullptr};
     ImportOrchestrator* orch_ptr{nullptr};
     std::mutex mtx;
     int64_t last_seq{0};
+    int64_t last_import_seq{0};
     std::shared_ptr<services::SymbolBindingManager> mgr;
 
-    void init(sqlite3* d, ImportOrchestrator* o)
+    void init(storage::Database& d, ImportOrchestrator* o)
     {
-        db = d;
+        db = &d;
         orch_ptr = o;
     }
 
     std::shared_ptr<services::SymbolBindingManager> get()
     {
         std::lock_guard lock(mtx);
-        auto cur = orch_ptr ? orch_ptr->import_seq() : 0;
-        if (!mgr || cur != last_seq)
+        // 统一数据版本：导入、源文件变更、删除都会自增 ——
+        // 只盯导入序号会让绑定索引在别的写入之后继续用旧快照
+        auto cur = db ? db->data_version() : 0;
+        auto imported = orch_ptr ? orch_ptr->import_seq() : 0;
+        if (!mgr || cur != last_seq || imported != last_import_seq)
         {
-            mgr = std::make_shared<services::SymbolBindingManager>(db);
+            mgr = std::make_shared<services::SymbolBindingManager>(*db);
             last_seq = cur;
+            last_import_seq = imported;
         }
         return mgr;
     }
@@ -61,9 +112,10 @@ static BindingMgrHolder g_binding_mgr;
 
 // ---- Lock helpers: a locked component library protects its symbols from
 // delete/modify/bind/classify. Official KiCad libs are locked & protected.
-static bool library_locked(sqlite3* db, const std::string& component_lib_id)
+static bool library_locked(const storage::DbSession& session,
+                           const std::string& component_lib_id)
 {
-    storage::ComponentLibraryRepository repo(db);
+    storage::ComponentLibraryRepository repo(session);
     if (auto all = repo.find_all())
     {
         for (auto& l : *all)
@@ -78,22 +130,22 @@ static bool library_locked(sqlite3* db, const std::string& component_lib_id)
 }
 
 // Symbol → library(id) → component_library_id → locked
-static bool symbol_locked(sqlite3* db, const std::string& symbol_id)
+static bool symbol_locked(const storage::DbSession& session, const std::string& symbol_id)
 {
-    storage::SymbolRepository sr(db);
+    storage::SymbolRepository sr(session);
     auto sym = sr.find_by_id(symbol_id);
     if (!sym)
     {
         return false;
     }
-    storage::LibraryRepository lr(db);
+    storage::LibraryRepository lr(session);
     if (auto all = lr.find_all())
     {
         for (auto& l : *all)
         {
             if (l.id == sym->library_id() && !l.component_library_id.empty())
             {
-                return library_locked(db, l.component_library_id);
+                return library_locked(session, l.component_library_id);
             }
         }
     }
@@ -101,16 +153,16 @@ static bool symbol_locked(sqlite3* db, const std::string& symbol_id)
 }
 
 // Footprint → component library by matching library_path prefix
-static bool footprint_locked(sqlite3* db, const std::string& footprint_id)
+static bool footprint_locked(const storage::DbSession& session, const std::string& footprint_id)
 {
-    storage::FootprintRepository fr(db);
+    storage::FootprintRepository fr(session);
     auto fp = fr.find_by_id(footprint_id);
     if (!fp || fp->library_path().empty())
     {
         return false;
     }
     const auto& fp_path = fp->library_path();
-    storage::ComponentLibraryRepository repo(db);
+    storage::ComponentLibraryRepository repo(session);
     if (auto all = repo.find_all())
     {
         for (auto& l : *all)
@@ -131,7 +183,7 @@ static std::string short_uuid()
     static std::mt19937_64 gen(rd());
     static std::uniform_int_distribution<uint64_t> dis;
     char buf[17];
-    snprintf(buf, sizeof(buf), "%016llX", dis(gen));
+    snprintf(buf, sizeof(buf), "%016llX", static_cast<unsigned long long>(dis(gen)));
     return buf;
 }
 
@@ -139,13 +191,14 @@ static std::string short_uuid()
 // Library routes
 // ============================================================
 
-void register_library_routes(httplib::Server& srv, sqlite3* db, ImportOrchestrator* import_orch)
+void register_library_routes(httplib::Server& srv, storage::Database& db, ImportOrchestrator* import_orch)
 {
     srv.Get("/api/libraries",
-            [db](const httplib::Request&, httplib::Response& r)
+            [&db](const httplib::Request&, httplib::Response& r)
             {
-                storage::SymbolRepository sr(db);
-                storage::LibraryRepository lr(db);
+                auto session = db.session();
+                storage::SymbolRepository sr(session);
+                storage::LibraryRepository lr(session);
                 auto libs = lr.find_all();
                 auto all_syms = sr.find_all();
                 std::unordered_set<std::string> used_libs;
@@ -156,7 +209,7 @@ void register_library_routes(httplib::Server& srv, sqlite3* db, ImportOrchestrat
                         used_libs.insert(s.library_id());
                     }
                 }
-                storage::ComponentLibraryRepository cl_repo(db);
+                storage::ComponentLibraryRepository cl_repo(session);
                 std::unordered_map<std::string, std::string> group_name;
                 std::unordered_map<std::string, bool> cl_locked;
                 auto comp_libs = cl_repo.find_all();
@@ -186,6 +239,7 @@ void register_library_routes(httplib::Server& srv, sqlite3* db, ImportOrchestrat
                         o["name"] = l.name;
                         o["file_path"] = l.file_path.string();
                         o["description"] = l.description;
+                        o["component_library_id"] = l.component_library_id;  // workspace filter
                         if (!l.component_library_id.empty())
                         {
                             o["group"] = group_name[l.component_library_id];
@@ -221,178 +275,107 @@ void register_library_routes(httplib::Server& srv, sqlite3* db, ImportOrchestrat
     }
 
     srv.Post("/api/libraries",
-             [db](const httplib::Request& req, httplib::Response& r)
+             [&db](const httplib::Request& req, httplib::Response& r)
              {
                  json j;
                  try
                  {
                      auto body = json::parse(req.body.empty() ? "{}" : req.body);
                      std::string action = body.value("action", "");
-                     storage::LibraryRepository lr(db);
                      if (action == "delete")
                      {
+                         auto session = db.session();
                          std::string id = body.value("id", "");
-                         bool owner_locked = false;
+                         storage::LibraryRepository lrr(session);
+                         storage::SymbolRepository sr(session);
+                         auto libs = lrr.find_all();
+                         std::string file_path;
+                         std::string component_library_id;
+                         if (libs)
+                             for (auto& l : *libs)
+                                 if (l.id == id)
+                                 {
+                                     file_path = l.file_path.string();
+                                     component_library_id = l.component_library_id;
+                                 }
+                         // Unified protection: owner lock OR the file living in
+                         // an official/locked source path (share/kicad, any
+                         // locked component library root). File deletion must
+                         // never bypass the app-level guard via a missing owner.
+                         bool protected_source = false;
+                         if (!component_library_id.empty() &&
+                             library_locked(session, component_library_id))
                          {
-                             storage::LibraryRepository lrr(db);
-                             if (auto libs = lrr.find_all())
-                                 for (auto& l : *libs)
-                                     if (l.id == id && !l.component_library_id.empty() &&
-                                         library_locked(db, l.component_library_id))
-                                     {
-                                         owner_locked = true;
-                                         break;
-                                     }
+                             protected_source = true;
                          }
-                         if (owner_locked)
+                         if (!protected_source && !file_path.empty())
+                         {
+                             if (auto locked = services::source_is_locked(session, file_path))
+                             {
+                                 protected_source = *locked;
+                             }
+                             else
+                             {
+                                 j["ok"] = false;
+                                 j["error"] = locked.error().format_message();
+                             }
+                         }
+                         if (protected_source)
                          {
                              j["ok"] = false;
                              j["error"] = "Library is locked";
                          }
+                         else if (j.contains("error"))
+                         {
+                             // protection lookup failed — reported above
+                         }
                          else
                          {
-                         storage::LibraryRepository lrr(db);
-                         storage::SymbolRepository sr(db);
-                         auto libs = lrr.find_all();
-                         std::string file_path;
-                         if (libs)
-                             for (auto& l : *libs)
-                                 if (l.id == id)
-                                     file_path = l.file_path.string();
                          int removed = 0;
                          auto syms = sr.find_by_library(id);
                          if (syms)
                              for (auto& s : *syms)
                                  if (sr.remove(s.id()))
                                      removed++;
+                         // delete_file=false → unregister only (DB row removed,
+                         // the .kicad_sym file on disk stays)
+                         const bool delete_file = body.value("delete_file", true);
                          bool file_deleted = false;
-                         if (!file_path.empty() && std::filesystem::exists(file_path))
+                         if (delete_file && !file_path.empty() &&
+                             std::filesystem::exists(file_path))
                          {
                              std::filesystem::remove(file_path);
                              file_deleted = true;
                          }
                          auto db_r = lrr.remove(id);
                          j["ok"] = db_r.has_value();
+                         j["unregistered_only"] = !delete_file;
                          if (file_deleted)
                              j["deleted_file"] = file_path;
                          }
                      }
                      else if (action == "delete_symbol")
                      {
-                         storage::SymbolRepository sr(db);
                          std::string sym_id = body.value("id", "");
-                         if (symbol_locked(db, sym_id))
+                         bool locked = false;
+                         {
+                             auto session = db.session();
+                             locked = symbol_locked(session, sym_id);
+                         }
+                         if (locked)
                          {
                              j["ok"] = false;
                              j["error"] = "Symbol belongs to a locked library";
                          }
                          else
                          {
-                             auto sym = sr.find_by_id(sym_id);
-                             if (!sym)
-                             {
-                                 j["ok"] = false;
-                                 j["error"] = "Not found";
-                             }
-                             else
-                             {
-                                 // The library file is the source of truth:
-                                 // rewrite it FIRST, and only remove the DB
-                                 // row once the file update succeeded — a
-                                 // failed rewrite must not leave DB and file
-                                 // inconsistent.
-                                 bool file_error = false;
-                                 std::string file_error_msg;
-                                 storage::LibraryRepository lrr(db);
-                                 auto libs = lrr.find_all();
-                                 if (libs)
-                                     for (auto& l : *libs)
-                                     {
-                                         if (l.id != sym->library_id() || l.file_path.empty())
-                                             continue;
-                                         if (!std::filesystem::exists(l.file_path))
-                                             continue;  // file gone — nothing to sync
-                                         file_error = true;
-                                         std::ifstream f(l.file_path, std::ios::binary);
-                                         std::string text((std::istreambuf_iterator<char>(f)),
-                                                          std::istreambuf_iterator<char>());
-                                         f.close();
-                                         std::string search = "(symbol \"" + sym->name() + "\"";
-                                         size_t pos = text.find(search);
-                                         if (pos == std::string::npos)
-                                         {
-                                             file_error_msg = "Symbol node not found in library file";
-                                             break;
-                                         }
-                                         // Reject hits inside comment lines (leading ';')
-                                         size_t line_start = text.rfind('\n', pos);
-                                         line_start = (line_start == std::string::npos)
-                                                          ? 0
-                                                          : line_start + 1;
-                                         size_t first_nonspace = text.find_first_not_of(" \t", line_start);
-                                         if (first_nonspace != std::string::npos &&
-                                             text[first_nonspace] == ';')
-                                         {
-                                             file_error_msg = "Symbol node not found in library file";
-                                             break;
-                                         }
-                                         // Quote-aware depth walk to the closing ')'
-                                         int depth = 0;
-                                         bool in_s = false;
-                                         size_t end = pos;
-                                         while (end < text.size())
-                                         {
-                                             char c = text[end];
-                                             if (c == '"' && (end == 0 || text[end - 1] != '\\'))
-                                                 in_s = !in_s;
-                                             else if (!in_s)
-                                             {
-                                                 if (c == '(')
-                                                     depth++;
-                                                 else if (c == ')')
-                                                 {
-                                                     depth--;
-                                                     if (depth == 0)
-                                                     {
-                                                         end++;
-                                                         break;
-                                                     }
-                                                 }
-                                             }
-                                             end++;
-                                         }
-                                         if (depth != 0)
-                                         {
-                                             file_error_msg = "Malformed symbol node in library file";
-                                             break;
-                                         }
-                                         text.erase(pos, end - pos);
-                                         std::ofstream out(l.file_path, std::ios::binary);
-                                         out << text;
-                                         if (!out)
-                                         {
-                                             file_error_msg = "Failed to write library file";
-                                             break;
-                                         }
-                                         file_error = false;
-                                         break;
-                                     }
-                                 if (file_error)
-                                 {
-                                     j["ok"] = false;
-                                     j["error"] = file_error_msg.empty() ? "File update failed"
-                                                                         : file_error_msg;
-                                 }
-                                 else if (!sr.remove(sym_id))
-                                 {
-                                     j["ok"] = false;
-                                     j["error"] = "DB remove failed";
-                                 }
-                                 else
-                                 {
-                                     j["ok"] = true;
-                                 }
-                             }
+                             // 源文件改写 + 行删除由统一变更服务接管（A05）：
+                             // 失败时文件与库行一起回退，不再各写各的
+                             services::LibraryService library_service(&db);
+                             auto removed = library_service.delete_symbol(sym_id);
+                             j["ok"] = removed.has_value();
+                             if (!removed)
+                                 j["error"] = removed.error().format_message();
                          }
                      }
                      else if (!action.empty() || body.contains("name"))
@@ -400,7 +383,8 @@ void register_library_routes(httplib::Server& srv, sqlite3* db, ImportOrchestrat
                          std::string name = body.value("name", "");
                          if (!name.empty())
                          {
-                             storage::LibraryRepository repo(db);
+                             auto session = db.session();
+                             storage::LibraryRepository repo(session);
                              core::LibraryMeta lib;
                              lib.name = name;
                              lib.file_path = name + ".kicad_sym";
@@ -426,18 +410,33 @@ void register_library_routes(httplib::Server& srv, sqlite3* db, ImportOrchestrat
 // Symbol routes
 // ============================================================
 
-void register_symbol_routes(httplib::Server& srv, sqlite3* db)
+void register_symbol_routes(httplib::Server& srv, storage::Database& db)
 {
     srv.Get("/api/symbols",
-            [db](const httplib::Request& req, httplib::Response& r)
+            [&db](const httplib::Request& req, httplib::Response& r)
             {
-                storage::SymbolRepository repo(db);
-                storage::RelationshipRepository rr(db);
+                auto session = db.session();
+                storage::SymbolRepository repo(session);
+                storage::RelationshipRepository rr(session);
+                // 一次取全部关联，避免每个符号两次点查（上万行时会把库锁占住数秒）
+                std::unordered_map<std::string, std::string> sym_fp_links;
+                if (auto links = rr.find_all_symbol_links())
+                {
+                    sym_fp_links = std::move(*links);
+                }
+                std::unordered_map<std::string, std::vector<std::string>> fp_model_links;
+                if (auto links = rr.find_all_model_links())
+                {
+                    fp_model_links = std::move(*links);
+                }
                 std::string q = req.get_param_value("q");
                 std::string lib_id = req.get_param_value("library");
                 auto result = q.empty()
                                 ? (lib_id.empty() ? repo.find_all() : repo.find_by_library(lib_id))
                                 : repo.search(q);
+                // Pagination: clamp to safe ranges — a negative offset or an
+                // oversized limit must never index outside the vector or
+                // overflow start+limit.
                 int limit = 0, offset = 0;
                 try
                 {
@@ -448,19 +447,21 @@ void register_symbol_routes(httplib::Server& srv, sqlite3* db)
                     if (!ov.empty())
                         offset = std::stoi(ov);
                 }
-                catch (...)
+                catch (const std::exception&)
                 {
                 }
+                offset = std::max(0, offset);
+                limit = std::clamp(limit, 0, 10000);  // 0 = no limit
                 // Resolve lock state once: library_id → locked, via
                 // libraries.component_library_id → component_libraries.locked
                 std::unordered_map<std::string, bool> lib_locked;
                 {
-                    storage::ComponentLibraryRepository clr(db);
+                    storage::ComponentLibraryRepository clr(session);
                     std::unordered_map<std::string, bool> cl_locked;
                     if (auto cls = clr.find_all())
                         for (auto& cl : *cls)
                             cl_locked[cl.id] = cl.locked;
-                    storage::LibraryRepository lr(db);
+                    storage::LibraryRepository lr(session);
                     if (auto libs = lr.find_all())
                         for (auto& l : *libs)
                         {
@@ -484,15 +485,15 @@ void register_symbol_routes(httplib::Server& srv, sqlite3* db)
                         s["footprint"] = sym.footprint();
                         s["pins"] = sym.pin_count();
                         s["mpn"] = sym.mpn();
-                        s["type"] = core::component_type_name(static_cast<int>(sym.component_type));
+                        // type 是展示名，type_id 是身份：重命名不改筛选结果
+                        s["type_id"] = sym.component_type_id;
+                        s["type"] = core::TypeRegistry::instance().component_display(sym.component_type_id);
                         s["has_footprint"] = !sym.footprint().empty();
                         s["locked"] = lib_locked[sym.library_id()];
                         bool has_3d = false;
-                        auto fp_opt = rr.find_footprint_for_symbol(sym.id());
-                        if (fp_opt && *fp_opt)
+                        if (auto link = sym_fp_links.find(sym.id()); link != sym_fp_links.end())
                         {
-                            auto models = rr.find_models_for_footprint(**fp_opt);
-                            has_3d = (models && !models->empty());
+                            has_3d = fp_model_links.contains(link->second);
                         }
                         s["has_3d_model"] = has_3d;
                         arr.push_back(s);
@@ -501,9 +502,10 @@ void register_symbol_routes(httplib::Server& srv, sqlite3* db)
             });
 
     srv.Get("/api/footprints",
-            [db](const httplib::Request&, httplib::Response& r)
+            [&db](const httplib::Request&, httplib::Response& r)
             {
-                storage::FootprintRepository repo(db);
+                auto session = db.session();
+                storage::FootprintRepository repo(session);
                 auto result = repo.find_all();
                 json arr = json::array();
                 if (result)
@@ -520,7 +522,7 @@ void register_symbol_routes(httplib::Server& srv, sqlite3* db)
             });
 
     srv.Get("/api/symbols/([^/]+)/binding",
-            [db](const httplib::Request& req, httplib::Response& r)
+            [](const httplib::Request& req, httplib::Response& r)
             {
                 auto id = req.matches[1];
                 auto mgr = g_binding_mgr.get();
@@ -534,10 +536,15 @@ void register_symbol_routes(httplib::Server& srv, sqlite3* db)
             });
 
     srv.Post("/api/symbols/([^/]+)/bind-footprint",
-             [db](const httplib::Request& req, httplib::Response& r)
+             [&db](const httplib::Request& req, httplib::Response& r)
              {
                  auto id = req.matches[1];
-                 if (symbol_locked(db, id))
+                 bool locked = false;
+                 {
+                     auto session = db.session();
+                     locked = symbol_locked(session, id);
+                 }
+                 if (locked)
                  {
                      json j{{"ok", false}, {"error", "Symbol belongs to a locked library"}};
                      r.set_content(j.dump(), "application/json");
@@ -560,10 +567,15 @@ void register_symbol_routes(httplib::Server& srv, sqlite3* db)
              });
 
     srv.Post("/api/footprints/([^/]+)/bind-model",
-             [db](const httplib::Request& req, httplib::Response& r)
+             [&db](const httplib::Request& req, httplib::Response& r)
              {
                  auto id = req.matches[1];
-                 if (footprint_locked(db, id))
+                 bool locked = false;
+                 {
+                     auto session = db.session();
+                     locked = footprint_locked(session, id);
+                 }
+                 if (locked)
                  {
                      json j{{"ok", false}, {"error", "Footprint belongs to a locked library"}};
                      r.set_content(j.dump(), "application/json");
@@ -571,24 +583,36 @@ void register_symbol_routes(httplib::Server& srv, sqlite3* db)
                  }
                  auto body = json::parse(req.body);
                  auto mgr = g_binding_mgr.get();
-                 mgr->assign_model(id, body["model_id"].get<std::string>());
-                 json j{{"ok", true}};
+                 auto res = mgr->assign_model(id, body["model_id"].get<std::string>());
+                 json j;
+                 if (!res)
+                 {
+                     j["ok"] = false;
+                     j["error"] = res.error().format_message();
+                 }
+                 else
+                 {
+                     j["ok"] = true;
+                 }
                  r.set_content(j.dump(), "application/json");
              });
 
     srv.Get("/api/footprints/search",
-            [db](const httplib::Request& req, httplib::Response& r)
+            [](const httplib::Request& req, httplib::Response& r)
             {
                 auto q = req.get_param_value("q");
                 auto anchor = req.get_param_value("near");  // "near" is a Windows macro
+                int limit = param_limit(req, 20);
                 auto mgr = g_binding_mgr.get();
-                auto result = mgr->search_footprints(q.empty() ? "" : q, 20, anchor);
+                auto result = mgr->search_footprints(q.empty() ? "" : q, limit, anchor);
                 json arr = json::array();
                 for (auto& fp : result)
                 {
                     json f;
                     f["id"] = fp.id;
                     f["name"] = fp.name;
+                    f["library"] = fp.library;  // .pretty lib name — build "Lib:Name" refs
+                    f["score"] = fp.score;
                     f["pad_count"] = fp.pad_count;
                     arr.push_back(f);
                 }
@@ -596,12 +620,13 @@ void register_symbol_routes(httplib::Server& srv, sqlite3* db)
             });
 
     srv.Get("/api/models/search",
-            [db](const httplib::Request& req, httplib::Response& r)
+            [](const httplib::Request& req, httplib::Response& r)
             {
                 auto q = req.get_param_value("q");
                 auto anchor = req.get_param_value("near");  // "near" is a Windows macro
+                int limit = param_limit(req, 20);
                 auto mgr = g_binding_mgr.get();
-                auto result = mgr->search_models(q.empty() ? "" : q, 20, anchor);
+                auto result = mgr->search_models(q.empty() ? "" : q, limit, anchor);
                 json arr = json::array();
                 for (auto& m : result)
                 {
@@ -609,6 +634,27 @@ void register_symbol_routes(httplib::Server& srv, sqlite3* db)
                     j["id"] = m.id;
                     j["name"] = m.name;
                     j["format"] = m.format;
+                    j["score"] = m.score;
+                    arr.push_back(j);
+                }
+                r.set_content(arr.dump(), "application/json");
+            });
+
+    srv.Get("/api/symbols/search",
+            [](const httplib::Request& req, httplib::Response& r)
+            {
+                auto q = req.get_param_value("q");
+                auto anchor = req.get_param_value("near");  // "near" is a Windows macro
+                int limit = param_limit(req, 20);
+                auto mgr = g_binding_mgr.get();
+                auto result = mgr->search_symbols(q.empty() ? "" : q, limit, anchor);
+                json arr = json::array();
+                for (auto& s : result)
+                {
+                    json j;
+                    j["id"] = s.id;
+                    j["name"] = s.name;
+                    j["score"] = s.score;
                     arr.push_back(j);
                 }
                 r.set_content(arr.dump(), "application/json");
@@ -619,7 +665,8 @@ void register_symbol_routes(httplib::Server& srv, sqlite3* db)
 // Plugin routes
 // ============================================================
 
-void register_plugin_routes(httplib::Server& srv, plugin::PluginManager* plugins)
+void register_plugin_routes(httplib::Server& srv, plugin::PluginManager* plugins,
+                            storage::Database& db)
 {
     srv.Get("/api/plugins",
             [plugins](const httplib::Request&, httplib::Response& r)
@@ -645,17 +692,21 @@ void register_plugin_routes(httplib::Server& srv, plugin::PluginManager* plugins
                         json act;
                         act["id"] = a.id;
                         act["name"] = a.name;
+                        act["description"] = a.description;
                         act["trigger"] = a.trigger;
+                        act["template"] = a.ui_template;
+                        act["analyze_action"] = a.analyze_action;
+                        act["preflight"] = a.preflight;
+                        act["auto_args"] = a.auto_args;
                         act["schema"] = a.schema;
-                        if (a.button_show)
-                        {
-                            json btn;
-                            btn["show"] = a.button_show;
-                            btn["style"] = a.button_style;
-                            btn["location"] = a.button_location;
-                            btn["tooltip"] = a.button_tooltip;
-                            act["button"] = btn;
-                        }
+                        // Always export the button block (incl. show:false) — the UI
+                        // filters on it to hide non-button actions like "analyze".
+                        json btn;
+                        btn["show"] = a.button_show;
+                        btn["style"] = a.button_style;
+                        btn["location"] = a.button_location;
+                        btn["tooltip"] = a.button_tooltip;
+                        act["button"] = btn;
                         actions.push_back(act);
                     }
                     p["actions"] = actions;
@@ -665,7 +716,7 @@ void register_plugin_routes(httplib::Server& srv, plugin::PluginManager* plugins
             });
 
     srv.Post("/api/plugins/execute",
-             [plugins](const httplib::Request& req, httplib::Response& r)
+             [plugins, &db](const httplib::Request& req, httplib::Response& r)
              {
                  json j;
                  try
@@ -693,6 +744,68 @@ void register_plugin_routes(httplib::Server& srv, plugin::PluginManager* plugins
                          r.set_content(j.dump(), "application/json");
                          return;
                      }
+                     // 声明了宿主协议的 action 由宿主接管：插件只写暂存目录，
+                     // 目标库的校验、合并与数据库提交都在宿主侧完成
+                     std::string protocol;
+                     for (const auto& manifest : plugins->available_plugins())
+                     {
+                         if (manifest.id != plugin_id) continue;
+                         for (const auto& declared : manifest.actions)
+                             if (declared.id == action) protocol = declared.protocol;
+                     }
+
+                     if (protocol == "staged-import-v1")
+                     {
+                         StagedImporter::Request request;
+                         request.plugin_id = plugin_id;
+                         request.action = action;
+                         request.provider = body.value("provider", "LCSC");
+                         request.external_id = body.value("lcsc_id", body.value("source", ""));
+                         request.target_library_id = body.value("target_library_id", "");
+                         request.target_library_path = body.value("target_library", "");
+                         request.operation_id = body.value("operation_id", "");
+                         auto choice = body.value("footprint_choice", json::object());
+                         request.footprint_mode = choice.value("mode", "new");
+                         request.footprint_id = body.value("footprint_id", "");
+                         if (request.footprint_mode == "reuse" && request.footprint_id.empty())
+                         {
+                             // 旧前端只给 library/name：在已登记封装里按 (库, 名) 唯一定位
+                             std::string library = choice.value("library", "");
+                             std::string name = choice.value("name", "");
+                             if (!name.empty())
+                             {
+                                 auto session = db.session();
+                                 if (auto all = storage::FootprintRepository(session).find_all())
+                                 {
+                                     for (const auto& fp : *all)
+                                     {
+                                         if (fp.name() != name) continue;
+                                         auto parent = std::filesystem::path(fp.library_path())
+                                                           .parent_path().stem().string();
+                                         if (!library.empty() && parent != library) continue;
+                                         request.footprint_id = fp.id();
+                                         break;
+                                     }
+                                 }
+                             }
+                         }
+
+                         StagedImporter importer(db, *plugins);
+                         auto staged = importer.run(request);
+                         if (!staged)
+                         {
+                             j["ok"] = false;
+                             j["error"] = staged.error().format_message();
+                         }
+                         else
+                         {
+                             j["plugin_result"] = *staged;
+                             j["ok"] = staged->value("ok", false);
+                         }
+                         r.set_content(j.dump(), "application/json");
+                         return;
+                     }
+
                      auto result = plugins->execute(plugin_id, action, body.dump());
                      if (!result)
                      {
@@ -788,7 +901,7 @@ void register_plugin_routes(httplib::Server& srv, plugin::PluginManager* plugins
 // Config (JSON) routes — replaces the old DB `settings` table.
 // ============================================================
 
-void register_settings_routes(httplib::Server& srv, sqlite3* db, ImportManager* import_manager,
+void register_settings_routes(httplib::Server& srv, storage::Database& db, ImportManager* import_manager,
                              util::ConfigStore* config)
 {
     (void)db;
@@ -833,9 +946,10 @@ void register_settings_routes(httplib::Server& srv, sqlite3* db, ImportManager* 
 
 
     srv.Get("/api/component-libraries",
-            [db](const httplib::Request&, httplib::Response& r)
+            [&db](const httplib::Request&, httplib::Response& r)
             {
-                storage::ComponentLibraryRepository repo(db);
+                auto session = db.session();
+                storage::ComponentLibraryRepository repo(session);
                 auto libs = repo.find_all();
                 json arr = json::array();
                 if (libs)
@@ -857,9 +971,8 @@ void register_settings_routes(httplib::Server& srv, sqlite3* db, ImportManager* 
             });
 
     srv.Post("/api/component-libraries",
-             [db, import_manager](const httplib::Request& req, httplib::Response& r)
+             [&db, import_manager](const httplib::Request& req, httplib::Response& r)
              {
-                 storage::ComponentLibraryRepository repo(db);
                  json j;
                  try
                  {
@@ -867,6 +980,8 @@ void register_settings_routes(httplib::Server& srv, sqlite3* db, ImportManager* 
                      std::string action = body.value("action", "list");
                      if (action == "add")
                      {
+                         auto session = db.session();
+                         storage::ComponentLibraryRepository repo(session);
                          storage::ComponentLibraryRepository::ComponentLibrary lib;
                          lib.id = short_uuid();
                          lib.name = body.value("name", "New Library");
@@ -891,6 +1006,8 @@ void register_settings_routes(httplib::Server& srv, sqlite3* db, ImportManager* 
                          }
                          else
                          {
+                             auto session = db.session();
+                             storage::ComponentLibraryRepository repo(session);
                              // Load existing to preserve lock state
                              storage::ComponentLibraryRepository::ComponentLibrary cur;
                              bool found = false;
@@ -938,7 +1055,34 @@ void register_settings_routes(httplib::Server& srv, sqlite3* db, ImportManager* 
                                      lib.sort_order = cur.sort_order;
                                      lib.locked = toggling_lock ? body["locked"].get<bool>()
                                                                 : cur.locked;
-                                     lib.is_protected = cur.is_protected;
+                                     // Recompute protection from the NEW paths — pointing a
+                                     // library at the official KiCad directories must (re)set
+                                     // the protected flag, otherwise the app-level guard is
+                                     // silently bypassed for a "user" library.
+                                     if (!toggling_lock)
+                                     {
+                                         auto is_official = [](const std::string& p) -> bool
+                                         {
+                                             if (p.empty())
+                                             {
+                                                 return false;
+                                             }
+                                             auto norm = services::normalized_source_path(p)
+                                                             .generic_string();
+                                             return norm.contains("/share/kicad");
+                                         };
+                                         lib.is_protected = is_official(lib.symbol_path) ||
+                                                            is_official(lib.footprint_path) ||
+                                                            is_official(lib.model_3d_path);
+                                         if (lib.is_protected)
+                                         {
+                                             lib.locked = true;
+                                         }
+                                     }
+                                     else
+                                     {
+                                         lib.is_protected = cur.is_protected;
+                                     }
                                      auto upd = repo.update(lib);
                                      j["ok"] = upd.has_value();
                                      if (!upd)
@@ -959,49 +1103,85 @@ void register_settings_routes(httplib::Server& srv, sqlite3* db, ImportManager* 
                          }
                          else
                          {
+                             auto session = db.session();
+                             storage::ComponentLibraryRepository repo(session);
                              // Remove is purely an unregister operation — it does
                              // NOT touch local .kicad_sym files (those are the
                              // user's source of truth). Cascading deletes
                              // any libraries, symbols, and links under this
                              // component library so no orphan rows remain.
-                             auto exec = [&](const std::string& sql) -> bool
+                             // Target must exist — a silent no-op must not be
+                             // reported as success.
+                             bool exists = false;
+                             if (auto all = repo.find_all())
                              {
-                                 char* errmsg = nullptr;
-                                 if (sqlite3_exec(db, sql.c_str(), nullptr, nullptr, &errmsg) != SQLITE_OK)
+                                 for (auto& cl : *all)
                                  {
-                                     j["error"] = errmsg != nullptr ? errmsg : "SQL error";
-                                     sqlite3_free(errmsg);
-                                     return false;
-                                 }
-                                 return true;
-                             };
-                             sqlite3_exec(db, "BEGIN", nullptr, nullptr, nullptr);
-                             bool ok = true;
-                             ok = ok && exec(
-                                 "DELETE FROM symbols WHERE library_id IN "
-                                 "(SELECT id FROM libraries WHERE component_library_id = '" + id + "')");
-                             ok = ok && exec(
-                                 "DELETE FROM symbol_footprint_links WHERE symbol_id IN "
-                                 "(SELECT id FROM symbols WHERE library_id IN "
-                                 "(SELECT id FROM libraries WHERE component_library_id = '" + id + "'))");
-                             ok = ok && exec(
-                                 "DELETE FROM footprint_model_links WHERE footprint_id IN "
-                                 "(SELECT id FROM footprints WHERE library_path IN "
-                                 "(SELECT file_path FROM libraries WHERE component_library_id = '" + id +
-                                 "' AND file_path != ''))");
-                             ok = ok && exec(
-                                 "DELETE FROM libraries WHERE component_library_id = '" + id + "'");
-                             if (ok)
-                             {
-                                 auto rem = repo.remove(id);
-                                 if (!rem)
-                                 {
-                                     j["error"] = rem.error().format_message();
-                                     ok = false;
+                                     if (cl.id == id)
+                                     {
+                                         exists = true;
+                                         break;
+                                     }
                                  }
                              }
-                             sqlite3_exec(db, ok ? "COMMIT" : "ROLLBACK", nullptr, nullptr, nullptr);
-                             j["ok"] = ok;
+                             if (!exists)
+                             {
+                                 j["ok"] = false;
+                                 j["error"] = "Component library not found: " + id;
+                             }
+                             else
+                             {
+                                 // All parameters bound via ?1 — never spliced.
+                                 auto exec = [&](const char* sql) -> bool
+                                 {
+                                     std::string error;
+                                     if (!exec_param(session.handle(), sql, id, error))
+                                     {
+                                         j["error"] = error;
+                                         return false;
+                                     }
+                                     return true;
+                                 };
+                                 if (auto begun = session.begin(); !begun)
+                                 {
+                                     j["ok"] = false;
+                                     j["error"] = begun.error().format_message();
+                                 }
+                                 else
+                                 {
+                                     bool ok = true;
+                                     ok = ok && exec(
+                                         "DELETE FROM symbols WHERE library_id IN "
+                                         "(SELECT id FROM libraries WHERE component_library_id = ?1)");
+                                     ok = ok && exec(
+                                         "DELETE FROM symbol_footprint_links WHERE symbol_id IN "
+                                         "(SELECT id FROM symbols WHERE library_id IN "
+                                         "(SELECT id FROM libraries WHERE component_library_id = ?1))");
+                                     ok = ok && exec(
+                                         "DELETE FROM footprint_model_links WHERE footprint_id IN "
+                                         "(SELECT id FROM footprints WHERE library_path IN "
+                                         "(SELECT file_path FROM libraries WHERE component_library_id = ?1 "
+                                         "AND file_path != ''))");
+                                     ok = ok && exec(
+                                         "DELETE FROM libraries WHERE component_library_id = ?1");
+                                     if (ok)
+                                     {
+                                         auto rem = repo.remove(id);
+                                         if (!rem)
+                                         {
+                                             j["error"] = rem.error().format_message();
+                                             ok = false;
+                                         }
+                                     }
+                                     auto finished = ok ? session.commit() : session.rollback();
+                                     if (!finished)
+                                     {
+                                         j["error"] = finished.error().format_message();
+                                         ok = false;
+                                     }
+                                     j["ok"] = ok;
+                                 }
+                             }
                          }
                      }
                      else if (action == "import")
@@ -1040,7 +1220,7 @@ void register_settings_routes(httplib::Server& srv, sqlite3* db, ImportManager* 
              });
 
     srv.Post("/api/db/reset",
-             [db, import_manager](const httplib::Request& req, httplib::Response& r)
+             [&db, import_manager](const httplib::Request& req, httplib::Response& r)
              {
                  json j;
                  // Confirmation guard: this endpoint wipes all data
@@ -1064,10 +1244,11 @@ void register_settings_routes(httplib::Server& srv, sqlite3* db, ImportManager* 
                  // Stop import thread before clearing to avoid race
                  if (import_manager)
                      import_manager->stop_async();
+                 auto session = db.session();
                  auto exec = [&](const char* sql) -> bool
                  {
                      char* errmsg = nullptr;
-                     if (sqlite3_exec(db, sql, nullptr, nullptr, &errmsg) != SQLITE_OK)
+                     if (sqlite3_exec(session.handle(), sql, nullptr, nullptr, &errmsg) != SQLITE_OK)
                      {
                          j["error"] = errmsg != nullptr ? errmsg : "SQL error";
                          sqlite3_free(errmsg);
@@ -1114,125 +1295,165 @@ void register_settings_routes(httplib::Server& srv, sqlite3* db, ImportManager* 
 // Type routes
 // ============================================================
 
-void register_type_routes(httplib::Server& srv, sqlite3* /*db*/)
+void register_type_routes(httplib::Server& srv, storage::Database& db)
 {
-    srv.Get("/api/component-types",
-            [](const httplib::Request&, httplib::Response& r)
-            {
-                auto& reg = core::TypeRegistry::instance();
-                json arr = json::array();
-                for (auto& ct : reg.component_types())
+    // 删除类型前先数引用：还有符号/封装在用它就拒绝，让用户先显式重分类
+    auto component_refs = [](storage::Database& database, const std::string& id)
+    {
+        auto session = database.session();
+        return storage::SymbolRepository(session).count_by_component_type(id);
+    };
+    auto package_refs = [](storage::Database& database, const std::string& id)
+    {
+        auto session = database.session();
+        return storage::FootprintRepository(session).count_by_package_type(id);
+    };
+
+    auto register_kind = [&](const char* base, bool package)
+    {
+        auto& reg = core::TypeRegistry::instance();
+        srv.Get(base,
+                [&reg, package](const httplib::Request&, httplib::Response& r)
                 {
-                    json o;
-                    o["name"] = ct.name;
-                    o["icon"] = ct.icon;
-                    o["color"] = ct.color;
-                    arr.push_back(o);
-                }
-                r.set_content(arr.dump(), "application/json");
-            });
-    srv.Post("/api/component-types",
-             [](const httplib::Request& req, httplib::Response& r)
-             {
-                 auto& reg = core::TypeRegistry::instance();
-                 json j;
-                 try
+                    json arr = json::array();
+                    for (auto& entry : package ? reg.package_types() : reg.component_types())
+                    {
+                        json o;
+                        o["id"] = entry.id;
+                        o["name"] = entry.name;
+                        o["icon"] = entry.icon;
+                        o["color"] = entry.color;
+                        if (package) o["category"] = entry.category;
+                        arr.push_back(o);
+                    }
+                    r.set_content(arr.dump(), "application/json");
+                });
+
+        srv.Post(base,
+                 [&reg, &db, package, component_refs, package_refs](
+                     const httplib::Request& req, httplib::Response& r)
                  {
-                     auto body = json::parse(req.body.empty() ? "{}" : req.body);
-                     std::string action = body.value("action", "");
-                     std::string name = body.value("name", "");
-                     if (action == "add" && !name.empty())
+                     json j;
+                     try
                      {
-                         core::TypeEntry e;
-                         e.name = name;
-                         e.icon = body.value("icon", "");
-                         j["ok"] = reg.add_component_type(e);
-                         if (j["ok"])
-                             reg.save_component_types();
+                         auto body = json::parse(req.body.empty() ? "{}" : req.body);
+                         std::string action = body.value("action", "");
+                         std::string id = body.value("id", "");
+                         std::string name = body.value("name", "");
+
+                         // 旧调用只给 name：仅在名字唯一匹配时才认
+                         if (id.empty() && !name.empty())
+                         {
+                             auto found = package ? reg.package_by_name(name)
+                                                  : reg.component_by_name(name);
+                             if (found) id = found->id;
+                         }
+
+                         if (action == "add")
+                         {
+                             core::TypeEntry entry;
+                             entry.name = name;
+                             entry.icon = body.value("icon", "");
+                             entry.color = body.value("color", "");
+                             entry.category = body.value("category", "Other");
+                             auto added = package ? reg.add_package_type(entry)
+                                                  : reg.add_component_type(entry);
+                             if (added)
+                             {
+                                 (package ? reg.save_package_types() : reg.save_component_types());
+                                 j["ok"] = true;
+                                 j["id"] = *added;
+                             }
+                             else
+                             {
+                                 j["ok"] = false;
+                                 j["error"] = added.error().format_message();
+                             }
+                         }
+                         else if (action == "rename" || action == "update")
+                         {
+                             core::TypeEntry fields;
+                             fields.name = name;
+                             fields.icon = body.value("icon", "");
+                             fields.color = body.value("color", "");
+                             fields.category = body.value("category", "");
+                             auto updated = package ? reg.update_package_type(id, fields)
+                                                    : reg.update_component_type(id, fields);
+                             if (updated)
+                             {
+                                 (package ? reg.save_package_types() : reg.save_component_types());
+                                 j["ok"] = true;
+                                 j["id"] = id;
+                             }
+                             else
+                             {
+                                 j["ok"] = false;
+                                 j["error"] = updated.error().format_message();
+                             }
+                         }
+                         else if (action == "remove")
+                         {
+                             bool builtin = package ? core::is_builtin_package_id(id)
+                                                    : core::is_builtin_component_id(id);
+                             if (id.empty())
+                             {
+                                 j["ok"] = false;
+                                 j["error"] = "Type not found";
+                             }
+                             else if (builtin)
+                             {
+                                 // 内置类型先拒 —— 引用计数对它们没有意义
+                                 j["ok"] = false;
+                                 j["error"] = "Built-in types cannot be deleted";
+                             }
+                             else
+                             {
+                                 int references =
+                                     package ? package_refs(db, id) : component_refs(db, id);
+                                 if (references > 0)
+                                 {
+                                     j["ok"] = false;
+                                     j["references"] = references;
+                                     j["error"] = "Type is still referenced; reclassify first";
+                                 }
+                                 else
+                                 {
+                                     bool removed = package ? reg.remove_package_type(id)
+                                                            : reg.remove_component_type(id);
+                                     if (removed)
+                                     {
+                                         (package ? reg.save_package_types()
+                                                  : reg.save_component_types());
+                                     }
+                                     j["ok"] = removed;
+                                     if (!removed)
+                                         j["error"] = "Type not found";
+                                 }
+                             }
+                         }
                          else
-                             j["error"] = "Name exists";
+                         {
+                             j["ok"] = false;
+                             j["error"] = "Invalid";
+                         }
                      }
-                     else if (action == "remove" && !name.empty())
-                     {
-                         j["ok"] = reg.remove_component_type(name);
-                         if (j["ok"])
-                             reg.save_component_types();
-                         else
-                             j["error"] = "Not found";
-                     }
-                     else
+                     catch (...)
                      {
                          j["ok"] = false;
-                         j["error"] = "Invalid";
                      }
-                 }
-                 catch (...)
-                 {
-                     j["ok"] = false;
-                 }
-                 r.set_content(j.dump(), "application/json");
-             });
-    srv.Get("/api/package-types",
-            [](const httplib::Request&, httplib::Response& r)
-            {
-                auto& reg = core::TypeRegistry::instance();
-                json arr = json::array();
-                for (auto& pt : reg.package_types())
-                {
-                    json o;
-                    o["name"] = pt.name;
-                    o["category"] = pt.category;
-                    arr.push_back(o);
-                }
-                r.set_content(arr.dump(), "application/json");
-            });
-    srv.Post("/api/package-types",
-             [](const httplib::Request& req, httplib::Response& r)
-             {
-                 auto& reg = core::TypeRegistry::instance();
-                 json j;
-                 try
-                 {
-                     auto body = json::parse(req.body.empty() ? "{}" : req.body);
-                     std::string action = body.value("action", ""), name = body.value("name", "");
-                     if (action == "add" && !name.empty())
-                     {
-                         core::TypeEntry e;
-                         e.name = name;
-                         e.category = body.value("category", "Other");
-                         j["ok"] = reg.add_package_type(e);
-                         if (j["ok"])
-                             reg.save_package_types();
-                         else
-                             j["error"] = "Name exists";
-                     }
-                     else if (action == "remove" && !name.empty())
-                     {
-                         j["ok"] = reg.remove_package_type(name);
-                         if (j["ok"])
-                             reg.save_package_types();
-                         else
-                             j["error"] = "Not found";
-                     }
-                     else
-                     {
-                         j["ok"] = false;
-                         j["error"] = "Invalid";
-                     }
-                 }
-                 catch (...)
-                 {
-                     j["ok"] = false;
-                 }
-                 r.set_content(j.dump(), "application/json");
-             });
+                     r.set_content(j.dump(), "application/json");
+                 });
+    };
+
+    register_kind("/api/component-types", false);
+    register_kind("/api/package-types", true);
 }
 
 // ============================================================
 // Status / heartbeat routes
 // ============================================================
 
-void register_status_routes(httplib::Server& srv, sqlite3* db)
+void register_status_routes(httplib::Server& srv, storage::Database& /*db*/)
 {
     srv.Post("/api/pick-folder",
              [](const httplib::Request&, httplib::Response& r)
@@ -1273,10 +1494,11 @@ void register_status_routes(httplib::Server& srv, sqlite3* db)
 // Classify / check / automatch / import routes
 // ============================================================
 
-void register_classify_routes(httplib::Server& srv, sqlite3* db, ImportManager* import_manager)
+void register_classify_routes(httplib::Server& srv, storage::Database& /*db*/,
+                              ImportManager* import_manager)
 {
     srv.Post("/api/import",
-             [db, import_manager](const httplib::Request& req, httplib::Response& r)
+             [import_manager](const httplib::Request& req, httplib::Response& r)
              {
                  std::string dir = req.get_param_value("dir");
                  json j;

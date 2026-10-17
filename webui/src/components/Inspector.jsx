@@ -71,7 +71,7 @@ function SearchPopover({ open, anchorEl, query, results, placeholder, onQuery, o
     document.body)
 }
 
-export default function Inspector({ selected, classify, onDeleteSymbol, onRefresh }) {
+export default function Inspector({ selected, classify, onDeleteSymbol, onRefresh, toastMsg }) {
   const { t } = useTranslation()
   const [picker, setPicker] = useState(null) // 'footprint' | 'model' | null
   const [pickerAnchor, setPickerAnchor] = useState(null) // triggering row element
@@ -81,15 +81,33 @@ export default function Inspector({ selected, classify, onDeleteSymbol, onRefres
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [symMatches, setSymMatches] = useState(null) // null = closed
 
-  async function loadBinding() {
-    try { const b = await api.getBinding(selected.id); setBinding(b) } catch {}
-  }
+  // Requests live inside effects and are invalidated by their cleanup (the
+  // React-recommended pattern for out-of-order responses): a late reply for
+  // symbol A can never overwrite the state of symbol B.
+  const [bindingTick, setBindingTick] = useState(0)   // bump to reload binding
+  const [matchesTick, setMatchesTick] = useState(0)   // bump to (re)load matches
 
-  // Preload binding whenever the selected symbol changes
   useEffect(() => {
+    if (!selected) return
     setBinding(null)
-    if (selected) loadBinding()
-  }, [selected?.id])
+    let ignore = false
+    api.getBinding(selected.id)
+      .then(b => { if (!ignore) setBinding(b) })
+      .catch(() => {})
+    return () => { ignore = true }
+  }, [selected?.id, bindingTick])
+
+  const reloadBinding = () => setBindingTick(t => t + 1)
+
+  // Lazy per-symbol match suggestions — (re)computed when requested
+  useEffect(() => {
+    if (!selected || matchesTick === 0) return
+    let ignore = false
+    api.symbolMatches(selected.id)
+      .then(m => { if (!ignore) setSymMatches(m || []) })
+      .catch(() => { if (!ignore) setSymMatches([]) })
+    return () => { ignore = true }
+  }, [selected?.id, matchesTick])
 
   if (!selected) return (
     <div className="inspector">
@@ -140,27 +158,27 @@ export default function Inspector({ selected, classify, onDeleteSymbol, onRefres
         await api.bindModel(b.footprint_id, item.id)
       }
       setPicker(null)
-      await loadBinding()
+      reloadBinding()
       if (onRefresh) onRefresh()
     } catch {}
   }
 
   async function onSettingsChanged() {
-    await loadBinding()
+    reloadBinding()
     if (onRefresh) onRefresh()
   }
 
-  // Lazy per-symbol match suggestions — computed only when clicked
-  async function findMatches() {
-    try { const m = await api.symbolMatches(selected.id); setSymMatches(m || []) }
-    catch { setSymMatches([]) }
+  // Lazy per-symbol match suggestions — the request itself lives in the
+  // effect above; clicking here just triggers a (re)load
+  function findMatches() {
+    setMatchesTick(t => t + 1)
   }
 
   async function pickMatch(fp) {
     try {
       await api.bindFootprint(selected.id, fp.footprint_id)
       setSymMatches(null)
-      await loadBinding()
+      reloadBinding()
       if (onRefresh) onRefresh()
     } catch {}
   }
@@ -225,7 +243,7 @@ export default function Inspector({ selected, classify, onDeleteSymbol, onRefres
       </div>
 
       <SymbolSettings open={settingsOpen} symbol={selected} binding={binding}
-        onClose={() => setSettingsOpen(false)} onChanged={onSettingsChanged} />
+        onClose={() => setSettingsOpen(false)} onChanged={onSettingsChanged} toastMsg={toastMsg} />
 
       {symMatches !== null && (
         <SymbolMatchModal symbol={selected} matches={symMatches}
