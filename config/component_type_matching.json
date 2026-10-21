@@ -1,0 +1,160 @@
+{
+  "exceptions": [],
+  "revision": 0,
+  "rules": [
+    {
+      "case_sensitive": false,
+      "enabled": true,
+      "field": "reference",
+      "id": "designator-r",
+      "pattern": "^R[0-9?]*$",
+      "priority": 0,
+      "type_id": "Resistor"
+    },
+    {
+      "case_sensitive": false,
+      "enabled": true,
+      "field": "reference",
+      "id": "designator-c",
+      "pattern": "^C[0-9?]*$",
+      "priority": 0,
+      "type_id": "Capacitor"
+    },
+    {
+      "case_sensitive": false,
+      "enabled": true,
+      "field": "reference",
+      "id": "designator-l",
+      "pattern": "^L[0-9?]*$",
+      "priority": 0,
+      "type_id": "Inductor"
+    },
+    {
+      "case_sensitive": false,
+      "enabled": true,
+      "field": "reference",
+      "id": "designator-d",
+      "pattern": "^D[0-9?]*$",
+      "priority": 0,
+      "type_id": "Diode"
+    },
+    {
+      "case_sensitive": false,
+      "enabled": true,
+      "field": "reference",
+      "id": "designator-led",
+      "pattern": "^(LE|LED)[0-9?]*$",
+      "priority": 0,
+      "type_id": "LED"
+    },
+    {
+      "case_sensitive": false,
+      "enabled": true,
+      "field": "reference",
+      "id": "designator-sw",
+      "pattern": "^SW[0-9?]*$",
+      "priority": 0,
+      "type_id": "Switch"
+    },
+    {
+      "case_sensitive": false,
+      "enabled": true,
+      "field": "reference",
+      "id": "designator-fb",
+      "pattern": "^FB[0-9?]*$",
+      "priority": 0,
+      "type_id": "FerriteBead"
+    },
+    {
+      "case_sensitive": false,
+      "enabled": true,
+      "field": "reference",
+      "id": "designator-jp",
+      "pattern": "^JP[0-9?]*$",
+      "priority": 0,
+      "type_id": "Jumper"
+    },
+    {
+      "case_sensitive": false,
+      "enabled": true,
+      "field": "reference",
+      "id": "designator-tp",
+      "pattern": "^TP[0-9?]*$",
+      "priority": 0,
+      "type_id": "TestPoint"
+    },
+    {
+      "case_sensitive": false,
+      "enabled": true,
+      "field": "reference",
+      "id": "designator-vr",
+      "pattern": "^VR[0-9?]*$",
+      "priority": 0,
+      "type_id": "VoltageRegulator"
+    },
+    {
+      "case_sensitive": false,
+      "enabled": true,
+      "field": "reference",
+      "id": "designator-q",
+      "pattern": "^Q[0-9?]*$",
+      "priority": 0,
+      "type_id": "Transistor"
+    },
+    {
+      "case_sensitive": false,
+      "enabled": true,
+      "field": "reference",
+      "id": "designator-j",
+      "pattern": "^J[0-9?]*$",
+      "priority": 0,
+      "type_id": "Connector"
+    },
+    {
+      "case_sensitive": false,
+      "enabled": true,
+      "field": "reference",
+      "id": "designator-xy",
+      "pattern": "^(X|Y)[0-9?]*$",
+      "priority": 0,
+      "type_id": "Crystal"
+    },
+    {
+      "case_sensitive": false,
+      "enabled": true,
+      "field": "reference",
+      "id": "designator-f",
+      "pattern": "^F[0-9?]*$",
+      "priority": 0,
+      "type_id": "Fuse"
+    },
+    {
+      "case_sensitive": false,
+      "enabled": true,
+      "field": "reference",
+      "id": "designator-k",
+      "pattern": "^K[0-9?]*$",
+      "priority": 0,
+      "type_id": "Relay"
+    },
+    {
+      "case_sensitive": false,
+      "enabled": true,
+      "field": "reference",
+      "id": "designator-t",
+      "pattern": "^T[0-9?]*$",
+      "priority": 0,
+      "type_id": "Transformer"
+    },
+    {
+      "case_sensitive": false,
+      "enabled": true,
+      "field": "reference",
+      "id": "designator-h",
+      "pattern": "^H[0-9?]*$",
+      "priority": 0,
+      "type_id": "MountingHole"
+    }
+  ],
+  "schema_version": 1
+}

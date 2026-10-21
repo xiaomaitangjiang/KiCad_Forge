@@ -7,23 +7,45 @@
 
 namespace kforge::correspondence {
 
+namespace {
+// 编辑距离至少是长度差，因此相似度不会超过这个上界。
+// 用于在真正跑 DP 前跳过不可能达到阈值/不可能刷新最优的候选。
+double similarity_upper_bound(const std::string& a, const std::string& b) {
+    const size_t max_len = std::max(a.size(), b.size());
+    if (max_len == 0) return 0.0;
+    const size_t diff = a.size() > b.size() ? a.size() - b.size() : b.size() - a.size();
+    return 1.0 - static_cast<double>(diff) / static_cast<double>(max_len);
+}
+}  // namespace
+
 int CorrespondenceChecker::levenshtein_distance(const std::string& a,
                                                  const std::string& b) {
-    size_t m = a.size(), n = b.size();
-    std::vector<std::vector<int>> dp(m + 1, std::vector<int>(n + 1, 0));
+    // 只保留上一行/当前行：自动匹配一次要跑 2000×1000 对，
+    // 逐对分配 (m+1)×(n+1) 矩阵会把这步拖到几十秒。
+    // thread_local 复用缓冲区，避免每对再次分配。
+    const size_t m = a.size(), n = b.size();
+    thread_local std::vector<int> prev_row;
+    thread_local std::vector<int> curr_row;
+    if (prev_row.size() < n + 1) prev_row.resize(n + 1);
+    if (curr_row.size() < n + 1) curr_row.resize(n + 1);
 
-    for (size_t i = 0; i <= m; i++) dp[i][0] = static_cast<int>(i);
-    for (size_t j = 0; j <= n; j++) dp[0][j] = static_cast<int>(j);
+    for (size_t j = 0; j <= n; j++) prev_row[j] = static_cast<int>(j);
 
     for (size_t i = 1; i <= m; i++) {
+        curr_row[0] = static_cast<int>(i);
+        const unsigned char ca =
+            static_cast<unsigned char>(std::tolower(static_cast<unsigned char>(a[i - 1])));
         for (size_t j = 1; j <= n; j++) {
-            int cost = (std::tolower(a[i - 1]) == std::tolower(b[j - 1])) ? 0 : 1;
-            dp[i][j] = std::min({dp[i - 1][j] + 1,
-                                 dp[i][j - 1] + 1,
-                                 dp[i - 1][j - 1] + cost});
+            const unsigned char cb =
+                static_cast<unsigned char>(std::tolower(static_cast<unsigned char>(b[j - 1])));
+            const int cost = (ca == cb) ? 0 : 1;
+            curr_row[j] = std::min({prev_row[j] + 1,
+                                    curr_row[j - 1] + 1,
+                                    prev_row[j - 1] + cost});
         }
+        std::swap(prev_row, curr_row);
     }
-    return dp[m][n];
+    return prev_row[n];
 }
 
 double CorrespondenceChecker::name_similarity(const std::string& a,
@@ -182,6 +204,12 @@ std::vector<MatchSuggestion> CorrespondenceChecker::suggest_matches(
         best.score = 0.0;
 
         for (const auto& fp : footprints) {
+            double possible = similarity_upper_bound(sym.name(), fp.name());
+            if (sym.pin_count() > 0 && sym.pin_count() == fp.pad_count())
+                possible = std::min(1.0, possible + 0.2);
+            // 上界都不足以过阈值 / 不可能超过当前最优：必然不会改变结果。
+            if (possible < SIMILARITY_THRESHOLD || possible <= best.score) continue;
+
             double score = score_pair(sym, fp);
 
             if (score > best.score) {
@@ -220,6 +248,11 @@ std::vector<MatchSuggestion> CorrespondenceChecker::suggest_for_symbol(
     const double SIMILARITY_THRESHOLD = 0.3;
 
     for (const auto& fp : footprints) {
+        double possible = similarity_upper_bound(sym.name(), fp.name());
+        if (sym.pin_count() > 0 && sym.pin_count() == fp.pad_count())
+            possible = std::min(1.0, possible + 0.2);
+        if (possible < SIMILARITY_THRESHOLD) continue;
+
         double score = score_pair(sym, fp);
         if (score < SIMILARITY_THRESHOLD) continue;
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/db/source_key.h"
+#include "core/io/source_mutation.h"
 #include "core/repo/repositories.h"
 #include <algorithm>
 #include <cctype>
@@ -20,27 +21,12 @@ inline bool source_belongs_to(const std::filesystem::path& file, const std::stri
     return storage::path_belongs_to(file, root);
 }
 
+/// 薄封装：判定实现只有一份（core/io/source_mutation.cpp），
+/// 接口层不再复制第二套权限判断
 inline util::Result<bool> source_is_locked(const storage::DbSession& session,
                                            const std::filesystem::path& path,
                                            const std::string& owner = "")
 {
-    auto normalized = normalized_source_path(path);
-    bool share = false;
-    for (const auto& component : normalized)
-    {
-        if (share && component == "kicad") return true;
-        share = component == "share";
-    }
-    auto libraries = storage::ComponentLibraryRepository(session).find_all();
-    if (!libraries) return std::unexpected(libraries.error());
-    for (const auto& lib : *libraries)
-    {
-        if (!(lib.locked || lib.is_protected)) continue;
-        if ((!owner.empty() && lib.id == owner) ||
-            source_belongs_to(path, lib.symbol_path) ||
-            source_belongs_to(path, lib.footprint_path) ||
-            source_belongs_to(path, lib.model_3d_path)) return true;
-    }
-    return false;
+    return io::source_write_blocked(session, path, owner);
 }
 }

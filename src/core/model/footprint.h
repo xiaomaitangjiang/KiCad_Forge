@@ -67,7 +67,15 @@ public:
     const std::vector<Pad>& pads() const { return pads_; }
     std::vector<Pad>& pads() { return pads_; }
     void add_pad(Pad pad) { pads_.push_back(std::move(pad)); }
-    int pad_count() const { return static_cast<int>(pads_.size()); }
+    int pad_count() const {
+        if (!pads_.empty()) return static_cast<int>(pads_.size());
+        // 回读时 pads_ 没有被还原（仓储行不重建 pads 序列化）：
+        // 用库存的 _pad_count 保持计数，别让 pad_count 又变回 0。
+        // 与 Symbol::pin_count 同一套回退思路。
+        auto pc = property("_pad_count");
+        if (pc) { try { return std::stoi(*pc); } catch (...) {} }
+        return 0;
+    }
 
     // --- 3D Models ---
     const std::vector<Model3DRef>& models_3d() const { return models_3d_; }

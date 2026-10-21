@@ -192,6 +192,236 @@ static std::string make_custom_id()
     return "custom:" + uuid;
 }
 
+namespace
+{
+/// 候选快照：定义 + 与之同下标的 id/name 索引。
+/// 索引必须在写文件之前建好 —— 落盘之后才 rebuild，中间窗口就是
+/// 「磁盘已经是新的、内存还是旧的」。
+struct TypeStore
+{
+    std::vector<TypeEntry> entries;
+    std::unordered_map<std::string, int> ids;
+    std::unordered_map<std::string, int> names;
+
+    void reindex()
+    {
+        ids.clear();
+        names.clear();
+        for (std::size_t i = 0; i < entries.size(); ++i)
+        {
+            ids[entries[i].id] = static_cast<int>(i);
+            names[entries[i].name] = static_cast<int>(i);
+        }
+    }
+};
+
+/// 只做 no-throw 交换发布（vector / unordered_map 同为 std::allocator，
+/// swap 不分配也不抛）—— 失败路径上这里一次都不会被调用。
+void publish(std::vector<TypeEntry>& entries,
+             std::unordered_map<std::string, int>& ids,
+             std::unordered_map<std::string, int>& names, TypeStore& candidate) noexcept
+{
+    entries.swap(candidate.entries);
+    ids.swap(candidate.ids);
+    names.swap(candidate.names);
+}
+
+/// 图标是短文本，限制按 UTF-8 字节算（std::string::size() 就是字节数）
+constexpr std::size_t kMaxIconBytes = 64;
+
+/// 新增/显式更新时的字段校验。
+/// 只校验「这次真正写下去的字段」：加载历史配置不走这里 ——
+/// 旧文件里合法存在的颜色/图标（例如三位缩写色值）不能被新规则判死，
+/// 否则一次「只改名」就会丢掉别的字段。
+util::Result<void> validate_icon(const std::string& icon)
+{
+    if (icon.size() > kMaxIconBytes)
+        return std::unexpected(util::Error::make<util::Error::Kind::ValidationError>(
+            "Icon must be at most " + std::to_string(kMaxIconBytes) + " UTF-8 bytes (got " +
+            std::to_string(icon.size()) + ")"));
+    return {};
+}
+
+/// 颜色只接受空串（= 无颜色）或 #RRGGBB（大小写皆可）
+util::Result<void> validate_color(const std::string& color)
+{
+    if (color.empty()) return {};
+    auto is_hex = [](char c)
+    {
+        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+    };
+    bool valid = color.size() == 7 && color[0] == '#';
+    if (valid)
+    {
+        for (std::size_t i = 1; i < color.size(); ++i)
+        {
+            if (!is_hex(color[i]))
+            {
+                valid = false;
+                break;
+            }
+        }
+    }
+    if (!valid)
+        return std::unexpected(util::Error::make<util::Error::Kind::ValidationError>(
+            "Color must be #RRGGBB or empty: " + color));
+    return {};
+}
+
+util::Result<std::string> add_entry(TypeStore& store, const TypeEntry& value)
+{
+    if (auto icon = validate_icon(value.icon); !icon) return std::unexpected(icon.error());
+    if (auto color = validate_color(value.color); !color) return std::unexpected(color.error());
+    if (store.ids.contains(value.id))
+        return std::unexpected(util::Error::make<util::Error::Kind::ValidationError>(
+            "Type id already exists: " + value.id));
+    if (store.names.contains(value.name))
+        return std::unexpected(util::Error::make<util::Error::Kind::ValidationError>(
+            "Type name already exists: " + value.name));
+    store.entries.push_back(value);
+    store.reindex();
+    return value.id;
+}
+
+/// 补丁语义：缺省字段不动，显式字段（含空串）覆盖；ID 永不改变。
+util::Result<void> apply_patch(TypeStore& store, std::string_view id, const TypePatch& patch)
+{
+    auto it = store.ids.find(std::string(id));
+    if (it == store.ids.end())
+        return std::unexpected(util::Error::make<util::Error::Kind::NotFound>(
+            "Type not found: " + std::string(id)));
+
+    auto index = static_cast<std::size_t>(it->second);
+    TypeEntry updated = store.entries[index];
+    if (patch.name)
+    {
+        if (patch.name->empty())
+            return std::unexpected(util::Error::make<util::Error::Kind::ValidationError>(
+                "Type name must not be empty"));
+        updated.name = *patch.name;
+    }
+    // 显式给出的字段才校验：省略 = 原值不动（原值可能是历史格式，原样保留）
+    if (patch.icon)
+    {
+        if (auto valid = validate_icon(*patch.icon); !valid) return valid;
+        updated.icon = *patch.icon;
+    }
+    if (patch.color)
+    {
+        if (auto valid = validate_color(*patch.color); !valid) return valid;
+        updated.color = *patch.color;
+    }
+    if (patch.category) updated.category = *patch.category;
+
+    // 只在真的改名时查重：历史文件里可能本来就有重名条目，
+    // 那种文件改图标不该被名字校验挡住
+    if (updated.name != store.entries[index].name)
+    {
+        for (std::size_t i = 0; i < store.entries.size(); ++i)
+        {
+            if (i != index && store.entries[i].name == updated.name)
+                return std::unexpected(util::Error::make<util::Error::Kind::ValidationError>(
+                    "Type name already exists: " + updated.name));
+        }
+    }
+    store.entries[index] = std::move(updated);
+    store.reindex();
+    return {};
+}
+
+util::Result<void> remove_entry(TypeStore& store, std::string_view id, bool package)
+{
+    bool builtin = package ? is_builtin_package_id(id) : is_builtin_component_id(id);
+    if (builtin)
+        return std::unexpected(util::Error::make<util::Error::Kind::ValidationError>(
+            "Built-in types cannot be deleted"));
+    auto it = store.ids.find(std::string(id));
+    if (it == store.ids.end())
+        return std::unexpected(util::Error::make<util::Error::Kind::NotFound>(
+            "Type not found: " + std::string(id)));
+    store.entries.erase(store.entries.begin() + it->second);
+    store.reindex();
+    return {};
+}
+
+/// 与旧 save_types 完全相同的 JSON 形状：id/name 必写，空 icon/color/category 省略
+util::Result<void> serialize_types(const std::vector<TypeEntry>& entries, bool package,
+                                   std::string& out)
+{
+    nlohmann::json array = nlohmann::json::array();
+    for (const auto& entry : entries)
+    {
+        nlohmann::json item;
+        item["id"] = entry.id;
+        item["name"] = entry.name;
+        if (!entry.icon.empty()) item["icon"] = entry.icon;
+        if (!entry.color.empty()) item["color"] = entry.color;
+        if (package && !entry.category.empty()) item["category"] = entry.category;
+        array.push_back(std::move(item));
+    }
+    nlohmann::json root;
+    root["types"] = std::move(array);
+    out = root.dump(2);
+    return {};
+}
+
+/// 序列化 + 原子替换。任何异常都变成带路径的 IoError，绝不半写。
+util::Result<void> persist_types(const std::string& path, const std::vector<TypeEntry>& entries,
+                                 bool package, const char* kind)
+{
+    if (path.empty())
+        return std::unexpected(util::Error::make<util::Error::Kind::IoError>(
+            std::string(kind) + " type config path is not set"));
+    try
+    {
+        std::string text;
+        if (auto encoded = serialize_types(entries, package, text); !encoded)
+            return encoded;
+        util::replace_file(path, text);
+    }
+    catch (const std::exception& e)
+    {
+        kforge::util::log_error{}("Cannot save {} types to {}: {}", kind, path, e.what());
+        return std::unexpected(util::Error::make<util::Error::Kind::IoError>(
+            std::string("Cannot save ") + kind + " types to " + path + ": " + e.what()));
+    }
+    return {};
+}
+
+/// 类型配置文件的读取结论。只有「文件确实不存在」才允许重绑保存目标：
+/// 目录、权限、枚举失败、读取中断都必须保留原有定义与原保存路径。
+enum class TypeFileRead
+{
+    Ok,
+    Missing,
+    Failed,
+};
+
+TypeFileRead read_type_file(const std::string& path, std::string& content)
+{
+    std::error_code ec;
+    const auto status = std::filesystem::status(path, ec);
+    if ((!ec && status.type() == std::filesystem::file_type::not_found) ||
+        ec == std::errc::no_such_file_or_directory)
+        return TypeFileRead::Missing;
+    if (ec || status.type() != std::filesystem::file_type::regular)
+        return TypeFileRead::Failed;
+    try
+    {
+        std::ifstream f(path, std::ios::binary);
+        if (!f.is_open()) return TypeFileRead::Failed;
+        std::string raw((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        if (f.bad()) return TypeFileRead::Failed;  // 读取中断：半截内容不作数
+        content = std::move(raw);
+    }
+    catch (const std::exception&)
+    {
+        return TypeFileRead::Failed;
+    }
+    return TypeFileRead::Ok;
+}
+}  // namespace
+
 // --------------- singleton ---------------
 
 TypeRegistry& TypeRegistry::instance() {
@@ -260,16 +490,27 @@ bool TypeRegistry::parse_types(const std::string& json, bool package,
     std::vector<TypeEntry> candidate;
     std::unordered_map<std::string, int> ids;
     for (auto& item : parsed["types"]) {
+        if (!item.is_object()) {
+            error = "type entry is not an object";
+            return false;
+        }
         TypeEntry entry;
-        entry.name = item.value("name", "");
-        // 旧文件没有 id：原 name 原样作为 legacy ID
-        entry.id = item.value("id", entry.name);
-        entry.icon = item.value("icon", "");
-        entry.color = item.value("color", "");
-        entry.category = item.value("category", "");
+        // 字段类型不对（例如 name 是数字）整份文件拒绝：只丢这一条会让内存里
+        // 留下一份"看起来加载成功"的残缺注册表。
+        try {
+            entry.name = item.value("name", "");
+            // 旧文件没有 id：原 name 原样作为 legacy ID
+            entry.id = item.value("id", entry.name);
+            entry.icon = item.value("icon", "");
+            entry.color = item.value("color", "");
+            entry.category = item.value("category", "");
+        } catch (const std::exception& e) {
+            error = std::string("invalid field type: ") + e.what();
+            return false;
+        }
         if (entry.id.empty() || entry.name.empty()) {
-            error += (error.empty() ? "" : "; ") + std::string("entry with empty id/name");
-            continue;
+            error = "entry with empty id/name";
+            return false;
         }
         if (ids.contains(entry.id)) {
             error = "duplicate id: " + entry.id;
@@ -296,64 +537,76 @@ bool TypeRegistry::parse_types(const std::string& json, bool package,
     return true;
 }
 
-void TypeRegistry::load_component_types_json(const std::string& json) {
+bool TypeRegistry::install_types(const std::string& json, bool package,
+                                 const std::string& source_path) {
     std::vector<TypeEntry> candidate;
     std::string error;
-    if (!parse_types(json, false, candidate, error)) {
-        kforge::util::log_error{}("component types rejected ({}), keeping current snapshot: {}",
+    if (!parse_types(json, package, candidate, error)) {
+        kforge::util::log_error{}("{} types rejected ({}), keeping current snapshot: {}",
+                                  package ? "package" : "component",
                                   error.empty() ? "invalid" : error,
                                   error.empty() ? json.substr(0, 80) : "");
-        return;
+        return false;
     }
     std::lock_guard lock(mutex_);
-    component_types_ = std::move(candidate);
-    comp_id_map_.clear();
-    comp_name_map_.clear();
-    for (std::size_t i = 0; i < component_types_.size(); ++i) {
-        comp_id_map_[component_types_[i].id] = static_cast<int>(i);
-        comp_name_map_[component_types_[i].name] = static_cast<int>(i);
+    if (package) {
+        package_types_ = std::move(candidate);
+        pkg_id_map_.clear();
+        pkg_name_map_.clear();
+        for (std::size_t i = 0; i < package_types_.size(); ++i) {
+            pkg_id_map_[package_types_[i].id] = static_cast<int>(i);
+            pkg_name_map_[package_types_[i].name] = static_cast<int>(i);
+        }
+        if (!source_path.empty()) pkg_json_path_ = source_path;
+    } else {
+        component_types_ = std::move(candidate);
+        comp_id_map_.clear();
+        comp_name_map_.clear();
+        for (std::size_t i = 0; i < component_types_.size(); ++i) {
+            comp_id_map_[component_types_[i].id] = static_cast<int>(i);
+            comp_name_map_[component_types_[i].name] = static_cast<int>(i);
+        }
+        if (!source_path.empty()) comp_json_path_ = source_path;
     }
+    return true;
+}
+
+void TypeRegistry::load_component_types_json(const std::string& json) {
+    install_types(json, false, {});
 }
 
 void TypeRegistry::load_package_types_json(const std::string& json) {
-    std::vector<TypeEntry> candidate;
-    std::string error;
-    if (!parse_types(json, true, candidate, error)) {
-        kforge::util::log_error{}("package types rejected ({}), keeping current snapshot: {}",
-                                  error.empty() ? "invalid" : error,
-                                  error.empty() ? json.substr(0, 80) : "");
-        return;
-    }
-    std::lock_guard lock(mutex_);
-    package_types_ = std::move(candidate);
-    pkg_id_map_.clear();
-    pkg_name_map_.clear();
-    for (std::size_t i = 0; i < package_types_.size(); ++i) {
-        pkg_id_map_[package_types_[i].id] = static_cast<int>(i);
-        pkg_name_map_[package_types_[i].name] = static_cast<int>(i);
-    }
+    install_types(json, true, {});
 }
 
 bool TypeRegistry::load_component_types(const std::string& json_path) {
-    std::ifstream f(json_path);
-    if (!f.is_open()) return false;
-    std::string content((std::istreambuf_iterator<char>(f)),
-                         std::istreambuf_iterator<char>());
-    load_component_types_json(content);
-    std::lock_guard lock(mutex_);
-    comp_json_path_ = json_path;
-    return true;
+    std::string content;
+    const auto read = read_type_file(json_path, content);
+    if (read != TypeFileRead::Ok) {
+        if (read == TypeFileRead::Missing) {
+            // 文件确实缺失（首次运行）：记住目标路径，让第一次保存能落在这里 ——
+            // 内存保持现有快照不动。
+            std::lock_guard lock(mutex_);
+            comp_json_path_ = json_path;
+        }
+        // 目录 / 权限 / 读取中断：保留原定义与原保存路径，半截内容不当有效配置
+        return false;
+    }
+    // 坏内容返回 false 且不重绑路径：否则下一次保存会把用户原本的文件覆盖掉
+    return install_types(content, false, json_path);
 }
 
 bool TypeRegistry::load_package_types(const std::string& json_path) {
-    std::ifstream f(json_path);
-    if (!f.is_open()) return false;
-    std::string content((std::istreambuf_iterator<char>(f)),
-                         std::istreambuf_iterator<char>());
-    load_package_types_json(content);
-    std::lock_guard lock(mutex_);
-    pkg_json_path_ = json_path;
-    return true;
+    std::string content;
+    const auto read = read_type_file(json_path, content);
+    if (read != TypeFileRead::Ok) {
+        if (read == TypeFileRead::Missing) {
+            std::lock_guard lock(mutex_);
+            pkg_json_path_ = json_path;
+        }
+        return false;
+    }
+    return install_types(content, true, json_path);
 }
 
 // --------------- accessors（一律返回值副本） ---------------
@@ -422,25 +675,21 @@ std::optional<TypeEntry> TypeRegistry::package_by_name(std::string_view name) co
 
 // --------------- mutation ---------------
 
+// 旧的纯内存 API：只加载与既有测试用，不落盘。生产入口走 *_persistent。
 util::Result<std::string> TypeRegistry::add_component_type(const TypeEntry& entry) {
     TypeEntry value = entry;
     if (value.name.empty())
         return std::unexpected(util::Error::make<util::Error::Kind::ValidationError>(
             "Type name must not be empty"));
-    if (value.id.empty())
-        value.id = make_custom_id();
 
     std::lock_guard lock(mutex_);
-    if (comp_id_map_.contains(value.id))
-        return std::unexpected(util::Error::make<util::Error::Kind::ValidationError>(
-            "Type id already exists: " + value.id));
-    if (comp_name_map_.contains(value.name))
-        return std::unexpected(util::Error::make<util::Error::Kind::ValidationError>(
-            "Type name already exists: " + value.name));
-    comp_id_map_[value.id] = static_cast<int>(component_types_.size());
-    comp_name_map_[value.name] = static_cast<int>(component_types_.size());
-    component_types_.push_back(std::move(value));
-    return component_types_.back().id;
+    // ID 生成与索引用同一把锁：与 *_persistent 共用的静态 RNG 混用时不能有锁外窗口
+    if (value.id.empty()) value.id = make_custom_id();
+    TypeStore candidate{component_types_, comp_id_map_, comp_name_map_};
+    auto added = add_entry(candidate, value);
+    if (!added) return added;
+    publish(component_types_, comp_id_map_, comp_name_map_, candidate);
+    return *added;
 }
 
 util::Result<void> TypeRegistry::update_component_type(std::string_view id,
@@ -469,17 +718,10 @@ bool TypeRegistry::remove_component_type(std::string_view id) {
     if (is_builtin_component_id(id))
         return false;  // 内置类型不允许删除
     std::lock_guard lock(mutex_);
-    auto it = comp_id_map_.find(std::string(id));
-    if (it == comp_id_map_.end()) return false;
-    int index = it->second;
-    comp_name_map_.erase(component_types_[index].name);
-    component_types_.erase(component_types_.begin() + index);
-    comp_id_map_.clear();
-    comp_name_map_.clear();
-    for (std::size_t i = 0; i < component_types_.size(); ++i) {
-        comp_id_map_[component_types_[i].id] = static_cast<int>(i);
-        comp_name_map_[component_types_[i].name] = static_cast<int>(i);
-    }
+    TypeStore candidate{component_types_, comp_id_map_, comp_name_map_};
+    auto removed = remove_entry(candidate, id, false);
+    if (!removed) return false;
+    publish(component_types_, comp_id_map_, comp_name_map_, candidate);
     return true;
 }
 
@@ -488,20 +730,15 @@ util::Result<std::string> TypeRegistry::add_package_type(const TypeEntry& entry)
     if (value.name.empty())
         return std::unexpected(util::Error::make<util::Error::Kind::ValidationError>(
             "Type name must not be empty"));
-    if (value.id.empty())
-        value.id = make_custom_id();
 
     std::lock_guard lock(mutex_);
-    if (pkg_id_map_.contains(value.id))
-        return std::unexpected(util::Error::make<util::Error::Kind::ValidationError>(
-            "Type id already exists: " + value.id));
-    if (pkg_name_map_.contains(value.name))
-        return std::unexpected(util::Error::make<util::Error::Kind::ValidationError>(
-            "Type name already exists: " + value.name));
-    pkg_id_map_[value.id] = static_cast<int>(package_types_.size());
-    pkg_name_map_[value.name] = static_cast<int>(package_types_.size());
-    package_types_.push_back(std::move(value));
-    return package_types_.back().id;
+    // 同 add_component_type：ID 生成与索引发布同锁，锁外生成会与持久化路径抢 RNG
+    if (value.id.empty()) value.id = make_custom_id();
+    TypeStore candidate{package_types_, pkg_id_map_, pkg_name_map_};
+    auto added = add_entry(candidate, value);
+    if (!added) return added;
+    publish(package_types_, pkg_id_map_, pkg_name_map_, candidate);
+    return *added;
 }
 
 util::Result<void> TypeRegistry::update_package_type(std::string_view id,
@@ -530,70 +767,127 @@ bool TypeRegistry::remove_package_type(std::string_view id) {
     if (is_builtin_package_id(id))
         return false;
     std::lock_guard lock(mutex_);
-    auto it = pkg_id_map_.find(std::string(id));
-    if (it == pkg_id_map_.end()) return false;
-    int index = it->second;
-    pkg_name_map_.erase(package_types_[index].name);
-    package_types_.erase(package_types_.begin() + index);
-    pkg_id_map_.clear();
-    pkg_name_map_.clear();
-    for (std::size_t i = 0; i < package_types_.size(); ++i) {
-        pkg_id_map_[package_types_[i].id] = static_cast<int>(i);
-        pkg_name_map_[package_types_[i].name] = static_cast<int>(i);
-    }
+    TypeStore candidate{package_types_, pkg_id_map_, pkg_name_map_};
+    auto removed = remove_entry(candidate, id, true);
+    if (!removed) return false;
+    publish(package_types_, pkg_id_map_, pkg_name_map_, candidate);
     return true;
+}
+
+// --------------- persistent mutation ---------------
+// 顺序固定：拷贝候选 → 校验 → 序列化 + 原子替换 → 成功后才 no-throw 发布。
+// 失败路径上内存与文件都保持调用前的样子，不靠事后回滚拼。
+
+util::Result<std::string> TypeRegistry::add_component_type_persistent(const TypeEntry& entry) {
+    TypeEntry value = entry;
+    if (value.name.empty())
+        return std::unexpected(util::Error::make<util::Error::Kind::ValidationError>(
+            "Type name must not be empty"));
+
+    std::lock_guard lock(mutex_);  // ID 生成与落盘同锁：并发 add 不会撞同一个 id
+    if (value.id.empty()) value.id = make_custom_id();
+    TypeStore candidate{component_types_, comp_id_map_, comp_name_map_};
+    auto added = add_entry(candidate, value);
+    if (!added) return added;
+    if (auto saved = persist_types(comp_json_path_, candidate.entries, false, "component"); !saved)
+        return std::unexpected(saved.error());
+    publish(component_types_, comp_id_map_, comp_name_map_, candidate);
+    return *added;
+}
+
+util::Result<void> TypeRegistry::update_component_type_persistent(std::string_view id,
+                                                                 const TypePatch& patch) {
+    std::lock_guard lock(mutex_);
+    TypeStore candidate{component_types_, comp_id_map_, comp_name_map_};
+    if (auto patched = apply_patch(candidate, id, patch); !patched) return patched;
+    if (auto saved = persist_types(comp_json_path_, candidate.entries, false, "component"); !saved)
+        return std::unexpected(saved.error());
+    publish(component_types_, comp_id_map_, comp_name_map_, candidate);
+    return {};
+}
+
+util::Result<void> TypeRegistry::remove_component_type_persistent(std::string_view id) {
+    std::lock_guard lock(mutex_);
+    TypeStore candidate{component_types_, comp_id_map_, comp_name_map_};
+    if (auto removed = remove_entry(candidate, id, false); !removed) return removed;
+    if (auto saved = persist_types(comp_json_path_, candidate.entries, false, "component"); !saved)
+        return std::unexpected(saved.error());
+    publish(component_types_, comp_id_map_, comp_name_map_, candidate);
+    return {};
+}
+
+util::Result<std::string> TypeRegistry::add_package_type_persistent(const TypeEntry& entry) {
+    TypeEntry value = entry;
+    if (value.name.empty())
+        return std::unexpected(util::Error::make<util::Error::Kind::ValidationError>(
+            "Type name must not be empty"));
+
+    std::lock_guard lock(mutex_);
+    if (value.id.empty()) value.id = make_custom_id();
+    TypeStore candidate{package_types_, pkg_id_map_, pkg_name_map_};
+    auto added = add_entry(candidate, value);
+    if (!added) return added;
+    if (auto saved = persist_types(pkg_json_path_, candidate.entries, true, "package"); !saved)
+        return std::unexpected(saved.error());
+    publish(package_types_, pkg_id_map_, pkg_name_map_, candidate);
+    return *added;
+}
+
+util::Result<void> TypeRegistry::update_package_type_persistent(std::string_view id,
+                                                               const TypePatch& patch) {
+    std::lock_guard lock(mutex_);
+    TypeStore candidate{package_types_, pkg_id_map_, pkg_name_map_};
+    if (auto patched = apply_patch(candidate, id, patch); !patched) return patched;
+    if (auto saved = persist_types(pkg_json_path_, candidate.entries, true, "package"); !saved)
+        return std::unexpected(saved.error());
+    publish(package_types_, pkg_id_map_, pkg_name_map_, candidate);
+    return {};
+}
+
+util::Result<void> TypeRegistry::remove_package_type_persistent(std::string_view id) {
+    std::lock_guard lock(mutex_);
+    TypeStore candidate{package_types_, pkg_id_map_, pkg_name_map_};
+    if (auto removed = remove_entry(candidate, id, true); !removed) return removed;
+    if (auto saved = persist_types(pkg_json_path_, candidate.entries, true, "package"); !saved)
+        return std::unexpected(saved.error());
+    publish(package_types_, pkg_id_map_, pkg_name_map_, candidate);
+    return {};
+}
+
+// --------------- 持久化目标 ---------------
+
+std::string TypeRegistry::component_types_path() const {
+    std::lock_guard lock(mutex_);
+    return comp_json_path_;
+}
+
+std::string TypeRegistry::package_types_path() const {
+    std::lock_guard lock(mutex_);
+    return pkg_json_path_;
+}
+
+void TypeRegistry::bind_component_types_path(const std::string& path) {
+    std::lock_guard lock(mutex_);
+    comp_json_path_ = path;
+}
+
+void TypeRegistry::bind_package_types_path(const std::string& path) {
+    std::lock_guard lock(mutex_);
+    pkg_json_path_ = path;
 }
 
 // --------------- persistence ---------------
 
-namespace
-{
-/// 唯一临时文件 + 同目录替换：只有落盘成功才发布新内容
-bool save_types(const std::string& path, const std::vector<TypeEntry>& entries, bool package)
-{
-    if (path.empty()) return false;
-    try {
-        nlohmann::json array = nlohmann::json::array();
-        for (const auto& entry : entries) {
-            nlohmann::json item;
-            item["id"] = entry.id;
-            item["name"] = entry.name;
-            if (!entry.icon.empty()) item["icon"] = entry.icon;
-            if (!entry.color.empty()) item["color"] = entry.color;
-            if (package && !entry.category.empty()) item["category"] = entry.category;
-            array.push_back(std::move(item));
-        }
-        nlohmann::json root;
-        root["types"] = std::move(array);
-        util::replace_file(path, root.dump(2));
-        return true;
-    } catch (const std::exception& e) {
-        kforge::util::log_error{}("Cannot save types to {}: {}", path, e.what());
-        return false;
-    }
-}
-}  // namespace
-
+// 兼容入口：锁一直握到落盘完成 —— 先拷快照再放锁会让并发保存互相覆盖，
+// 而且固定 .tmp 路径在这种情况下必然撞名。持久化变更请用 *_persistent。
 bool TypeRegistry::save_component_types() {
-    std::vector<TypeEntry> snapshot;
-    std::string path;
-    {
-        std::lock_guard lock(mutex_);
-        snapshot = component_types_;
-        path = comp_json_path_;
-    }
-    return save_types(path, snapshot, false);
+    std::lock_guard lock(mutex_);
+    return persist_types(comp_json_path_, component_types_, false, "component").has_value();
 }
 
 bool TypeRegistry::save_package_types() {
-    std::vector<TypeEntry> snapshot;
-    std::string path;
-    {
-        std::lock_guard lock(mutex_);
-        snapshot = package_types_;
-        path = pkg_json_path_;
-    }
-    return save_types(path, snapshot, true);
+    std::lock_guard lock(mutex_);
+    return persist_types(pkg_json_path_, package_types_, true, "package").has_value();
 }
 
 }  // namespace kforge::core

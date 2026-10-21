@@ -57,10 +57,21 @@ public:
     const std::string& Pre_Kicad_Forge_ID() const { return pre_kf_id_; }
     void set_Pre_Kicad_Forge_ID(std::string id) { pre_kf_id_ = std::move(id); }
 
-    /// Move current Kicad_Forge_ID to Pre_Kicad_Forge_ID, compute new from attributes.
+    /// Recompute the identity fingerprint and store it. When it differs from
+    /// the current Kicad_Forge_ID, the old value moves to Pre_Kicad_Forge_ID
+    /// first; an unchanged identity leaves both fields untouched so Pre always
+    /// means "the previous version".
+    void refresh_Kicad_Forge_ID();
+
+    /// Unconditional "move current value to Pre, then recompute". Kept for
+    /// callers that want that exact behaviour.
     void regenerate_Kicad_Forge_ID();
 
-    /// Compute a stable hash from symbol attributes (name, pins, footprint, value).
+    /// Identity fingerprint: symbol name + pin signature (number/name/electrical
+    /// type in declaration order) + footprint reference. Value, description,
+    /// datasheet, MPN and custom properties are metadata and deliberately
+    /// excluded: editing them must not produce a new Kicad_Forge_ID. Object
+    /// identity remains the UUID; this is only a version-tracking fingerprint.
     static std::string compute_hash(const Symbol& sym);
 
     // --- Pins ---

@@ -113,10 +113,14 @@ util::Result<std::unique_ptr<DomNode>> DomBuilder::parse_node(Tokenizer& tz)
 
     auto node = std::make_unique<DomNode>(type_tok->text);
 
-    // KiCad: these node types have a name/number as the first atom after the type
+    // KiCad: these node types have a name/number as the first atom after the type.
+    // name/number 也算：形如 (name "IN+" (effects ...)) 的节点若把 "IN+" 当成
+    // 待配对的键，后面的 (effects ...) 就会被改写成 "IN+:effects"，
+    // 名字本身反而丢失（pin 的名字/编号就是这么丢的）。
     bool has_name_atom =
         (node->type() == "symbol" || node->type() == "pin" || node->type() == "footprint"
-         || node->type() == "pad" || node->type() == "model");
+         || node->type() == "pad" || node->type() == "model"
+         || node->type() == "name" || node->type() == "number");
     if (has_name_atom)
     {
         auto name_tok = tz.next();
@@ -173,13 +177,15 @@ util::Result<void> DomBuilder::parse_children(Tokenizer& tz, DomNode& node)
                 if (!pending_key.empty())
                 {
                     // For (name "VALUE") / (type input) — store as atom, not property
-                    if (node.type() != "property")
-                    {
-                        node.set_atom(pending_key);
-                    }
-                    else
+                    if (node.type() == "property")
                     {
                         node.add_property(pending_key, {});
+                    }
+                    else if (!node.is_atom())
+                    {
+                        // 第一个 atom 已经是名字/编号时不再覆盖（(pin input line)
+                        // 这类落单的键不能把电气类型顶掉）
+                        node.set_atom(pending_key);
                     }
                     pending_key = {};
                 }

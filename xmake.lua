@@ -95,58 +95,37 @@ local function storage_dependencies()
     if has_config("portable_deps") then add_packages("sqlite3")
     else add_links(path.join(msys2, "lib/libsqlite3.a")) end
 end
+local function storage_test_sources()
+    add_files("src/core/db/**.cpp", "src/core/repo/**.cpp", "src/core/io/**.cpp")
+    add_files("src/core/model/**.cpp")
+    add_files("src/interface/api/import_manager.cpp", "src/interface/api/import_orchestrator.cpp")
+    add_files("src/interface/service/import/pipeline.cpp", "src/interface/service/library/service.cpp")
+    -- service.cpp 和 import_orchestrator.cpp 在成功编辑后调用 note_successful_edit()；
+    -- 所有复用这两份源码的测试目标都必须同时链接编辑历史实现。
+    add_files("src/interface/service/editing/history.cpp")
+    add_files("src/util/config_store.cpp")
+    add_files("src/classifier/**.cpp", "src/correspondence/**.cpp")
+    storage_dependencies()
+end
+local function register_test()
+    if has_config("portable_deps") then add_packages("doctest") end
+    set_rundir("$(projectdir)")
+    add_tests("default", {run_timeout = 120000})
+end
+
 target("KiCad_Forge")
     set_kind("binary")
-    add_files("src/main.cpp")
-    add_files("src/interface/**.cpp")
-    add_files("src/core/io/**.cpp")
-    add_files("src/core/repo/**.cpp")
-    add_files("src/core/db/**.cpp")
-    add_files("src/core/model/**.cpp")
-    add_files("src/util/**.cpp")
-    add_files("src/classifier/**.cpp")
-    add_files("src/correspondence/**.cpp")
-    add_files("src/plugin/plugin_manager.cpp")
+    add_files("src/main.cpp", "src/interface/**.cpp", "src/core/io/**.cpp", "src/core/repo/**.cpp")
+    add_files("src/core/db/**.cpp", "src/core/model/**.cpp", "src/util/**.cpp")
+    add_files("src/classifier/**.cpp", "src/correspondence/**.cpp", "src/plugin/plugin_manager.cpp",
+              "src/plugin/task_service.cpp")
     storage_dependencies()
-
     if is_plat("mingw") then
         add_sysincludedirs("src/third_party/webview", "src/third_party/webview2")
         add_defines("WEBVIEW_EDGE")
         add_files("resources/app.rc")
-        if is_mode("release") then
-            add_ldflags("-mwindows")
-        end
-        -- app.ico is tracked. Regenerate it manually when changing the artwork;
-        -- normal application builds do not need CairoSVG or Pillow.
+        if is_mode("release") then add_ldflags("-mwindows") end
     end
-
-    after_build(function (target)
-        local root = path.directory(target:targetfile())
-        for _, name in ipairs({"webui", "plugins", "config"}) do
-            os.rm(path.join(root, name))
-        end
-        os.cp("$(projectdir)/webui/dist", path.join(root, "webui/dist"))
-        os.cp("$(projectdir)/plugins", path.join(root, "plugins"))
-        os.cp("$(projectdir)/config", path.join(root, "config"))
-        os.cp("$(projectdir)/resources/licenses", path.join(root, "licenses"))
-        for _, dir in ipairs(os.dirs(path.join(root, "plugins/**/__pycache__"))) do
-            os.rm(dir)
-        end
-        os.mkdir(path.join(root, "data"))
-
-        if target:is_plat("mingw") then
-            local cxx = target:tool("cxx")
-            local bindir = path.directory(cxx)
-            -- MinGW's C++ runtime must also be available outside the MSYS2 shell.
-            for _, dll in ipairs({"libstdc++-6.dll", "libgcc_s_seh-1.dll", "libwinpthread-1.dll"}) do
-                local source = path.join(bindir, dll)
-                assert(os.isfile(source), "Missing MinGW runtime: " .. source)
-                os.cp(source, path.join(root, dll))
-            end
-        end
-    end)
-    -- 前端：dist 落后于源码就重建；缺依赖时按 lockfile 安装（npm ci）。
-    -- 不做这一步，发布构建会直接打包上一次留下的 dist。
     before_build(function(target)
         local root = os.projectdir()
         local webui = path.join(root, "webui")
@@ -177,35 +156,101 @@ target("KiCad_Forge")
         end
     end)
 
-target_end()
+    after_build(function (target)
+        local root = path.directory(target:targetfile())
+        for _, name in ipairs({"webui", "plugins", "config"}) do
+            os.rm(path.join(root, name))
+        end
+        os.cp("$(projectdir)/webui/dist", path.join(root, "webui/dist"))
+        os.cp("$(projectdir)/plugins", path.join(root, "plugins"))
+        os.cp("$(projectdir)/config", path.join(root, "config"))
+        os.cp("$(projectdir)/resources/licenses", path.join(root, "licenses"))
+        for _, dir in ipairs(os.dirs(path.join(root, "plugins/**/__pycache__"))) do
+            os.rm(dir)
+        end
+        os.mkdir(path.join(root, "data"))
 
+        if target:is_plat("mingw") then
+            local cxx = target:tool("cxx")
+            local bindir = path.directory(cxx)
+            -- MinGW's C++ runtime must also be available outside the MSYS2 shell.
+            for _, dll in ipairs({"libstdc++-6.dll", "libgcc_s_seh-1.dll", "libwinpthread-1.dll"}) do
+                local source = path.join(bindir, dll)
+                assert(os.isfile(source), "Missing MinGW runtime: " .. source)
+                os.cp(source, path.join(root, dll))
+            end
+        end
+    end)
+target_end()
 
 target("bench_import")
     set_kind("binary")
     set_default(false)
     add_files("tests/bench_import.cpp")
-    add_files("src/core/model/**.cpp")
-    add_files("src/core/io/**.cpp")
-    add_files("src/core/repo/**.cpp")
-    add_files("src/core/db/**.cpp")
-    add_files("src/interface/service/library/service.cpp")
-    add_files("src/interface/service/import/pipeline.cpp")
-    add_files("src/classifier/**.cpp")
-    add_files("src/correspondence/**.cpp")
-    storage_dependencies()
-
+    storage_test_sources()
 target_end()
+
 for _, name in ipairs({"test_logger", "test_plugin_manager", "test_launcher", "test_symbol_hash"}) do
     target(name)
         set_kind("binary")
         add_files("tests/" .. name .. ".cpp")
-        if has_config("portable_deps") then add_packages("doctest") end
-        set_rundir("$(projectdir)")
-        add_tests("default", {run_timeout = 60000})
-        if name == "test_plugin_manager" then
-            add_files("src/plugin/plugin_manager.cpp")
-        elseif name == "test_symbol_hash" then
-            add_files("src/core/model/**.cpp")
-        end
+        register_test()
+        if name == "test_plugin_manager" then add_files("src/plugin/plugin_manager.cpp")
+        elseif name == "test_launcher" then add_files("tests/test_launcher_lifecycle.cpp")
+        elseif name == "test_symbol_hash" then add_files("src/core/model/**.cpp") end
+    target_end()
+end
+
+target("test_task_service")
+    set_kind("binary")
+    add_files("tests/test_task_service.cpp")
+    add_files("src/plugin/task_service.cpp", "src/plugin/plugin_manager.cpp")
+    add_files("src/util/config_store.cpp")
+    register_test()
+target_end()
+
+target("test_app_window")
+    set_kind("binary")
+    add_files("tests/test_app_window.cpp")
+    register_test()
+    if is_plat("mingw") then
+        add_sysincludedirs("src/third_party/webview", "src/third_party/webview2")
+        add_defines("WEBVIEW_EDGE")
+    end
+target_end()
+
+target("test_service_startup")
+    set_kind("binary")
+    add_files("tests/test_service_startup.cpp")
+    storage_test_sources()
+    register_test()
+target_end()
+
+target("test_data_integrity")
+    set_kind("binary")
+    add_defines('KFORGE_TEST_PROJECT_ROOT="' .. string.gsub(os.projectdir(), "\\", "/") .. '"')
+    add_files("tests/test_config_store.cpp", "tests/test_text_util.cpp", "tests/test_library_workflows.cpp")
+    add_files("tests/test_import_contract.cpp")
+    add_files("tests/test_symbol_inheritance.cpp")
+    add_files("tests/test_public_queries.cpp", "src/interface/service/correspondence/service.cpp")
+    add_files("src/interface/service/library/binding.cpp", "src/interface/service/classification/service.cpp")
+    add_files("src/interface/service/library/footprint_resolver.cpp")
+    add_files("src/interface/service/editing/export.cpp", "src/interface/service/editing/paste.cpp")
+    add_files("src/interface/service/editing/move.cpp")
+    add_files("tests/test_editing_commands.cpp")
+    add_files("src/interface/api/staged_import.cpp", "src/plugin/plugin_manager.cpp")
+    storage_test_sources()
+    register_test()
+target_end()
+
+-- GNU --wrap is supported by ELF ld and MinGW lld. Apple ld has no equivalent;
+-- macOS still runs the ordinary matcher and library workflow regressions above.
+if is_plat("linux", "mingw") then
+    target("test_matching_regex_raii")
+        set_kind("binary")
+        add_files("tests/test_matching_regex_raii.cpp", "src/classifier/matching_regex.cpp")
+        add_rules("pcre2.locked")
+        add_ldflags("-Wl,--wrap=pcre2_compile_context_create_8", "-Wl,--wrap=pcre2_compile_context_free_8")
+        register_test()
     target_end()
 end

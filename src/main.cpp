@@ -2,6 +2,7 @@
 #include "core/model/type_registry.h"
 #include "interface/api/api_server.h"
 #include "interface/api/import_manager.h"
+#include "interface/api/type_matching.h"
 #include "interface/manager/setup/launcher.hpp"
 #include "platform/app_window.h"
 #include "util/config_store.h"
@@ -11,7 +12,6 @@
 
 #include <chrono>
 #include <cstdio>
-#include <cstdlib>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -23,7 +23,7 @@
 
 // --------------- main entry point ---------------
 
-static int run_server()
+static int run_server(bool headless, bool auto_import)
 {
     (void) setvbuf(stdout, nullptr, _IONBF, 0);
 
@@ -42,8 +42,12 @@ static int run_server()
                                  storage::DbService{data_dir + "/meta.db"},
                                  cfg,
                                  *plugins,
-                                 api::ImportManager{},
                                  core::TypeRegistry::instance(),
+                                 api::TypeMatchingStartup{
+                                     classifier::TypeMatchingStore::instance(),
+                                     (std::filesystem::path(data_dir) / "config" /
+                                      "component_type_matching.json").string()},
+                                 api::ImportManager{},
                                  api::ApiServer{});
 
     auto r = l.launch_all();  // 经 Launcher 触发各服务 build；失败带服务类型
@@ -82,19 +86,13 @@ static int run_server()
     }
     kforge::util::log_info{}("Server responding on http://127.0.0.1:{}", PORT);
 
-    auto is_alive = [&]
-    {
-        return !l.get<api::ApiServer>().should_stop() &&
-               l.get<api::ApiServer>().ms_since_heartbeat() < kHeartbeatTimeoutMs;
-    };
-    // Keep the same heartbeat and /api/bye lifecycle without opening a window.
+    // CI 和无界面运行共用正常服务、心跳及 /api/bye 退出流程。
     if (headless)
     {
-        l.get<api::ImportManager>().start_async();
-        while (is_alive())
-        {
+        if (auto_import) l.get<api::ImportManager>().start_async();
+        while (!l.get<api::ApiServer>().should_stop() &&
+               util::frontend_alive(l.get<api::ApiServer>().ms_since_heartbeat(), false))
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        }
         return 0;
     }
 
@@ -109,7 +107,8 @@ static int run_server()
         return 1;
     }
     kforge::util::log_info{}("Browser window opened");
-    l.get<api::ImportManager>().start_async();  // 导入归 ImportManager（窗口后启动）
+    if (auto_import)
+        l.get<api::ImportManager>().start_async();  // 导入归 ImportManager（窗口后启动）
     // 正常退出由原生窗口关闭驱动（webview_run 返回）；这里只兜底前端崩溃，
     // 因此超时放得很宽 —— 导入/分类这类长操作、窗口最小化时的定时器节流
     // 都不该被当成死亡。
@@ -128,18 +127,19 @@ static int run_server()
 static int run_application(int argc, char* argv[])
 {
     bool headless = false;
+    bool auto_import = true;
     for (int i = 1; i < argc; ++i)
     {
-        if (std::string_view(argv[i]) == "--headless")
-            headless = true;
+        if (std::string_view(argv[i]) == "--headless") headless = true;
+        else if (std::string_view(argv[i]) == "--no-auto-import") auto_import = false;
     }
 #ifdef _WIN32
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-    int ret = run_server(headless);
+    int ret = run_server(headless, auto_import);
     CoUninitialize();
     return ret;
 #else
-    return run_server(headless);
+    return run_server(headless, auto_import);
 #endif
 }
 

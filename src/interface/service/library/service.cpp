@@ -4,6 +4,7 @@
 #include "correspondence/checker.h"
 #include "core/io/parser/footprint_parser.h"
 #include "core/io/parser/symbol_lib_parser.h"
+#include "interface/service/editing/history.h"
 #include "interface/service/import/pipeline.h"
 #include "core/io/sexpr/text_util.h"
 #include "core/db/database.h"
@@ -19,39 +20,114 @@
 namespace kforge::services {
 using Kind = util::Error::Kind;
 
-LibraryService::LibraryService(storage::Database* db) : db_(db) {}
+LibraryService::LibraryService(storage::Database* db, classifier::TypeMatchingStore* matching_store)
+    : db_(db), matching_store_(matching_store ? matching_store : &classifier::TypeMatchingStore::instance()) {}
 
 // -- Import bridges (delegate to ImportPipeline) --
 
+namespace
+{
+using ImportResult = kforge::services::ImportPipeline::Result;
+
+/// pipeline 的结果汇总成 ImportStats：errors 是完整事件计数，不是明细条数。
+LibraryService::ImportStats stats_of(const ImportResult& result)
+{
+    LibraryService::ImportStats stats;
+    stats.symbols = result.symbols;
+    stats.footprints = result.footprints;
+    stats.models_3d = result.models_3d;
+    stats.skipped = result.skipped;
+    // 完整计数（uint64）：101 个失败库就是 101，不受 100 条明细上限影响
+    stats.errors = result.error_count;
+    stats.warnings = result.warning_count;
+    stats.failed_files = result.failed_files;
+    stats.evaluation_limited = result.evaluation_limited;
+    stats.evaluation_errors = result.evaluation_errors;
+    // 明细合并：错误在前，合并后仍限 100 条；完整数量由 errors/warnings 承载
+    stats.messages = result.errors;
+    for (const auto& warning : result.warnings)
+    {
+        if (stats.messages.size() >= kMaxReportMessages)
+            break;
+        stats.messages.push_back(warning);
+    }
+    return stats;
+}
+
+/// 有限明细 + 完整数量：日志只展示保留下来的条目，并如实说明还有多少没打出
+void log_report(const ImportResult& result, const char* prefix)
+{
+    for (const auto& message : result.errors)
+        kforge::util::log_error{}("{} error: {}", prefix, message);
+    for (const auto& warning : result.warnings)
+        kforge::util::log_warn{}("{} warning: {}", prefix, warning);
+    if (result.error_count > result.errors.size() || result.warning_count > result.warnings.size())
+    {
+        kforge::util::log_warn{}("{}: {} error(s) and {} warning(s) total; {} error and {} warning "
+                                 "detail(s) kept",
+                                 prefix, result.error_count, result.warning_count,
+                                 result.errors.size(), result.warnings.size());
+    }
+}
+
+/// 整数桥：错误必须在调用端可见（不能只抽计数）。返回前一律先发布保留的
+/// 告警明细与完整数量 —— 有错误也不能吞掉已提交操作产生的告警。
+util::Result<int> int_result(const ImportResult& result, int count)
+{
+    log_report(result, "import");
+    if (!result.ok())
+    {
+        std::string message = result.errors.empty() ? std::string("import failed")
+                                                    : result.errors.front();
+        for (std::size_t i = 1; i < result.errors.size(); ++i)
+            message += " | " + result.errors[i];
+        if (result.error_count > result.errors.size())
+            message += " | (+" + std::to_string(result.error_count - result.errors.size())
+                       + " more error(s))";
+        return std::unexpected(util::Error::make<Kind::ServiceError>(std::move(message)));
+    }
+    return count;
+}
+}  // namespace
+
 util::Result<int> LibraryService::import_symbol_library(const std::filesystem::path& path,
                                                          const std::string& comp_lib_id) {
-    auto r = ImportPipeline(*db_)
+    auto r = ImportPipeline(*db_, nullptr, false, matching_store_)
         | symbols_from{path.string(), comp_lib_id}
         | execute;
-    return r.symbols;
+    return int_result(r, r.symbols);
 }
 
 util::Result<int> LibraryService::import_footprint(const std::filesystem::path& path) {
-    auto r = ImportPipeline(*db_).operator|(execute);
-    return 0;  // footprints_from handles directories, not single files
+    // footprints_from 只支持目录；单文件路径保持旧语义（不导入、不报错），
+    // 但 pipeline 的健康失败与关联阶段的真实错误仍必须带出去。
+    (void)path;
+    auto r = ImportPipeline(*db_, nullptr, false, matching_store_).operator|(execute);
+    return int_result(r, 0);
 }
 
 util::Result<LibraryService::ImportStats> LibraryService::import_directory(
     const std::filesystem::path& dir, const std::string& comp_lib_id) {
-    auto r = ImportPipeline(*db_)
+    auto r = ImportPipeline(*db_, nullptr, false, matching_store_)
         | symbols_from{dir.string(), comp_lib_id}
         | execute;
-    ImportStats stats;
-    stats.symbols = r.symbols;
-    stats.footprints = r.footprints;
+    auto stats = stats_of(r);
+    if (!r.ok())
+    {
+        // 全局健康失败 / 没有任何已提交内容：这是操作级失败，不是「带错误的成功」
+        if (r.symbols == 0 && r.footprints == 0 && r.models_3d == 0)
+            return std::unexpected(util::Error::make<Kind::ServiceError>(
+                stats.messages.empty() ? std::string("import failed") : stats.messages.front()));
+    }
+    log_report(r, "import");
     return stats;
 }
 
 util::Result<int> LibraryService::scan_3d_models(const std::filesystem::path& dir) {
-    auto r = ImportPipeline(*db_)
+    auto r = ImportPipeline(*db_, nullptr, false, matching_store_)
         | models_from{dir.string()}
         | execute;
-    return r.models_3d;
+    return int_result(r, r.models_3d);
 }
 
 // ============================================================
@@ -86,10 +162,14 @@ util::Result<LibraryService::DeleteLibResult> LibraryService::delete_library(
     };
 
     if (!std::filesystem::is_regular_file(file_path)) {
-        // 没有源文件：只清数据库行
-        auto session = db_->session();
-        if (auto dropped = drop_rows(session); !dropped)
-            return std::unexpected(dropped.error());
+        // 没有源文件：只清数据库行。会话必须先在 note_successful_edit 前释放：
+        // 统一锁序是 editing_commit_mutex -> DB session，避免与 undo 倒序互等。
+        {
+            auto session = db_->session();
+            if (auto dropped = drop_rows(session); !dropped)
+                return std::unexpected(dropped.error());
+        }
+        note_successful_edit();
         return DeleteLibResult{removed, ""};
     }
 
@@ -97,6 +177,7 @@ util::Result<LibraryService::DeleteLibResult> LibraryService::delete_library(
     io::SourceMutationService mutations(*db_);
     auto applied = mutations.apply({io::FileChange{.path = file_path, .remove = true}}, drop_rows);
     if (!applied) return std::unexpected(applied.error());
+    note_successful_edit();
     return DeleteLibResult{removed, file_path};
 }
 
@@ -133,8 +214,14 @@ util::Result<void> LibraryService::delete_symbol(const core::Uuid& sym_id) {
     // 没有源文件（或节点不在文件里）：只删数据库行
     std::string original;
     if (source_file.empty() || !std::filesystem::is_regular_file(source_file)) {
-        auto session = db_->session();
-        return remove_row(session);
+        // 先释放 DB 会话再记历史，保持 editing_commit_mutex -> DB 的锁序。
+        {
+            auto session = db_->session();
+            if (auto removed = remove_row(session); !removed)
+                return removed;
+        }
+        note_successful_edit();
+        return {};
     }
     {
         std::ifstream in(source_file, std::ios::binary);
@@ -143,8 +230,14 @@ util::Result<void> LibraryService::delete_symbol(const core::Uuid& sym_id) {
     auto node_start = sexpr::find_node(original, "symbol", sym_name);
     if (!node_start)
     {
-        auto session = db_->session();
-        return remove_row(session);
+        // 先释放 DB 会话再记历史，保持 editing_commit_mutex -> DB 的锁序。
+        {
+            auto session = db_->session();
+            if (auto removed = remove_row(session); !removed)
+                return removed;
+        }
+        note_successful_edit();
+        return {};
     }
     auto node_end = sexpr::find_matching_paren(original, *node_start);
     if (node_end == std::string_view::npos)
@@ -156,11 +249,15 @@ util::Result<void> LibraryService::delete_symbol(const core::Uuid& sym_id) {
     // 文件删除 + 行删除一起提交：失败时文件与库行都回到原状
     std::string updated = sexpr::remove_node(original, *node_start, node_end + 1);
     io::SourceMutationService mutations(*db_);
-    return mutations.apply(
+    auto applied = mutations.apply(
         {io::FileChange{.path = source_file,
                         .content = std::move(updated),
                         .expected_digest = io::content_digest(original)}},
         remove_row);
+    if (!applied)
+        return applied;
+    note_successful_edit();
+    return {};
 }
 
 // ============================================================

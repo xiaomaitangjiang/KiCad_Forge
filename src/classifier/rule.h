@@ -58,6 +58,10 @@ struct ClassificationResult {
     int confidence{0};
     std::string reason;
     core::ComponentType inferred_type{core::ComponentType::Unknown};
+    /// 推断出的类型身份 ID。可能是内置 ID、custom: 开头的自定义 ID，
+    /// 也可能是历史遗留的未注册 ID —— 都按原始字符串传递，不经过枚举。
+    /// 空串表示「推不出」：调用方不得据此改写已有类型。
+    std::string inferred_type_id;
 };
 
 }  // namespace kforge::classifier

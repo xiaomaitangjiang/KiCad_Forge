@@ -157,6 +157,8 @@
       "name": "FerriteBead"
     },
     {
+      "color": "#FF9500",
+      "icon": "◎",
       "id": "Varistor",
       "name": "Varistor"
     },

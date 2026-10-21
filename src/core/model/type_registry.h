@@ -22,6 +22,18 @@ struct TypeEntry {
     std::string category;  // 封装类型用
 };
 
+/// update 的补丁：字段缺省 = 保持原值，显式给值（含空串）= 覆盖。
+/// 没有这个区分，「只改名」会顺手把图标/颜色清空 —— 用户看到的是丢数据。
+/// 显式给出的 icon/color 会被校验（图标 ≤ 64 UTF-8 字节；颜色为空串或 #RRGGBB，
+/// 大小写皆可），失败整次拒绝、内存与文件都不动。加载历史配置不走这套校验：
+/// 旧文件里已有的非该格式颜色照样能读，也不会被一次改名改写掉。
+struct TypePatch {
+    std::optional<std::string> name;
+    std::optional<std::string> icon;
+    std::optional<std::string> color;
+    std::optional<std::string> category;
+};
+
 // ============================================================
 // 内置枚举 ↔ 内置 ID：静态、不可变映射。
 // 存储一律用 ID；枚举只服务内置推断，不参与持久化，
@@ -86,9 +98,31 @@ public:
     bool save_component_types();
     bool save_package_types();
 
+    // --- 持久化变更：内存与文件一起提交，任何一步失败两边都不动 ---
+    // 上面那组内存 API 只服务加载与既有测试；生产入口必须走这一组，
+    // 否则就是「界面报成功、重启丢类型」。
+    // 实现顺序：锁内拷贝候选 → 校验 → 序列化 + 原子替换 → 成功后 no-throw 发布。
+    util::Result<std::string> add_component_type_persistent(const TypeEntry& entry);
+    util::Result<void> update_component_type_persistent(std::string_view id, const TypePatch& patch);
+    util::Result<void> remove_component_type_persistent(std::string_view id);
+    util::Result<std::string> add_package_type_persistent(const TypeEntry& entry);
+    util::Result<void> update_package_type_persistent(std::string_view id, const TypePatch& patch);
+    util::Result<void> remove_package_type_persistent(std::string_view id);
+
+    /// 当前绑定的持久化目标（未绑定 = 空串）。绑定只改「下次保存写到哪」，
+    /// 不动内存定义 —— 供启动装配与测试保存/恢复单例状态。
+    std::string component_types_path() const;
+    std::string package_types_path() const;
+    void bind_component_types_path(const std::string& path);
+    void bind_package_types_path(const std::string& path);
+
 private:
     TypeRegistry();
     void init_defaults();
+
+    /// 校验并整体安装一份定义；失败不改内存、也不重绑持久化目标
+    /// （坏文件绝不能被下次保存覆盖）。`source_path` 为空 = 不改变绑定。
+    bool install_types(const std::string& json, bool package, const std::string& source_path);
 
     /// 解析并校验一份候选快照；有问题返回 false 且不改动当前快照
     bool parse_types(const std::string& json, bool package, std::vector<TypeEntry>& out,

@@ -6,6 +6,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <csignal>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -15,12 +16,6 @@
 #include <utility>
 #include <vector>
 
-#if defined(__APPLE__) || defined(__linux__)
-#include <csignal>
-#include <sys/wait.h>
-#include <unistd.h>
-#endif
-
 #ifdef _WIN32
 // Prevent MinGW's eventtoken.h from defining EventRegistrationToken
 // inside extern "C" — webview library needs it in global C++ namespace.
@@ -28,9 +23,16 @@
 struct EventRegistrationToken { INT64 value; };
 
 #include <windows.h>
+#include <windowsx.h>
 #include <shellapi.h>
 #include <shlobj.h>
+
 #include "webview/webview.h"
+#endif
+
+#if defined(__APPLE__) || defined(__linux__)
+#include <sys/wait.h>
+#include <unistd.h>
 #endif
 
 namespace kforge::platform
@@ -85,6 +87,7 @@ class UnixBrowserWindow : public AppWindow<UnixBrowserWindow>
 {
 public:
     explicit UnixBrowserWindow(WindowConfig cfg) : AppWindow(std::move(cfg)) {}
+
     using AppWindow::monitor;
 
     bool open()
@@ -135,11 +138,97 @@ using NativeWindow = UnixBrowserWindow;
 class WinWebView2Window : public AppWindow<WinWebView2Window>
 {
 public:
+    inline static WNDPROC original_proc_ = nullptr;
+
     explicit WinWebView2Window(WindowConfig cfg) : AppWindow(std::move(cfg)) {}
 
     ~WinWebView2Window()
     {
         close();
+    }
+
+    /// Binding called by the self-drawn top bar: minimize / maximize toggle /
+    /// drag / close. Returns the resulting maximized state as JSON.
+    static void window_action_bridge(const char* id, const char* req, void* arg)
+    {
+        static_cast<WinWebView2Window*>(arg)->handle_window_action(id, req ? req : "");
+    }
+
+    void handle_window_action(const char* id, const std::string& request)
+    {
+        std::string action;
+        const auto first = request.find('"');
+        if (first != std::string::npos)
+        {
+            const auto last = request.find('"', first + 1);
+            if (last != std::string::npos) action = request.substr(first + 1, last - first - 1);
+        }
+
+        HWND hwnd = w_ ? static_cast<HWND>(webview_get_window(w_)) : nullptr;
+        if (hwnd)
+        {
+            if (action == "minimize")
+                ShowWindow(hwnd, SW_MINIMIZE);
+            else if (action == "maximize")
+            {
+                if (IsZoomed(hwnd) != 0)
+                    ShowWindow(hwnd, SW_RESTORE);
+                else
+                    ShowWindow(hwnd, SW_MAXIMIZE);
+            }
+            else if (action == "close")
+                PostMessageW(hwnd, WM_CLOSE, 0, 0);
+            else if (action == "drag")
+            {
+                // The top bar replaces the native caption, so start the system
+                // move loop from the current mouse gesture.
+                ReleaseCapture();
+                SendMessageW(hwnd, WM_NCLBUTTONDOWN, static_cast<WPARAM>(HTCAPTION), 0);
+            }
+        }
+
+        if (w_ && id)
+        {
+            const bool maximized = hwnd != nullptr && IsZoomed(hwnd) != 0;
+            webview_return(w_, id, 0,
+                           maximized ? "{\"maximized\":true}" : "{\"maximized\":false}");
+        }
+    }
+
+    /// Custom client area: remove the 6px resize frame Windows still draws
+    /// around a caption-less WS_THICKFRAME window, and recreate the resize
+    /// grips in WM_NCHITTEST.
+    static LRESULT CALLBACK frameless_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
+    {
+        if (msg == WM_NCCALCSIZE && wparam != 0) return 0;
+        if (msg == WM_NCHITTEST)
+        {
+            const LRESULT hit = original_proc_
+                ? CallWindowProcW(original_proc_, hwnd, msg, wparam, lparam)
+                : DefWindowProcW(hwnd, msg, wparam, lparam);
+            if (hit != HTCLIENT) return hit;
+            POINT pt{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+            ScreenToClient(hwnd, &pt);
+            RECT rc{};
+            GetClientRect(hwnd, &rc);
+            constexpr int grip = 6;
+            const bool left = pt.x < grip;
+            const bool right = pt.x >= rc.right - grip;
+            const bool top = pt.y < grip;
+            const bool bottom = pt.y >= rc.bottom - grip;
+            if (top && left) return HTTOPLEFT;
+            if (top && right) return HTTOPRIGHT;
+            if (bottom && left) return HTBOTTOMLEFT;
+            if (bottom && right) return HTBOTTOMRIGHT;
+            if (left) return HTLEFT;
+            if (right) return HTRIGHT;
+            if (top) return HTTOP;
+            if (bottom) return HTBOTTOM;
+            return HTCLIENT;
+        }
+        return original_proc_
+            ? CallWindowProcW(original_proc_, hwnd, msg, wparam, lparam)
+            : DefWindowProcW(hwnd, msg, wparam, lparam);
     }
 
     bool open()
@@ -150,22 +239,56 @@ public:
             kforge::util::log_error{}("webview: creation failed — WebView2 Runtime may be missing");
             return false;
         }
-        webview_set_title(w_, cfg_.title.c_str());
+        // The app draws its own KIFORGE top bar (including window controls), so
+        // the native caption is removed entirely; the window keeps its resize
+        // border and taskbar/Alt-Tab icon.
+        webview_set_title(w_, "");
+        webview_bind(w_, "kforge_window", &WinWebView2Window::window_action_bridge, this);
         webview_set_size(w_, cfg_.width, cfg_.height, WEBVIEW_HINT_NONE);
         webview_navigate(w_, cfg_.url.c_str());
         kforge::util::log_info{}("webview: navigating to {}", cfg_.url);
 
-        // Set window icon — webview uses IDI_APPLICATION by default
         webview_dispatch(
             w_,
             [](webview_t w, void*)
             {
                 HWND hwnd = static_cast<HWND>(webview_get_window(w));
-                HICON icon = LoadIconW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(101)); // IDI_ICON1
-                if (icon)
+                if (!hwnd) return;
+
+                const LONG_PTR style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+                SetWindowLongPtrW(hwnd, GWL_STYLE, style & ~static_cast<LONG_PTR>(WS_CAPTION));
+                if (!original_proc_)
                 {
-                    SendMessageW(hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(icon));
-                    SendMessageW(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(icon));
+                    original_proc_ = reinterpret_cast<WNDPROC>(
+                        GetWindowLongPtrW(hwnd, GWLP_WNDPROC));
+                    SetWindowLongPtrW(hwnd, GWLP_WNDPROC,
+                                      reinterpret_cast<LONG_PTR>(&WinWebView2Window::frameless_proc));
+                }
+                SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+                             SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE |
+                                 SWP_FRAMECHANGED);
+
+                // Windows 11 DWM rounding survives WS_POPUP/NCCALCSIZE custom
+                // chrome; older systems simply ignore the attribute.
+                if (HMODULE dwm = LoadLibraryW(L"dwmapi.dll"))
+                {
+                    using DwmSetAttribute = HRESULT(WINAPI*)(HWND, DWORD, LPCVOID, DWORD);
+                    auto set_attribute = reinterpret_cast<DwmSetAttribute>(
+                        GetProcAddress(dwm, "DwmSetWindowAttribute"));
+                    if (set_attribute)
+                    {
+                        constexpr DWORD kCornerPreference = 33; // DWMWA_WINDOW_CORNER_PREFERENCE
+                        constexpr int kRound = 2;               // DWMWCP_ROUND
+                        set_attribute(hwnd, kCornerPreference, &kRound, sizeof(kRound));
+                    }
+                    FreeLibrary(dwm);
+                }
+
+                HICON app_icon = LoadIconW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(101)); // IDI_ICON1
+                if (app_icon)
+                {
+                    SendMessageW(hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(app_icon));
+                    SendMessageW(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(app_icon));
                 }
             },
             nullptr);
@@ -198,7 +321,7 @@ public:
 
         // Heartbeat monitor runs on a background thread — webview_run() blocks
         std::thread monitor_thread(
-            [this, is_alive_copy = std::forward<F>(is_alive)]
+            [this, is_alive_copy = std::forward<F>(is_alive)]() mutable
             {
                 // Wait for the first heartbeat (window may still be opening)
                 auto deadline = steady_clock::now() + seconds(30);

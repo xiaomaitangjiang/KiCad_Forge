@@ -17,6 +17,7 @@
 #include "util/error.h"
 
 namespace kforge::services { class LibraryService; }
+namespace kforge::plugin { class TaskService; }
 
 namespace kforge::api {
 
@@ -61,15 +62,15 @@ private:
     std::unique_ptr<std::thread> thread_;
     storage::Database* db_{nullptr};
     plugin::PluginManager* plugins_{nullptr};
+    std::unique_ptr<plugin::TaskService> tasks_;  // owns async plugin/import tasks
     util::ConfigStore* config_{nullptr};
     ImportManager* import_manager_{nullptr};
     std::atomic<bool> shutting_down_{false};
-    std::atomic<bool> stopped_{false};
     std::atomic<int64_t> last_heartbeat_{0};
-    // Set by destroy()/move-out: the destructor must not touch dependencies
-    // then — sibling service instances live in per-type static stores whose
-    // destruction order is unspecified (use-after-free at exit).
-    bool closed_{false};
+    // Unstarted, stopped and moved-from instances have no cleanup responsibility.
+    // In particular, a preceding service can fail before init() is attempted;
+    // that instance must not touch the logger during static-store destruction.
+    std::atomic<bool> closed_{true};
 };
 
 }  // namespace kforge::api

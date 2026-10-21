@@ -44,6 +44,8 @@ inline std::string existing_source_key(const std::filesystem::path& path)
 
 /// 目录归属判断，按路径组件边界比较：
 /// C:/libs2 不属于 C:/libs（字符串前缀判断会误判为属于）。
+/// 根自身（D:/、/）不能被裁成 D: —— 它的规范形式本来就以分隔符结尾，
+/// 前缀命中的那一刻边界已经成立，不能再要求一个跟在后面的分隔符。
 inline bool path_belongs_to(const std::filesystem::path& file,
                             const std::filesystem::path& root)
 {
@@ -57,7 +59,12 @@ inline bool path_belongs_to(const std::filesystem::path& file,
         return false;
     if (child.compare(0, base.size(), base) != 0)
         return false;
-    return child.size() == base.size() || child[base.size()] == '/' || child[base.size()] == '\\';
+    if (child.size() == base.size())
+        return true;
+    if (child[base.size()] == '/' || child[base.size()] == '\\')
+        return true;
+    // 根自带尾分隔符（D:/、/）：前缀命中即已跨过组件边界
+    return base.back() == '/' || base.back() == '\\';
 }
 
 /// 封装引用里的 .pretty 库名："Pkg:Name" → "Pkg"，无前缀返回空串

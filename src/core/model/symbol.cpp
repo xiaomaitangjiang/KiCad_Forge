@@ -6,24 +6,43 @@
 
 namespace kforge::core {
 
+namespace {
+
+// Length-prefixed fields make the canonical byte stream unambiguous: moving a
+// separator character between name and footprint must not collide.
+void append_field(std::string& out, std::string_view value) {
+    out += std::to_string(value.size());
+    out += ':';
+    out.append(value);
+}
+
+}  // namespace
+
 std::string Symbol::compute_hash(const Symbol& sym) {
-    // Build a canonical string covering all identity-relevant attributes:
-    // name | pinSig | footprint | value | description | datasheet | mpn
-    std::string input = sym.name();
-    input += "|";
-    for (auto& p : sym.pins()) {
-        input += p.number + "/" + p.name + "/" + p.electrical_type + "|";
+    // Identity-only canonical stream. See the declaration in symbol.h for the
+    // rationale: metadata edits must not change the version fingerprint.
+    std::string input;
+    append_field(input, "kforge-symbol-identity-v1");
+    append_field(input, sym.name());
+    append_field(input, std::to_string(sym.pins().size()));
+    for (const auto& p : sym.pins()) {
+        append_field(input, p.number);
+        append_field(input, p.name);
+        append_field(input, p.electrical_type);
     }
-    input += sym.footprint() + "|";
-    input += sym.default_value() + "|";
-    input += sym.description() + "|";
-    input += sym.datasheet() + "|";
-    input += sym.mpn();
+    append_field(input, sym.footprint());
 
     XXH64_hash_t h = XXH64(input.data(), input.size(), 0);
     char buf[17];
     snprintf(buf, sizeof(buf), "%016llX", (unsigned long long)h);
     return std::string("KF") + buf;
+}
+
+void Symbol::refresh_Kicad_Forge_ID() {
+    std::string next = compute_hash(*this);
+    if (next == kf_id_) return;
+    if (!kf_id_.empty()) pre_kf_id_ = kf_id_;
+    kf_id_ = std::move(next);
 }
 
 void Symbol::regenerate_Kicad_Forge_ID() {
