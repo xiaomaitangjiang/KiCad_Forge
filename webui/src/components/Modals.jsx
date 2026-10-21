@@ -1,29 +1,73 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api'
+import { PluginSlot } from './PluginSlot'
+import CenterPage from '../workbench/CenterPage'
+import { useOverlayLayer } from '../workbench/overlay'
+import { translateMatchingMessage } from '../lib/typeMatching'
+import {
+  TYPE_ICON_PLACEHOLDER, TYPE_ICON_MAX_BYTES, iconByteLength, normalizeColor,
+  validateColorInput, validateIconInput, buildTypePatch, buildAddPayload, patchHasChanges,
+  changedTypeFields,
+} from '../lib/typeMetadata'
 
 // ---- Generic Modal shell ----
 // Dialog semantics + keyboard flow: Escape closes, focus moves into the
 // dialog on open and returns to the trigger on close.
-export function Modal({ title, children, onClose }) {
+//
+// onEscape（可选）只覆盖 Escape：嵌套弹窗里 Escape 应该先关最内层，
+// 而 X / 遮罩仍走 onClose。默认行为与只有 onClose 时完全一致。
+const FOCUSABLE = [
+  'button:not([disabled])', '[href]', 'input:not([disabled]):not([type="hidden"])',
+  'select:not([disabled])', 'textarea:not([disabled])', '[tabindex]:not([tabindex="-1"])',
+].join(',')
+
+export function Modal({ title, children, onClose, onEscape, className = '' }) {
+  const { t } = useTranslation()
   const ref = useRef(null)
+  // 关闭回调始终取「本次渲染」的那一个：Escape 监听只注册一次（effect []），
+  // 若缓存首次的 onClose，嵌套弹窗里读到的旧闭包会绕过最新的冻结判断。
+  const latest = useRef({ onClose, onEscape })
+  latest.current = { onClose, onEscape }
+  const requestClose = useCallback(() => { latest.current.onClose?.() }, [])
+  const requestEscape = useCallback(() => { (latest.current.onEscape || latest.current.onClose)?.() }, [])
+  // 有统一浮层栈时只让栈顶响应 Escape；单独挂 Modal 的测试保留 document 监听。
+  const inOverlayStack = useOverlayLayer(requestEscape)
   useEffect(() => {
     const previous = document.activeElement
-    const first = ref.current?.querySelector('input, select, textarea, button')
+    const first = ref.current?.querySelector('[data-autofocus]')
+      || ref.current?.querySelector('input, select, textarea, button')
     ;(first || ref.current)?.focus?.()
-    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose() } }
+    return () => { previous?.focus?.() }
+  }, [])
+  useEffect(() => {
+    if (inOverlayStack) return undefined
+    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); requestEscape() } }
     document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('keydown', onKey)
-      previous?.focus?.()
+    return () => document.removeEventListener('keydown', onKey)
+  }, [inOverlayStack, requestEscape])
+  // 焦点循环只作用在弹窗内部；背景由遮罩阻断，不把页面其余控件卷进 Tab 顺序。
+  const trapFocus = (event) => {
+    if (event.key !== 'Tab' || !ref.current) return
+    const nodes = [...ref.current.querySelectorAll(FOCUSABLE)]
+      .filter(node => node.getClientRects().length > 0)
+    if (!nodes.length) { event.preventDefault(); ref.current.focus(); return }
+    const first = nodes[0]
+    const last = nodes[nodes.length - 1]
+    const active = document.activeElement
+    if (event.shiftKey && (active === first || !ref.current.contains(active))) {
+      event.preventDefault(); last.focus()
+    } else if (!event.shiftKey && (active === last || !ref.current.contains(active))) {
+      event.preventDefault(); first.focus()
     }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }
   return (
-    <div className="modal-overlay show" onClick={e => { if (e.target === e.currentTarget) onClose() }}>
-      <div className="modal" ref={ref} role="dialog" aria-modal="true" aria-label={title} tabIndex={-1}>
+    <div className="modal-overlay show" onClick={e => { if (e.target === e.currentTarget) requestClose() }}>
+      <div className={`modal ${className}`.trim()} ref={ref} role="dialog" aria-modal="true"
+        aria-label={title} tabIndex={-1} onKeyDown={trapFocus}>
         <div className="modal-header">
           <h3>{title}</h3>
-          <button className="modal-close" onClick={onClose}>
+          <button className="modal-close" aria-label={t('inspector.close')} onClick={requestClose}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
         </div>
@@ -33,18 +77,73 @@ export function Modal({ title, children, onClose }) {
   )
 }
 
+// ---- Confirm Dialog ----
+// 短确认也走统一 Modal：Escape 只关最上层、焦点进入确认按钮并在关闭后回到触发点。
+export function ConfirmDialog({
+  title, message, confirmLabel, cancelLabel, danger = false, onConfirm, onCancel,
+}) {
+  return (
+    <Modal title={title} className="confirm-modal" onClose={onCancel}>
+      <p className="confirm-message">{message}</p>
+      <div className="btn-row confirm-actions">
+        <button type="button" className="btn-ghost" data-autofocus onClick={onCancel}>{cancelLabel}</button>
+        <button type="button" className={`btn-primary${danger ? ' confirm-danger' : ''}`}
+          onClick={onConfirm}>{confirmLabel}</button>
+      </div>
+    </Modal>
+  )
+}
+
 // ---- Settings Modal ----
-export function SettingsModal({ settings, setSettings, compLibraries, setCompLibraries, loadCompLibraries, onClose, loadSymbols, loadStatus, toastMsg, showConfirm, onRequestDelete, onOpenTool }) {
+export function SettingsModal({ settings, setSettings, compLibraries, loadCompLibraries, onClose, refreshSymbols, loadStatus, toastMsg, showConfirm, onRequestDelete, onOpenTool, workspaceId, dark = false, onToggleTheme = () => {}, inline = false }) {
   const [tab, setTab] = useState('paths')
   const [editingId, setEditingId] = useState(null)  // which library is being edited
   const [draftName, setDraftName] = useState('')
   const [draftSym, setDraftSym] = useState('')
   const [draftFp, setDraftFp] = useState('')
   const [draftM3d, setDraftM3d] = useState('')
+  const [busy, setBusy] = useState('')
+  const [actionError, setActionError] = useState('')
+  const operationRef = useRef('')
+  const mountedRef = useRef(true)
   const { t, i18n } = useTranslation()
 
+  useEffect(() => {
+    mountedRef.current = true
+    return () => { mountedRef.current = false }
+  }, [])
+
+  const requireSuccess = (result) => {
+    if (result && typeof result === 'object' && !Array.isArray(result) && result.ok === true) return
+    throw Object.assign(new Error(typeof result?.error === 'string' && result.error
+      ? result.error : t('settings.invalidResponse')), { payload: result })
+  }
+  // 同步占位覆盖尚未重绘的连点，也覆盖另一页签里的导入入口。
+  // 关闭窗口不会取消已发送的任务；卸载后的回包不能关闭后来打开的新窗口。
+  const runOperation = async (operation, task) => {
+    if (operationRef.current || !mountedRef.current) return
+    operationRef.current = operation
+    setBusy(operation)
+    setActionError('')
+    try {
+      await task()
+    } catch (error) {
+      const detail = error?.kind === 'network' ? t('settings.networkError')
+        : error?.kind === 'parse' ? t('settings.invalidResponse')
+        : error?.message || t('toast.failedUnknown')
+      const pathError = error?.payload?.error_code === 'invalid_library_path'
+        && error?.payload?.field === 'footprint_path'
+      if (mountedRef.current) setActionError(pathError ? `${t('settings.footprintPathError')}\n${detail}` : detail)
+    } finally {
+      operationRef.current = ''
+      if (mountedRef.current) setBusy('')
+    }
+  }
+
   const startEdit = (lib) => {
+    if (operationRef.current) return
     if (lib.locked) { toastMsg(t('toast.locked')); return }
+    setActionError('')
     setEditingId(lib.id)
     setDraftName(lib.name)
     setDraftSym(lib.symbol_path || '')
@@ -53,14 +152,18 @@ export function SettingsModal({ settings, setSettings, compLibraries, setCompLib
   }
   const cancelEdit = () => { setEditingId(null) }
 
-  const saveLib = async () => {
-    if (!draftName.trim()) { toastMsg(t('toast.required', { label: t('settings.libName') })); return }
+  const saveLib = () => {
+    if (operationRef.current) return
+    if (!draftName.trim()) { setActionError(t('toast.required', { label: t('settings.libName') })); return }
     const body = editingId === 'new'
       ? { action: 'add', name: draftName.trim(), symbol_path: draftSym, footprint_path: draftFp, model_3d_path: draftM3d }
       : { action: 'update', id: editingId, name: draftName.trim(), symbol_path: draftSym, footprint_path: draftFp, model_3d_path: draftM3d }
-    const r = await api.saveCompLibrary(body)
-    if (r?.ok) { cancelEdit(); loadCompLibraries(); toastMsg(t(editingId === 'new' ? 'toast.added' : 'toast.saved', { name: draftName })) }
-    else toastMsg(r?.error || t('toast.failedUnknown'))
+    return runOperation('saving', async () => {
+      const r = await api.saveCompLibrary(body)
+      if (!mountedRef.current) return
+      requireSuccess(r)
+      cancelEdit(); loadCompLibraries(); toastMsg(t(editingId === 'new' ? 'toast.added' : 'toast.saved', { name: draftName }))
+    })
   }
 
   // Remove (unregister) a component library from the DB. Locked libraries
@@ -68,30 +171,54 @@ export function SettingsModal({ settings, setSettings, compLibraries, setCompLib
   // touch the user's local .kicad_sym files on disk.
   // Two-step via DeleteLibraryModal. This entry removes a *component*
   // library (registration only — no files are touched).
-  const removeLib = (lib) => { onRequestDelete({ kind: 'component', lib }) }
+  const removeLib = (lib) => { if (!operationRef.current) onRequestDelete({ kind: 'component', lib }) }
 
   // Toggle library lock; official KiCad libs cannot be unlocked
-  const toggleLock = async (lib) => {
+  const toggleLock = (lib) => {
+    if (operationRef.current) return
     if (lib.is_protected) { toastMsg(t('settings.officialLocked')); return }
-    const r = await api.saveCompLibrary({ action: 'update', id: lib.id, locked: !lib.locked })
-    if (r?.ok) { loadCompLibraries(); toastMsg(t(lib.locked ? 'settings.unlocked' : 'settings.locked')) }
-    else toastMsg(r?.error || t('toast.failedUnknown'))
+    return runOperation('saving', async () => {
+      const r = await api.saveCompLibrary({ action: 'update', id: lib.id, locked: !lib.locked })
+      if (!mountedRef.current) return
+      requireSuccess(r)
+      loadCompLibraries(); toastMsg(t(lib.locked ? 'settings.unlocked' : 'settings.locked'))
+    })
   }
 
-  const importAll = async () => {
-    toastMsg(t('toast.classifying'))
+  const importAll = () => runOperation('importing', async () => {
     const r = await api.saveCompLibrary({ action: 'import' })
-    if (r?.ok) {
-      toastMsg(t('toast.saved', { symbols: r.imported_symbols || 0, footprints: r.imported_footprints || 0 }))
-      onClose(); loadSymbols(); loadStatus()
-    } else toastMsg(r?.error || t('toast.failedUnknown'))
+    requireSuccess(r)
+    // 全局刷新读取的是最新查询，即使用户已关闭设置也要发布导入结果。
+    refreshSymbols(); loadStatus()
+    if (!mountedRef.current) return
+    toastMsg(t('toast.saved', { symbols: r.imported_symbols || 0, footprints: r.imported_footprints || 0 }))
+    onClose()
+  })
+
+  const resetDatabase = async () => {
+    if (operationRef.current || !(await showConfirm(t('confirm.resetDb')))) return
+    return runOperation('saving', async () => {
+      const r = await api.resetDb()
+      if (!mountedRef.current) return
+      requireSuccess(r)
+      toastMsg(r.message)
+    })
   }
 
   // 打开设置时加载元件库列表
   useEffect(() => { loadCompLibraries() }, []) // eslint-disable-line
 
+  const Frame = inline ? CenterPage : Modal
   return (
-    <Modal title={t('settings.title')} onClose={onClose}>
+    <Frame title={t('settings.title')} onClose={onClose}
+      className={inline ? 'settings-page settings-modal' : 'settings-modal'}>
+      {busy && <p role="status" style={{fontSize:12,color:'var(--accent)',margin:'0 0 12px'}}>
+        {t(busy === 'importing' ? 'settings.importingStatus' : 'settings.savingStatus')}
+      </p>}
+      {actionError && <p role="alert" style={{fontSize:12,color:'var(--red)',margin:'0 0 12px',whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>
+        {actionError}
+      </p>}
+      <fieldset disabled={!!busy} style={{border:0,padding:0,margin:0,minWidth:0}} aria-busy={!!busy}>
       <div style={{display:'flex', gap:16}}>
         <div style={{width:140, borderRight:'1px solid var(--sep)', paddingRight:12}}>
           {['paths','utils'].map(k => (
@@ -104,13 +231,15 @@ export function SettingsModal({ settings, setSettings, compLibraries, setCompLib
           {tab==='paths'?<>
             <div style={{marginBottom:12}}>
               <p style={{fontSize:12,color:'var(--text2)',margin:'0 0 8px 0'}}>{t('settings.compLibHint')}</p>
+              <p style={{fontSize:11,color:'var(--text2)',margin:'0 0 4px 0'}}>{t('settings.symbolPathHint')}</p>
+              <p style={{fontSize:11,color:'var(--text2)',margin:'0 0 12px 0'}}>{t('settings.footprintPathHint')}</p>
               <p style={{fontSize:11,color:'var(--red)',margin:'0 0 12px 0',padding:'8px 10px',border:'1px solid var(--red)',borderRadius:6,background:'rgba(220,38,38,0.06)'}}>
                 {t('settings.standardLibraryGuard')}
               </p>
 
               {/* Existing component libraries */}
               {compLibraries.map(lib => (
-                <div key={lib.id} style={{padding:'8px 10px',border:'1px solid var(--sep)',borderRadius:8,marginBottom:8,background:editingId === lib.id ? 'var(--accent2)' : 'transparent'}}>
+                <div key={lib.id} style={{padding:'8px 10px',border:'1px solid var(--sep)',borderRadius:8,marginBottom:8,background:editingId === lib.id ? 'var(--accent-soft)' : 'transparent'}}>
                   {editingId === lib.id ? (
                     <div style={{display:'flex',flexDirection:'column',gap:6}}>
                       <input value={draftName} onChange={e => setDraftName(e.target.value)} placeholder={t('settings.libName')}
@@ -122,7 +251,7 @@ export function SettingsModal({ settings, setSettings, compLibraries, setCompLib
                       <input value={draftM3d} onChange={e => setDraftM3d(e.target.value)} placeholder={t('settings.3dPath')}
                         style={{padding:'5px 8px',border:'1px solid var(--sep)',borderRadius:5,fontSize:12,background:'var(--bg)',color:'var(--text)'}} />
                       <div style={{display:'flex',gap:6,marginTop:2}}>
-                        <button className="btn-primary" style={{padding:'4px 12px',fontSize:11}} onClick={saveLib}>✓ Save</button>
+                        <button className="btn-primary" disabled={!!busy} style={{padding:'4px 12px',fontSize:11}} onClick={saveLib}>✓ Save</button>
                         <button className="btn-ghost" style={{padding:'4px 12px',fontSize:11}} onClick={cancelEdit}>✕ Cancel</button>
                       </div>
                     </div>
@@ -168,14 +297,14 @@ export function SettingsModal({ settings, setSettings, compLibraries, setCompLib
                     <input value={draftM3d} onChange={e => setDraftM3d(e.target.value)} placeholder={t('settings.3dPath')}
                       style={{padding:'5px 8px',border:'1px solid var(--sep)',borderRadius:5,fontSize:12,background:'var(--bg)',color:'var(--text)'}} />
                     <div style={{display:'flex',gap:6,marginTop:2}}>
-                      <button className="btn-primary" style={{padding:'4px 12px',fontSize:11}} onClick={saveLib}>+ {t('types.add')}</button>
+                      <button className="btn-primary" disabled={!!busy} style={{padding:'4px 12px',fontSize:11}} onClick={saveLib}>+ {t('types.add')}</button>
                       <button className="btn-ghost" style={{padding:'4px 12px',fontSize:11}} onClick={cancelEdit}>✕ {t('plugin.cancel')}</button>
                     </div>
                   </div>
                 </div>
               ) : (
                 <button className="btn-ghost" style={{width:'100%',padding:'8px',fontSize:12,border:'1px dashed var(--sep)',borderRadius:8,color:'var(--accent)'}}
-                  onClick={() => { setEditingId('new'); setDraftName(''); setDraftSym(''); setDraftFp(''); setDraftM3d('') }}>
+                  onClick={() => { if (operationRef.current) return; setActionError(''); setEditingId('new'); setDraftName(''); setDraftSym(''); setDraftFp(''); setDraftM3d('') }}>
                   + {t('settings.addCompLib')}
                 </button>
               )}
@@ -183,7 +312,7 @@ export function SettingsModal({ settings, setSettings, compLibraries, setCompLib
               {/* Import button */}
               {!editingId && (
                 <div className="btn-row" style={{marginTop:16}}>
-                  <button className="btn-primary" onClick={importAll}>
+                  <button className="btn-primary" disabled={!!busy} onClick={importAll}>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{marginRight:6,verticalAlign:'middle'}}>
                       <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
                     </svg>
@@ -206,51 +335,54 @@ export function SettingsModal({ settings, setSettings, compLibraries, setCompLib
                     ].map(([key, label]) => (
                       <button key={key} className="btn-ghost"
                         style={{padding:'6px 14px',fontSize:12,border:'1px solid var(--sep)',borderRadius:6}}
-                        onClick={() => { onClose(); onOpenTool(key) }}>{label}</button>
+                        onClick={() => { if (!inline) onClose(); onOpenTool(key) }}>{label}</button>
                     ))}
                   </div>
                 </UtilBox>
               )}
+              <PluginSlot slot="settings.section" ownerProps={{ settings, workspaceId: workspaceId || null }} />
               <UtilBox title={t('settings.resetDb')} desc={t('settings.resetDbHint')}>
                 <button style={{padding:'6px 14px',border:'1px solid var(--red)',borderRadius:6,color:'var(--red)',background:'transparent',cursor:'pointer'}}
-                  onClick={async()=>{if(!(await showConfirm(t('confirm.resetDb'))))return;const r=await api.resetDb();toastMsg(r?.ok?r.message:'Reset failed')}}>{t('settings.resetDbButton')}</button>
+                  onClick={resetDatabase}>{t('settings.resetDbButton')}</button>
               </UtilBox>
               <UtilBox title={t('settings.reimportAll')} desc={t('settings.reimportHint')}>
-                <button className="btn-primary" style={{padding:'6px 14px'}} onClick={importAll}>{t('settings.reimportButton')}</button>
+                <button className="btn-primary" disabled={!!busy} style={{padding:'6px 14px'}} onClick={importAll}>{t('settings.reimportButton')}</button>
               </UtilBox>
               <UtilBox title={t('settings.writeKfId')} desc={t('settings.writeKfIdHint')}>
                 <label style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer',fontSize:12}}>
                   <input type="checkbox" checked={!!settings.write_kf_id_to_file}
-                    onChange={async e => {
-                      const v = e.target.checked;
-                      setSettings({...settings, write_kf_id_to_file: v});
-                      await api.saveConfig({write_kf_id_to_file: v});
+                    onChange={e => {
+                      const v = e.target.checked
+                      runOperation('saving', async () => {
+                        const r = await api.saveConfig({write_kf_id_to_file: v})
+                        if (!mountedRef.current) return
+                        requireSuccess(r)
+                        setSettings({...settings, write_kf_id_to_file: v})
+                      })
                     }} />
                   {t('settings.writeKfIdEnable')}
                 </label>
               </UtilBox>
-              <UtilBox title="Language" desc="">
-                <select value={i18n.language} onChange={e => i18n.changeLanguage(e.target.value)}
-                  style={{padding:'6px 10px',border:'1px solid var(--sep)',borderRadius:6,fontSize:12,background:'var(--bg)',color:'var(--text)'}}>
-                  <option value="en">English</option>
-                  <option value="zh">中文</option>
-                </select>
+              <UtilBox title={t('settings.appearance')} desc="">
+                <label style={{display:'flex',alignItems:'center',gap:8,cursor:'pointer',fontSize:12}}>
+                  <input type="checkbox" checked={!!dark} onChange={() => onToggleTheme()} />
+                  {t('settings.darkMode')}
+                </label>
+                <div style={{display:'flex',alignItems:'center',gap:8,marginTop:10,fontSize:12}}>
+                  <span>{t('settings.language')}</span>
+                  <select className="settings-select" value={i18n.language} onChange={e => i18n.changeLanguage(e.target.value)}>
+                    <option value="en">English</option>
+                    <option value="zh">中文</option>
+                  </select>
+                </div>
               </UtilBox>
               <UtilBox title={t('settings.dbLocation')} desc="%APPDATA%/kicad_forge/meta.db" />
             </div>
           </>}
         </div>
       </div>
-    </Modal>
-  )
-}
-function Field({ k, label, hint, settings, setSettings }) {
-  return (
-    <div className="form-group">
-      <label>{label}</label>
-      <input value={settings[k]||''} onChange={e => setSettings({...settings,[k]:e.target.value})} placeholder="e.g. C:\KiCad\symbols" />
-      {hint && <span className="form-hint">{hint}</span>}
-    </div>
+      </fieldset>
+    </Frame>
   )
 }
 function UtilBox({ title, desc, children }) {
@@ -276,17 +408,9 @@ export function RulesModal({ rules, onClose }) {
 }
 
 // ---- Plugins Modal ----
-export function PluginsModal({ plugins, onClose, setPluginAction, setPluginFormData, loadLibraries, targetLib }) {
+// The legacy Python action interface is gone; this only manages plugin state.
+export function PluginsModal({ plugins, onClose, onTogglePlugin }) {
   const { t } = useTranslation()
-  const runAction = (p, a) => {
-    if (!setPluginAction) return
-    loadLibraries?.()
-    // Pre-fill target_library for inline actions (mirrors the sidebar/toolbar)
-    const prefill = a.trigger === 'inline' ? { target_library: targetLib || '' } : {}
-    setPluginAction({ plugin: p, action: a })
-    setPluginFormData(prefill)
-    onClose()
-  }
   return (
     <Modal title={t('sidebar.plugins')} onClose={onClose}>
       {plugins.map((p,i)=>(
@@ -297,19 +421,15 @@ export function PluginsModal({ plugins, onClose, setPluginAction, setPluginFormD
           </div>
           <div className="plugin-info">
             <div className="plugin-name">{p.name}</div>
-            <div className="plugin-meta">{p.id} · v{p.version} · <span className={`status-${p.status}`}>{p.status}</span></div>
-            {p.description && <div className="plugin-meta" style={{marginTop:2}}>{p.description}</div>}
-            {/* All plugin actions are reachable here — including ones hidden
-                from the sidebar (button.show:false) */}
-            {(p.actions || []).length > 0 && (
-              <div style={{display:'flex',flexWrap:'wrap',gap:6,marginTop:8}}>
-                {p.actions.map(a => (
-                  <button key={a.id} className="btn-ghost" title={a.description}
-                    style={{padding:'3px 10px',fontSize:11}}
-                    onClick={() => runAction(p, a)}>{a.name}</button>
-                ))}
-              </div>
+            <div className="plugin-meta">{p.id} · v{p.version} · <span className={`status-${p.status}`}>{p.enabled === false ? 'disabled' : p.status}</span></div>
+            {onTogglePlugin && (
+              <button className="btn-ghost" data-testid={`plugin-toggle-${p.id}`}
+                style={{ padding: '3px 10px', fontSize: 11, marginTop: 6 }}
+                onClick={() => onTogglePlugin(p)}>
+                {p.enabled === false ? t('plugin.enable') : t('plugin.disable')}
+              </button>
             )}
+            {p.description && <div className="plugin-meta" style={{marginTop:2}}>{p.description}</div>}
           </div>
         </div>
       ))}
@@ -322,298 +442,382 @@ export function PluginsModal({ plugins, onClose, setPluginAction, setPluginFormD
   )
 }
 
-// ---- Type Modal ----
-export function TypeModal({ title, items, onClose, onAdd, onRemove, showIcon, showCategory }) {
-  const [newName, setNewName] = useState('')
-  const [newCat, setNewCat] = useState('Other')
+export function TypeEditorModal({ mode, entry, onClose, onSubmit, onBusyChange, canWrite = true, blockReason = '' }) {
   const { t } = useTranslation()
-  function handleAdd() { if(!newName.trim())return; onAdd(showCategory?[newName.trim(),newCat]:[newName.trim()]); setNewName('') }
+  const editing = mode === 'edit'
+  const [name, setName] = useState(entry?.name || '')
+  const [icon, setIcon] = useState(entry?.icon || '')
+  const [color, setColor] = useState(entry?.color || '')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const submitLock = useRef(false)
+  const savingRef = useRef(false)
+
+  const setBusy = (next) => {
+    savingRef.current = next
+    setSaving(next)
+    onBusyChange?.(next)
+  }
+  // 写入在飞时 X / 遮罩 / Escape / 取消全部冻结（savingRef 同步生效，
+  // 不依赖 state 何时刷新）——否则旧写入的成功回包会关掉用户后来打开的表单
+  const requestClose = () => { if (savingRef.current) return; onClose() }
+
+  // 原生取色器只接受 #RRGGBB：历史颜色不是该格式时显示默认值，
+  // 但草稿仍保留原值 —— 没动颜色就不提交颜色，改名不会顺手改色。
+  const pickerValue = normalizeColor(color) || '#000000'
+  const colorLabel = normalizeColor(color) || t('types.noColor')
+  const blocked = !canWrite
+
+  async function submit() {
+    if (submitLock.current) return
+    const trimmed = name.trim()
+    if (!trimmed) { setError(t('types.required.name')); return }
+    if (!editing) {
+      // 新增：全部字段都要过校验（没有「没动所以跳过」的余地）
+      if (validateIconInput(icon)) {
+        setError(t('types.invalid.icon', { bytes: iconByteLength(icon), max: TYPE_ICON_MAX_BYTES }))
+        return
+      }
+      if (validateColorInput(color)) { setError(t('types.invalid.color')); return }
+    } else {
+      // 编辑：只校验这次真正会写下去的字段。先按原文比出变化，再校验新值 ——
+      // 只对补丁里存在的字段做校验会让「改成非法值」被当成没改而静默丢弃。
+      const changes = changedTypeFields(entry, { name, icon, color })
+      if ('icon' in changes && validateIconInput(changes.icon)) {
+        setError(t('types.invalid.icon', { bytes: iconByteLength(changes.icon), max: TYPE_ICON_MAX_BYTES }))
+        return
+      }
+      if ('color' in changes && validateColorInput(changes.color)) {
+        setError(t('types.invalid.color'))
+        return
+      }
+    }
+    const payload = editing
+      ? buildTypePatch(entry, { name, icon, color })
+      : buildAddPayload({ name, icon, color })
+    // 编辑没有任何字段变化：不算保存，也不发请求
+    if (editing && !patchHasChanges(payload)) { onClose(); return }
+    submitLock.current = true
+    setBusy(true)
+    setError('')
+    try {
+      const result = await onSubmit(payload)
+      if (!result || result.busy) return      // 已经有写入在飞：等它，不重复提交
+      if (!result.ok) {
+        setError(result.error || (result.blocked ? t('types.writeBlocked') : t('toast.failedUnknown')))
+        return
+      }
+      onClose()
+    } finally {
+      submitLock.current = false
+      setBusy(false)
+    }
+  }
+
   return (
-    <Modal title={title} onClose={onClose}>
-      <div className="rules-list" style={{maxHeight:350,overflow:'auto'}}>
-        {items.map((t,i)=>(<div key={t.id || i} className="rule-item">
-          {showIcon&&<span style={{fontSize:16,width:24}}>{t.icon||'○'}</span>}
-          <span className="rule-name">{t.name}</span>
-          {showCategory&&<span style={{fontSize:11,color:'var(--text2)'}}>{t.category}</span>}
-          <button className="btn-ghost" style={{padding:'3px 10px',fontSize:11,color:'var(--red)'}} onClick={()=>onRemove(t)}>×</button>
-        </div>))}
+    <Modal title={editing ? t('types.editTitle', { name: entry?.name || '' }) : t('types.addTitle')}
+      onClose={requestClose} onEscape={requestClose}>
+      <div className="type-form">
+        <label className="type-field">
+          <span className="type-field-label">{t('types.name')}</span>
+          <input className="type-input" data-testid="type-name" value={name} disabled={saving}
+            onChange={e => { setName(e.target.value); setError('') }} />
+        </label>
+
+        <div className="type-field">
+          <label className="type-field-label" htmlFor="type-editor-icon">{t('types.icon')}</label>
+          <div className="type-icon-row">
+            {/* 预览只是装饰：真正的描述是字段标签 + 提示文字 */}
+            <span className="type-icon-preview" aria-hidden="true"
+              style={normalizeColor(color) ? { color: normalizeColor(color) } : undefined}>
+              {icon || TYPE_ICON_PLACEHOLDER}
+            </span>
+            <input id="type-editor-icon" className="type-input" value={icon} disabled={saving}
+              aria-describedby="type-editor-icon-hint" maxLength={TYPE_ICON_MAX_BYTES}
+              onChange={e => { setIcon(e.target.value); setError('') }} />
+          </div>
+          <p id="type-editor-icon-hint" className="type-hint">
+            {t('types.iconHint', { max: TYPE_ICON_MAX_BYTES })}
+          </p>
+        </div>
+
+        <div className="type-field">
+          <label className="type-field-label" htmlFor="type-editor-color">{t('types.color')}</label>
+          <div className="type-color-row">
+            <input id="type-editor-color" type="color" className="type-color-input" value={pickerValue}
+              disabled={saving} aria-describedby="type-editor-color-hint"
+              onChange={e => { setColor(e.target.value); setError('') }} />
+            <span id="type-editor-color-hint" className="type-color-value" data-testid="type-color-value">
+              {colorLabel}
+            </span>
+            <button type="button" className="btn-ghost" data-testid="type-clear-color" disabled={saving}
+              onClick={() => { setColor(''); setError('') }}>{t('types.clearColor')}</button>
+          </div>
+        </div>
+
+        {/* 快照不可写（已保存待刷新 / 还没加载出有效表）：说清原因，草稿留着 */}
+        {blocked && !error && (
+          <div className="type-error" role="status" data-testid="type-editor-blocked">
+            {blockReason || t('types.writeBlocked')}
+          </div>
+        )}
+        {error && <div className="type-error" role="alert" data-testid="type-editor-error">{error}</div>}
       </div>
-      <div style={{display:'flex',gap:8,marginTop:16}}>
-        <input placeholder={t('types.newTypePlaceholder')} value={newName}
-          onChange={e=>setNewName(e.target.value)} onKeyDown={e=>e.key==='Enter'&&handleAdd()}
-          style={{flex:1,padding:'6px 10px',border:'1px solid var(--sep)',borderRadius:6,fontSize:12,background:'var(--bg)',color:'var(--text)'}}/>
-        {showCategory&&<select value={newCat} onChange={e=>setNewCat(e.target.value)}
-          style={{padding:'6px 8px',border:'1px solid var(--sep)',borderRadius:6,fontSize:12,background:'var(--bg)',color:'var(--text)'}}>
-          <option>Other</option><option>SMD Chip</option><option>SMD IC</option><option>Through-hole</option><option>Connector</option></select>}
-        <button className="btn-primary" style={{padding:'6px 14px',fontSize:12}} onClick={handleAdd}>{t('types.add')}</button>
+      <div className="btn-row" style={{ marginTop: 16, display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+        <button className="btn-ghost" data-testid="type-editor-cancel" disabled={saving} onClick={requestClose}>
+          {t('types.cancel')}
+        </button>
+        <button className="btn-primary" data-testid="type-save" disabled={saving || blocked} onClick={submit}>
+          {saving ? t('types.saving') : t('types.save')}
+        </button>
       </div>
-      <p style={{fontSize:11,color:'var(--text2)',marginTop:8}}>{t('types.saveHint')}</p>
     </Modal>
   )
 }
 
-// ---- Plugin Action Modal ----
-export function PluginActionModal({ pluginAction, setPluginAction, pluginFormData, setPluginFormData, libraries, toastMsg, loadSymbols, loadLibraries, loadStatus, activeWorkspace }) {
+// ---- Type Modal ----
+// showCategory（封装类型）：名称/分类的原有行为不变，不加元件类型字段；
+// showIcon（元件类型）：条目用同一份类型配置的图标/颜色 + 编辑入口，
+// 新增走同一张编辑器（name/icon/color），删除在内置条目上禁用。
+export function TypeModal({
+  title, items, onClose, onAdd, onRemove, onSave, showIcon, showCategory,
+  loading, loadError, stale, onRetryLoad, canWrite = true,
+  onOpenMatching, inline = false,
+}) {
+  const [newName, setNewName] = useState('')
+  const [newCat, setNewCat] = useState('Other')
+  const [editor, setEditor] = useState(null)   // null | { mode, entry }
+  const [pendingRemove, setPendingRemove] = useState('')
+  const [editorBusy, setEditorBusy] = useState(false)
+  const removeLock = useRef(false)
+  const editorBusyRef = useRef(false)
   const { t } = useTranslation()
-  // two_step template state (analyze → pick → import). Hooks must run before any early return.
-  const [analyzeResult, setAnalyzeResult] = useState(null)
-  const [analyzing, setAnalyzing] = useState(false)
-  const [fpQuery, setFpQuery] = useState('')
-  const [fpResults, setFpResults] = useState([])
-  const [fpChoice, setFpChoice] = useState(null)   // {mode:'reuse',library,name} | {mode:'new'}
-  const [preflight, setPreflight] = useState(null) // context shown on dialog open (e.g. git status)
-  const action = pluginAction?.action
-  const fields = action?.schema?.fields || []
-  const isTwoStep = action?.template === 'two_step'
+  const list = Array.isArray(items) ? items : []
+  // 快照不可写：已保存待刷新（只能重读）或还没有有效类型表 ——
+  // 写入入口一律冻结，别让用户对着一份旧快照再写一次
+  const writeBlocked = !canWrite
+  const blockReason = stale
+    ? (loadError ? t('types.savedRefreshFailed', { error: loadError }) : t('types.savedPendingRefresh'))
+    : t('types.notWritable')
 
-  // Host-filled args (no user prompt): e.g. target_library = active workspace path
-  function autoArgs() {
-    const out = {}
-    for (const k of (action?.auto_args || [])) {
-      if (k === 'target_library' && activeWorkspace?.symbol_path) out.target_library = activeWorkspace.symbol_path
-    }
-    return out
+  const closeEditor = useCallback(() => {
+    editorBusyRef.current = false
+    setEditorBusy(false)
+    setEditor(null)
+  }, [])
+  const handleEditorBusy = useCallback((busy) => {
+    editorBusyRef.current = busy
+    setEditorBusy(busy)
+  }, [])
+  // X / 遮罩：写入在飞时整体冻结（子编辑器也是这张弹窗的一部分），
+  // 否则连编辑器一起关掉。Escape 只关最内层，交给下面对 onEscape 的处理。
+  const requestParentClose = useCallback(() => {
+    if (editorBusyRef.current) return
+    closeEditor()
+    onClose()
+  }, [closeEditor, onClose])
+  const requestParentEscape = useCallback(() => {
+    if (editorBusyRef.current) return
+    if (editor) { closeEditor(); return }
+    onClose()
+  }, [editor, closeEditor, onClose])
+
+  function handleAdd() {
+    if (writeBlocked || !newName.trim()) return
+    onAdd(showCategory ? [newName.trim(), newCat] : [newName.trim()])
+    setNewName('')
   }
 
-  // Fresh session per open — no state may leak from a previous dialog
-  useEffect(() => {
-    setAnalyzeResult(null)
-    setAnalyzing(false)
-    setFpQuery(''); setFpResults([]); setFpChoice(null)
-    setPreflight(null)
-  }, [pluginAction])
-
-  // Auto-execute inline actions with no form fields (depends on the dialog
-  // actually opening — not just on first mount)
-  useEffect(() => {
-    if (pluginAction && action?.trigger === 'inline' && fields.length === 0) execute()
-  }, [pluginAction]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Context preflight: run the declared action on open and show its result
-  useEffect(() => {
-    if (!pluginAction || !action?.preflight) return
-    let stale = false
-    api.executePlugin(pluginAction.plugin.id, { action: action.preflight, ...autoArgs() })
-      .then(r => { if (!stale && r?.ok) setPreflight(r.plugin_result) })
-      .catch(() => {})
-    return () => { stale = true }
-  }, [pluginAction]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  if (!pluginAction) return null
-  const { plugin } = pluginAction
-
-  async function execute() {
-    for (const f of fields) { if (f.required && !pluginFormData[f.key]?.trim()) { toastMsg(t('toast.required', { label: f.label })); return } }
-    setPluginAction(null); toastMsg(t('toast.executing'))
-    const body = { action: action.id, ...pluginFormData, ...autoArgs() }
-    // 宿主按 UUID 认目标库；路径只作为旧插件的兼容参数
-    if (body.target_library) {
-      const lib = libraries.find(l => l.id === body.target_library)
-      if (lib) { body.target_library_id = lib.id; body.target_library = lib.file_path || body.target_library }
-    }
-    const r = await api.executePlugin(plugin.id, body)
-    if (r?.ok) {
-      toastMsg(r.output || t('toast.done', { count: (r.imported_symbols||0) || (r.library_symbols||0) || '' }))
-      loadSymbols(); loadLibraries(); loadStatus()
-    } else toastMsg(t('toast.failed', { error: r?.error || 'unknown' }))
-  }
-
-  // ---- two_step: analyze (no library write) → pick footprint → import ----
-  async function runAnalyze() {
-    if (!pluginFormData.lcsc_id?.trim()) { toastMsg(t('toast.required', { label: 'lcsc_id' })); return }
-    setAnalyzing(true)
+  async function handleRemove(item) {
+    if (writeBlocked || removeLock.current) return   // 删除期间冻结重复操作
+    removeLock.current = true
+    setPendingRemove(item.id)
     try {
-      const r = await api.executePlugin(plugin.id, { action: action.analyze_action || 'analyze', ...autoArgs(), lcsc_id: pluginFormData.lcsc_id })
-      const out = r?.plugin_result
-      if (r?.ok && out?.footprint_name !== undefined) {
-        setAnalyzeResult(out)
-        setFpQuery(out.footprint_name || '')
-        const cands = Array.isArray(out.candidates) ? out.candidates : []
-        setFpResults(cands)
-        // Default-select the most similar existing footprint (top1), else "new"
-        setFpChoice(cands.length ? { mode: 'reuse', library: cands[0].library, name: cands[0].name } : { mode: 'new' })
-      } else toastMsg(t('toast.failed', { error: r?.error || 'analyze failed' }))
-    } finally { setAnalyzing(false) }
+      await onRemove(item)
+    } finally {
+      removeLock.current = false
+      setPendingRemove('')
+    }
   }
 
-  async function searchFootprints(q) {
-    setFpQuery(q)
-    try { const r = await api.searchFootprints(q, ''); setFpResults(r || []) } catch { setFpResults([]) }
+  async function handleSubmit(payload) {
+    if (!onSave) return { ok: false, error: t('toast.failedUnknown') }
+    return onSave(payload)
   }
 
-  async function runImport() {
-    if (!pluginFormData.lcsc_id?.trim()) { toastMsg(t('toast.required', { label: 'lcsc_id' })); return }
-    if (!pluginFormData.target_library?.trim()) { toastMsg(t('toast.required', { label: 'target_library' })); return }
-    setPluginAction(null); toastMsg(t('toast.executing'))
-    const body = { action: 'import', ...pluginFormData, ...autoArgs(), footprint_choice: fpChoice || { mode: 'new' } }
-    const lib = libraries.find(l => l.id === body.target_library)
-    if (lib) { body.target_library_id = lib.id; body.target_library = lib.file_path || body.target_library }
-    const r = await api.executePlugin(plugin.id, body)
-    if (r?.ok) {
-      const out = r.plugin_result || {}
-      const reused = out.mode === 'reuse'
-      toastMsg(t(reused ? 'plugin.footprintReused' : 'plugin.footprintNew',
-                 { name: out.footprint_reference || out.reused_from || '' }))
-      loadSymbols(); loadLibraries(); loadStatus()
-    } else toastMsg(t('toast.failed', { error: r?.error || 'unknown' }))
-  }
-
-  if (isTwoStep) {
-    const simpleFields = fields.filter(f => f.type !== 'search_picker')
-    const picker = fields.find(f => f.type === 'search_picker')
-    return (
-      <Modal title={action.name} onClose={() => setPluginAction(null)}>
-        {/* Step 1 — inputs */}
-        {simpleFields.map(f => (
-          <div key={f.key} className="form-group">
-            <label>{f.label}{f.required ? ' *' : ''}</label>
-            {f.type === 'library_picker' ? (
-              <select value={pluginFormData[f.key]||''} onChange={e => setPluginFormData({...pluginFormData,[f.key]:e.target.value})}
-                style={{width:'100%',padding:'8px 12px',border:'1px solid var(--sep)',borderRadius:7,fontSize:12.5,background:'var(--bg)',color:'var(--text)'}}>
-                <option value="">{t('plugin.select')}</option>
-                {libraries.map(l => <option key={l.id} value={l.id}>{l.name} ({l.symbol_count||0})</option>)}
-              </select>) : (
-              <input value={pluginFormData[f.key]||''} onChange={e => setPluginFormData({...pluginFormData,[f.key]:e.target.value})}
-                placeholder={f.key} onKeyDown={e => { if (e.key === 'Enter') runAnalyze() }} />
-            )}
-          </div>
-        ))}
-        <div className="btn-row" style={{marginBottom:12}}>
-          <button className="btn-ghost" onClick={() => setPluginAction(null)}>{t('plugin.cancel')}</button>
-          <button className="btn-primary" disabled={analyzing} onClick={runAnalyze}
-            title={t('plugin.analyzeTooltip')}>
-            {analyzing ? '…' : t('plugin.analyze')}
-          </button>
-        </div>
-
-        {/* Step 2 — footprint picker: always visible; Analyze fills it with
-            similarity-ranked candidates, manual search also works */}
-        {picker && (
-          <div className="form-group">
-            <label>{picker.label}</label>
-            {analyzeResult?.symbol_names?.length > 0 && (
-              <p style={{fontSize:11,color:'var(--text2)',margin:'0 0 6px 0'}}>
-                {analyzeResult.symbol_names.join(', ')}
-                {analyzeResult.model_name ? ` · 3D: ${analyzeResult.model_name}` : ''}
-              </p>
-            )}
-            {!analyzeResult && (
-              <p style={{fontSize:11,color:'var(--text3)',margin:'0 0 6px 0'}}>
-                {t('plugin.analyzeHint')}
-              </p>
-            )}
-            <input value={fpQuery} onChange={e => searchFootprints(e.target.value)}
-              placeholder={t('inspector.searchFootprint')} />
-            <div style={{maxHeight:220,overflow:'auto',border:'1px solid var(--sep)',borderRadius:6,marginTop:6}}>
-              <div className="search-popover-item"
-                style={{background: fpChoice?.mode === 'new' ? 'var(--accent2)' : 'transparent'}}
-                onClick={() => setFpChoice({ mode: 'new' })}>
-                <span className="search-popover-name">{t('plugin.newFootprint')}</span>
-              </div>
-              {fpResults.map(r => {
-                const chosen = fpChoice?.mode === 'reuse' && fpChoice.name === r.name
-                return (
-                  <div key={r.id || r.name} className="search-popover-item"
-                    style={{background: chosen ? 'var(--accent2)' : 'transparent'}}
-                    onClick={() => setFpChoice({ mode: 'reuse', library: r.library, name: r.name })}>
-                    <span className="search-popover-name">{r.library ? `${r.library}:${r.name}` : r.name}</span>
-                    {r.score != null && <span className="search-popover-extra">{Math.round(r.score * 100)}%</span>}
-                    {r.pad_count != null && <span className="search-popover-extra">{r.pad_count}p</span>}
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-        )}
-        <div className="btn-row">
-          <button className="btn-ghost" onClick={() => setPluginAction(null)}>{t('plugin.cancel')}</button>
-          <button className="btn-primary" onClick={runImport}>{t('plugin.execute')}</button>
-        </div>
-      </Modal>
-    )
-  }
-
-  // Inline with no fields — just show a brief executing modal
-  if (action.trigger === 'inline' && fields.length === 0) return (
-    <Modal title={action.name} onClose={() => setPluginAction(null)}>
-      <p style={{textAlign:'center',padding:20,color:'var(--text2)'}}>{t('toast.executing')}</p>
-    </Modal>
-  )
-
+  const Frame = inline ? CenterPage : Modal
   return (
-    <Modal title={action.name} onClose={() => setPluginAction(null)}>
-      {/* Preflight context (e.g. git branch / last commit / changes) */}
-      {preflight && (
-        <div style={{ padding:'8px 10px', border:'1px solid var(--sep)', borderRadius:6,
-                      marginBottom:12, fontSize:11.5, lineHeight:1.7 }}>
-          {preflight.initialized ? (
-            <>
-              <div>🌿 <b>{preflight.branch}</b>{preflight.ahead ? ` · ${preflight.ahead} ahead` : ''}</div>
-              <div style={{color:'var(--text2)'}}>{preflight.last_commit}</div>
-              <div style={{color: preflight.changes === 'clean' ? 'var(--green)' : 'var(--orange)'}}>
-                {preflight.changes}
-              </div>
-            </>
-          ) : (
-            <div style={{color:'var(--orange)'}}>{t('plugin.noGitRepo')}</div>
-          )}
+    <Frame title={title} onClose={requestParentClose} onEscape={requestParentEscape}
+      className={inline ? 'types-page' : ''}>
+      {/* 已保存但快照没刷新到位：明确说「已保存」，只提供重新读取，绝不让用户再写一次 */}
+      {stale && (
+        <div className="type-notice" role="status" data-testid="types-stale">
+          <span>{loadError
+            ? t('types.savedRefreshFailed', { error: loadError })
+            : t('types.savedPendingRefresh')}</span>
+          <button className="btn-ghost" data-testid="types-retry-load" disabled={!!loading}
+            onClick={() => onRetryLoad?.()}>{t('types.retryLoad')}</button>
         </div>
       )}
-      {fields.map(f => (
-        <div key={f.key} className="form-group">
-          <label>{f.label}{f.required ? ' *' : ''}</label>
-          {f.type === 'library_picker' ? (
-            <select value={pluginFormData[f.key]||''} onChange={e => setPluginFormData({...pluginFormData,[f.key]:e.target.value})}
-              style={{width:'100%',padding:'8px 12px',border:'1px solid var(--sep)',borderRadius:7,fontSize:12.5,background:'var(--bg)',color:'var(--text)'}}>
-              <option value="">{t('plugin.select')}</option>
-              {libraries.map(l => <option key={l.id} value={l.id}>{l.name} ({l.symbol_count||0})</option>)}
-            </select>) : (
-            <input value={pluginFormData[f.key]||''} onChange={e => setPluginFormData({...pluginFormData,[f.key]:e.target.value})}
-              placeholder={f.key} autoFocus onKeyDown={e => { if (e.key === 'Enter') execute() }} />
-          )}
+      {/* 读取失败 ≠ 空类型表：保留上一次快照，把原因和重试入口摆出来 */}
+      {!stale && loadError && (
+        <div className="type-notice error" role="alert" data-testid="types-load-failed">
+          <span>{t('types.loadFailed', { error: loadError })}</span>
+          <button className="btn-ghost" data-testid="types-retry-load" disabled={!!loading}
+            onClick={() => onRetryLoad?.()}>{t('types.retryLoad')}</button>
         </div>
-      ))}
-      <div className="btn-row">
-        <button className="btn-ghost" onClick={() => setPluginAction(null)}>{t('plugin.cancel')}</button>
-        <button className="btn-primary" onClick={execute}>{t('plugin.execute')}</button>
+      )}
+      {/* 还没有有效快照（首次读取失败/还在加载）：写入不可用，原因说清楚 */}
+      {writeBlocked && !stale && !loadError && (
+        <div className="type-notice" role="status" data-testid="types-not-writable">
+          <span>{t('types.notWritable')}</span>
+          <button className="btn-ghost" data-testid="types-retry-load" disabled={!!loading}
+            onClick={() => onRetryLoad?.()}>{t('types.retryLoad')}</button>
+        </div>
+      )}
+      <div className="rules-list" style={{maxHeight:350,overflow:'auto'}}>
+        {list.map((item,i)=>(<div key={item.id || i} className="rule-item" data-testid={item.id ? `type-row-${item.id}` : undefined}>
+          {showIcon&&<span className="type-icon" aria-hidden="true"
+            style={item.color?{color:item.color,fontSize:16,width:24}:{fontSize:16,width:24}}>{item.icon||'○'}</span>}
+          <span className="rule-name">{item.name}</span>
+          {showCategory&&<span style={{fontSize:11,color:'var(--text2)'}}>{item.category}</span>}
+          {showIcon&&(
+            <button className="btn-ghost type-edit" style={{padding:'3px 10px',fontSize:11}}
+              aria-label={`${t('types.edit')} ${item.name||''}`} title={t('types.edit')}
+              disabled={!!pendingRemove || writeBlocked || editorBusy}
+              onClick={()=>setEditor({ mode:'edit', entry:item })}>✎</button>
+          )}
+          <button className="btn-ghost type-remove" style={{padding:'3px 10px',fontSize:11,color:'var(--red)'}}
+            aria-label={`${t('types.remove')} ${item.name||''}`}
+            title={item.builtin ? t('types.builtinUndeletable') : t('types.remove')}
+            disabled={item.builtin===true || pendingRemove===item.id || writeBlocked || editorBusy}
+            onClick={()=>handleRemove(item)}>×</button>
+        </div>))}
       </div>
-    </Modal>
+      <div style={{display:'flex',gap:8,marginTop:16}}>
+        {showIcon && onOpenMatching && <button className="btn-ghost" disabled={!!pendingRemove || editorBusy}
+          onClick={onOpenMatching}>{t('classifying.matchingRules')}</button>}
+        {showIcon ? (
+          // 元件类型：新增与编辑共用编辑器，字段（名称/图标/颜色）完全一致
+          <button className="btn-primary" data-testid="type-add-open"
+            style={{padding:'6px 14px',fontSize:12}} disabled={!!pendingRemove || writeBlocked || editorBusy}
+            onClick={()=>setEditor({ mode:'add' })}>{t('types.add')}</button>
+        ) : (
+          <>
+            <input placeholder={t('types.newTypePlaceholder')} value={newName}
+              onChange={e=>setNewName(e.target.value)} onKeyDown={e=>e.key==='Enter'&&handleAdd()}
+              style={{flex:1,padding:'6px 10px',border:'1px solid var(--sep)',borderRadius:6,fontSize:12,background:'var(--bg)',color:'var(--text)'}}/>
+            {showCategory&&<select value={newCat} onChange={e=>setNewCat(e.target.value)}
+              style={{padding:'6px 8px',border:'1px solid var(--sep)',borderRadius:6,fontSize:12,background:'var(--bg)',color:'var(--text)'}}>
+              <option>Other</option><option>SMD Chip</option><option>SMD IC</option><option>Through-hole</option><option>Connector</option></select>}
+            <button className="btn-primary" style={{padding:'6px 14px',fontSize:12}} onClick={handleAdd}>{t('types.add')}</button>
+          </>
+        )}
+      </div>
+      <p style={{fontSize:11,color:'var(--text2)',marginTop:8}}>{t('types.saveHint')}</p>
+      {editor && (
+        <TypeEditorModal mode={editor.mode} entry={editor.entry}
+          onClose={closeEditor} onSubmit={handleSubmit}
+          onBusyChange={handleEditorBusy} canWrite={!writeBlocked} blockReason={blockReason} />
+      )}
+    </Frame>
   )
 }
 
 // ---- Import Progress Modal ----
+const IMPORT_PHASES = new Set([
+  'scanning', 'symbols_parse', 'symbols_import', 'footprints_parse', 'footprints', 'models',
+  'linking', 'done', 'idle', 'failed', 'cancelled',
+])
+const isFileCount = (value) => Number.isSafeInteger(value) && value >= 0
+function validImportStatus(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || typeof value.importing !== 'boolean') return false
+  if (Object.hasOwn(value, 'progress')) {
+    const progress = value.progress
+    if (!progress || typeof progress !== 'object' || Array.isArray(progress)
+      || !IMPORT_PHASES.has(progress.phase)
+      || !isFileCount(progress.completed) || !isFileCount(progress.total)
+      || (progress.total > 0 && progress.completed > progress.total)) return false
+  }
+  return true
+}
+
 export function ImportingModal({ onDone }) {
   const { t } = useTranslation()
-  const [syms, setSyms] = useState(0)
-  const [fps, setFps] = useState(0)
-  const [done, setDone] = useState(false)
+  const [progress, setProgress] = useState(null)
+  const [error, setError] = useState(null)
+  const [hidden, setHidden] = useState(false)
+  const latestOnDone = useRef(onDone)
+  latestOnDone.current = onDone
 
   useEffect(() => {
-    const poll = setInterval(async () => {
+    let active = true
+    let timer = null
+    const controller = new AbortController()
+    async function poll() {
+      let problem = null
+      let completed = false
       try {
-        const r = await (await fetch('/api/import-status')).json()
-        setSyms(r.symbols || 0)
-        setFps(r.footprints || 0)
-        if (!r.importing) {
-          setDone(true); clearInterval(poll)
-          if (onDone) onDone()
+        const response = await fetch('/api/import-status', { signal: controller.signal, cache: 'no-store' })
+        if (!response.ok) {
+          problem = { key: 'importProgress.httpFailed', params: { status: response.status } }
+        } else {
+          const status = await response.json()
+          if (!validImportStatus(status)) {
+            problem = { key: 'importProgress.invalidResponse' }
+          } else if (active) {
+            // Only task progress belongs here. Legacy global database counts
+            // are ignored; an omitted progress snapshot keeps the last value.
+            if (status.progress) setProgress(status.progress)
+            completed = !status.importing
+          }
         }
-      } catch {}
-    }, 2000)
-    return () => clearInterval(poll)
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+      } catch {
+        problem = { key: 'importProgress.readFailed' }
+      }
+      if (!active) return
+      setError(problem)
+      if (completed) {
+        setHidden(true)
+        latestOnDone.current?.()
+        return
+      }
+      // Schedule after the response is handled: a slow request must never
+      // overlap another request or let an older response overwrite a newer one.
+      timer = setTimeout(poll, 2000)
+    }
+    void poll()
+    return () => {
+      active = false
+      clearTimeout(timer)
+      controller.abort()
+    }
+  }, [])
 
-  if (done) return null
+  if (hidden) return null
 
   return (
-    <Modal title={t('app.importingTitle')} onClose={() => setDone(true)}>
-      <div style={{textAlign:'center',padding:20}}>
+    <Modal title={t('app.importingTitle')} onClose={() => setHidden(true)}>
+      <div className="import-progress" style={{textAlign:'center',padding:20}}>
         <p style={{fontSize:14,color:'var(--text2)',marginBottom:16}}>
           {t('app.importingHint')}
         </p>
-        <p style={{fontSize:20,fontWeight:600,color:'var(--accent)'}}>
-          {t('app.symbols')}: {syms.toLocaleString()}  ·  {t('settings.footprint')}: {fps.toLocaleString()}
-        </p>
+        <div role="status" aria-live="polite" style={{marginBottom:20}}>
+          <p style={{fontWeight:600,marginBottom:6}}>
+            {progress ? t(`importProgress.phases.${progress.phase}`) : t('importProgress.waitingProgress')}
+          </p>
+          {progress && <>
+            <p style={{fontSize:13,color:'var(--text2)',marginBottom:8}}>
+              {t(progress.total > 0 ? 'importProgress.filesProgress' : 'importProgress.filesProcessed', {
+                completed: progress.completed.toLocaleString(), total: progress.total.toLocaleString(),
+              })}
+            </p>
+            {progress.total > 0
+              ? <progress aria-label={t('importProgress.fileProgress')} max={progress.total} value={progress.completed} style={{width:'100%',maxWidth:360}} />
+              : <progress aria-label={t('importProgress.fileProgress')} style={{width:'100%',maxWidth:360}} />}
+          </>}
+        </div>
+        {error && <p role="alert" style={{fontSize:12,color:'var(--red)',marginTop:12}}>{t(error.key, error.params)}</p>}
         <p style={{fontSize:11,color:'var(--text3)',marginTop:12}}>
           {t('app.waitHint')}
         </p>
@@ -677,15 +881,31 @@ export function CreateLibraryModal({ onClose, loadLibraries, toastMsg }) {
 }
 
 // ---- Classify Result Modal ----
-export function ClassifyResultModal({ result, onClose }) {
+export function ClassifyResultModal({ result, refresh, onRetryRefresh, onClose }) {
   const { t } = useTranslation()
-  const rows = result?.results || []
+  const summary = result?.summary || result
+  const rows = result?.details || result?.results || []
+  const writeStatuses = ['updated', 'rolled_back', 'not_attempted', 'unchanged', 'not_eligible',
+    'read_only', 'source_changed', 'cas_skipped', 'deleted']
+  const sourceLabel = source => source?.startsWith('classifying.sources.') ? t(source) : source
   return (
     <Modal title={t('inspector.classifyResult')} onClose={onClose}>
       <p style={{ fontSize: 12, color: 'var(--text2)', margin: '0 0 12px 0' }}>
-        {t('toast.classified', { matched: result?.matched ?? 0, total: result?.total ?? 0 })}
-        {result?.type_updated != null && ` · ${t('inspector.typeUpdated', { count: result.type_updated })}`}
+        {result?.error ? t('classifying.partialMatched', { matched: summary?.matched ?? 0, total: summary?.total ?? 0 })
+          : t('toast.classified', { matched: summary?.matched ?? 0, total: summary?.total ?? 0 })}
+        {summary?.type_updated != null && ` · ${t('inspector.typeUpdated', { count: summary.type_updated })}`}
       </p>
+      {result?.error && <p role="alert" style={{ fontSize: 12, color: 'var(--red)', whiteSpace: 'pre-wrap' }}>{result.error}</p>}
+      {refresh && <div className="type-notice" role="status">
+        <span>{t(refresh.status === 'published' ? 'classifying.refreshPublished'
+          : refresh.status === 'pending' ? 'classifying.refreshPending' : 'classifying.refreshRequired')}</span>
+        {refresh.details?.filter(item => item.status !== 'published').map(item =>
+          <span key={item.source}>{t('classifying.refreshDetail', { source: sourceLabel(item.source),
+            reason: item.status === 'superseded' ? t('classifying.refreshSuperseded')
+              : translateMatchingMessage(item.errorMessage, t) || item.error || t('classifying.refreshUnpublished') })}</span>)}
+        {['failed', 'superseded'].includes(refresh.status) && onRetryRefresh &&
+          <button className="btn-ghost" onClick={onRetryRefresh}>{t('classifying.retryRefresh')}</button>}
+      </div>}
       <div className="modal-results">
         {rows.length === 0 && <div className="search-popover-empty">—</div>}
         {rows.map((r, i) => (
@@ -693,6 +913,9 @@ export function ClassifyResultModal({ result, onClose }) {
             <span className="search-popover-name">{r.name}</span>
             {r.library && <span className="search-popover-extra">{r.library}</span>}
             {r.type && <span className="search-popover-extra">{r.type}</span>}
+            {r.write_status && <span className="search-popover-extra" data-write-status={r.write_status}>
+              {writeStatuses.includes(r.write_status) ? t(`classifying.writeStatus.${r.write_status}`) : r.write_status}</span>}
+            {(r.write_reason || r.reason) && <span className="search-popover-extra">{r.write_reason || r.reason}</span>}
             {r.confidence != null && (
               <span className="search-popover-extra">
                 {t('inspector.confidence')}: {fmtConfidence(r.confidence)}

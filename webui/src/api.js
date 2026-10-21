@@ -42,7 +42,6 @@ async function request(url, opts = {}) {
 }
 
 export const api = {
-  executePlugin:(id, body)      => request(`/plugins/execute?id=${id}`, { method: 'POST', body: JSON.stringify(body) }),
   status:       ()              => request('/status'),
   symbols:      (q, lib)        => request(`/symbols?${q ? 'q=' + encodeURIComponent(q) : ''}${lib ? '&library=' + encodeURIComponent(lib) : ''}`),
   symbol:       (id)            => request(`/symbols/${encodeURIComponent(id)}`),
