@@ -12,7 +12,9 @@ Kicad_Forge 是一个现代化的元件库图形管理工具，旨在为 KiCad �
 
 简体中文 ~ [English](docs/README_en.md)
 
-[跨平台构建、自动测试与手动发布 / Cross-platform CI and releases](docs/CI.md)
+
+
+
 
 ![screenshot](resources/main_view.png)
 
@@ -23,13 +25,17 @@ Kicad_Forge 是一个现代化的元件库图形管理工具，旨在为 KiCad �
 
 ## 功能
 
-- **多元件库管理** — 将符号库 / 封装库 / 3D 模型目录绑定为元件库，侧边栏按元件库分组浏览
-- **一键批量导入** — 扫描 KiCad 库目录，自动解析 `.kicad_sym` / `.kicad_mod` 文件入库（实测 22,000+ 符号秒级导入）
-- **搜索与过滤** — 按名称模糊搜索、按库筛选，快速定位器件
-- **自动分类** — 规则引擎自动为符号标注类型（电阻、MCU、传感器……），支持自定义类型与规则
-- **关联检查与自动匹配** — 检查 Symbol↔Footprint↔3D 模型关联完整性，启发式自动匹配封装
-- **插件系统** — Python 插件以独立进程运行，`manifest.json` 驱动界面；内置 [LCSC 元件导入](plugins/lcsc_import/) 与 [Git 版本管理](plugins/git_version/) 插件
-- **双语界面** — 中文 / English（i18next）
+- **多元件库管理**： 元件库是符号库目录与封装库目录的集合，可附加 3D 模型目录；侧边栏按元件库分组浏览
+- **批量导入**： 扫描 KiCad 库目录，自动解析 `.kicad_sym` / `.kicad_mod` 文件入库
+- **搜索与过滤**： 按名称模糊搜索、按库筛选，快速定位器件
+- **元件类型匹配**： 先按精确特例匹配，再执行 PCRE2 正则规则，未命中默认分类为 `Unknown`；支持选择名称、值、型号或位号字段，并编辑类型图标与颜色
+- **自动关联检查**： 自动检查 Symbol↔Footprint↔3D 模型关联完整性
+- **自动匹配**：启发式自动匹配封装
+- **LCSC 导入**： 输入立创器件编号查找，选择目标元件库及其中的符号子库（已有或新建），再从自动找到的多个封装候选中选择复用，或新建封装
+- **插件系统**： Python 插件以独立进程运行，`manifest.json` 驱动界面；内置 [LCSC 元件导入](plugins/lcsc_import/) 与 [Git 版本管理](plugins/git_version/) 插件
+- **多语言** ： 目前只支持中文 / English
+
+匹配规则支持样本预览和数据库预览。保存规则只更新配置；点击应用后才补齐现有数据中未分类的元件，已指定的类型保持不变。普通目录导入和 LCSC 导入使用同一份已保存规则。
 
 ## 快速开始
 
@@ -40,12 +46,36 @@ Kicad_Forge 是一个现代化的元件库图形管理工具，旨在为 KiCad �
 - **Windows**：提供安装包，下载后直接运行
 - 其他平台：暂无预编译包，请从源码构建
 
+### 如何使用
+如果是**便携版**，解压到一个内文件夹后即可双击应用开始使用
+如果是**安装版**，双击安装程序完成安装后即可在桌面上看到该应用，双击以打开
+
+首次进入应用会先自动扫描并导入Kicad官方元件库，待导入完成后便可进入设置配置第三方元件库。
+
+**注意**：目前元件库路径**只支持**配置为目录路径，不支持使用.kicad_sym文件路径配置。
+```
+目前默认支持的元件库格式为：
+EXT_Internal_kicad_Lib
+├── 3DModels
+├── Docs
+├── Footprints
+│   ├── EXT_ACDC.pretty
+│   └── EXT_Example.pretty
+└── Symbols
+```
+
+![setting]()
+
+
+
 ### 环境要求
 
-- [xmake](https://xmake.io/)
-- [MSYS2](https://www.msys64.org/)：`mingw-w64-x86_64-clang` 工具链，以及 `mingw-w64-x86_64-sqlite3`、`mingw-w64-x86_64-fmt`
-- Python 3.10+：`pip install cairosvg Pillow`（用于从 SVG 生成应用图标）
-- Node.js（前端 React 19 + Vite）
+- [xmake](https://xmake.io/) 3.0.9+
+- [MSYS2](https://www.msys64.org/)：`mingw-w64-x86_64-clang`、`mingw-w64-x86_64-lld`、`mingw-w64-x86_64-gcc`
+- Python 3.12
+- Node.js 24（前端 React 19 + Vite）
+
+首次构建前按 [docs/CI.md](docs/CI.md#本地构建) 准备 PCRE2 和其他锁定依赖。常规构建直接使用仓库中的 `resources/app.ico`；只有修改图标素材时才需安装 CairoSVG、Pillow，并手动运行 `scripts/svg2ico.py`。
 
 > 默认使用 `D:/msys64/mingw64`，可通过环境变量 `MSYS2_DIR` 指定其他 MSYS2 安装路径。
 
@@ -53,7 +83,7 @@ Kicad_Forge 是一个现代化的元件库图形管理工具，旨在为 KiCad �
 
 ```bash
 # 1. 安装前端依赖
-cd webui && npm install && cd ..
+cd webui && npm ci && cd ..
 
 # 2. 配置并构建（debug）
 xmake f -p mingw -c
@@ -67,7 +97,8 @@ xmake f -m release && xmake build
 
 ### 数据目录
 
-便携式优先：数据（SQLite 数据库、配置）存放在 exe 同级的 `data/` 目录；目录不可写时回退到 `%APPDATA%/KiCad_Forge/data/`。
+便携版：exe 同级的 `data/` 目录；
+安装版：`%APPDATA%/KiCad_Forge/data/`。
 
 ## 项目结构
 
@@ -123,22 +154,24 @@ KiCad_Forge
 {
   "id": "com.kicad_forge.lcsc_import",
   "name": "LCSC Component Importer",
-  "version": "1.1.0",
+  "version": "2.1.0",
   "author": "KiCad Forge",
   "description": "Download symbols, footprints, and 3D models from LCSC by part number",
   "license": "MIT",
+  "capabilities": [
+    "import"
+  ],
+  "one_click": true,
   "entry": "plugin.py",
   "entry_function": "import_component",
   "icon": "icon.svg",
-  "capabilities": ["import"],
-  "one_click": true,
   "actions": [
     {
       "id": "import",
       "name": "Import LCSC",
-      "description": "Import a component from LCSC by part number",
+      "description": "Find a part by LCSC number and import it into a component library package",
       "trigger": "dialog",
-      "template": "two_step",
+      "template": "lcsc_import",
       "analyze_action": "analyze",
       "protocol": "staged-import-v1",
       "icon": "icon.svg",
@@ -150,10 +183,41 @@ KiCad_Forge
       },
       "schema": {
         "fields": [
-          { "key": "lcsc_id", "label": "LCSC Part Number", "type": "text", "required": true },
-          { "key": "target_library", "label": "Target Symbol Library", "type": "library_picker", "required": true },
-          { "key": "footprint_choice", "label": "Footprint", "type": "search_picker",
-            "source": "footprints", "near_from": "footprint_name" }
+          {
+            "key": "lcsc_id",
+            "label": "LCSC Part Number",
+            "type": "text",
+            "required": true
+          },
+          {
+            "key": "target_component_library_id",
+            "label": "Component Library Package",
+            "type": "component_library_picker",
+            "required": true
+          },
+          {
+            "key": "symbol_library_choice",
+            "label": "Symbol Library",
+            "type": "symbol_library_choice",
+            "source": "component_symbol_libraries",
+            "modes": [
+              "existing",
+              "new"
+            ],
+            "required": true
+          },
+          {
+            "key": "footprint_choice",
+            "label": "Footprint",
+            "type": "footprint_choice",
+            "source": "footprints",
+            "near_from": "footprint_name",
+            "modes": [
+              "reuse",
+              "new"
+            ],
+            "required": true
+          }
         ]
       }
     },
@@ -162,12 +226,17 @@ KiCad_Forge
       "name": "Analyze LCSC",
       "description": "Download and inspect without writing to the library",
       "trigger": "hidden",
-      "button": { "show": false }
+      "hidden": true,
+      "button": {
+        "show": false
+      }
     }
   ],
   "dependencies": {
     "python": ">=3.10",
-    "pip": ["easyeda2kicad"]
+    "pip": [
+      "easyeda2kicad"
+    ]
   }
 }
 ```
@@ -192,8 +261,8 @@ KiCad_Forge
 | 字段 | 说明 |
 |---|---|
 | `trigger` | `"dialog"` 弹窗表单 / `"inline"` 一键执行（默认） / `"hidden"` 隐藏动作（供模板引用） |
-| `template` | UI 模板：`"two_step"` 两步流程（先分析预览、再确认导入） |
-| `analyze_action` | `two_step` 模板引用的隐藏分析 action 的 id |
+| `template` | `"lcsc_import"` 使用 LCSC 专用流程：查找器件 → 选择目标元件库 → 选择已有或新建符号子库 → 复用或新建封装；普通插件使用通用表单 |
+| `analyze_action` | `lcsc_import` 模板引用的隐藏分析 action 的 id |
 | `protocol` | `"staged-import-v1"` 分阶段导入协议 |
 | `preflight` | 弹窗前预执行的 action id，结果（如 Git 状态）显示在表单顶部 |
 | `auto_args` | 由宿主自动填充的参数键（如 `target_library`） |
@@ -207,8 +276,10 @@ KiCad_Forge
 | `type` | 说明 |
 |---|---|
 | `text` | 文本输入框（默认） |
-| `library_picker` | 符号库下拉选择 |
-| `search_picker` | 可搜索候选列表（如封装搜索），配合 `two_step` 模板使用 |
+| `library_picker` | 通用表单的符号库下拉选择 |
+| `component_library_picker` | `lcsc_import` 专用：选择已登记且可写的目标元件库（符号库与封装库目录） |
+| `symbol_library_choice` | `lcsc_import` 专用：从目标包内的实际 `.kicad_sym` 文件选择符号子库（包含空库），或输入新子库名；不默认选择 |
+| `footprint_choice` | `lcsc_import` 专用：从自动候选或搜索结果中按 UUID 复用封装，或显式选择新建 |
 
 **style：icon**
 ![icon](resources/with_icon.png)
@@ -223,17 +294,23 @@ KiCad_Forge
 
 内置 HTTP 服务提供 REST API，完整文档见 [docs/API.md](docs/API.md)。
 
+导入、LCSC 工作流和编辑命令的行为约束与验收场景见 [功能规格](docs/specs/README.md)。规格分别标注当前实现、拟定规则和未覆盖项。
+
 | 端点 | 方法 | 说明 |
 |---|---|---|
 | `/api/status` | GET | 健康检查 / 心跳 |
 | `/api/symbols` | GET | 符号列表（支持 `?q=`、`?library=`） |
-| `/api/libraries` | GET/POST | 库的增删查改 |
+| `/api/libraries` | GET/POST | 符号库的增删查改 |
+| `/api/component-libraries` | GET/POST | 元件库目录集合的管理与导入 |
 | `/api/plugins` | GET | 插件列表 |
 | `/api/plugins/{id}/icon` | GET | 插件图标 |
-| `/api/plugins/execute` | POST | 执行插件 action |
 | `/api/classify` | POST | 运行分类规则 |
 | `/api/check` | POST | 检查 Symbol↔Footprint↔3D 关联 |
-| `/api/settings` | GET/POST | 读写配置 |
+| `/api/config` | GET/POST | 读写配置 |
+| `/api/component-type-matching` | GET/POST | 读取或保存元件类型匹配规则；保存不执行分类 |
+| `/api/component-type-matching/preview` | POST | 预览样本或数据库中的匹配结果，不写入数据库 |
+| `/api/component-type-matching/apply` | POST | 按指定版本应用已保存规则，补齐未分类元件 |
+| `/api/component-type-matching/reload` | POST | 重新加载数据目录中的匹配规则配置 |
 | `/api/import` | POST | 导入目录（`?dir=`） |
 
 
@@ -253,6 +330,16 @@ KiCad_Forge
 | 许可证 | MIT |
 
 ---
+
+## Star History
+
+<a href="https://www.star-history.com/?repos=xiaomaitangjiang%2Fkicad_forge&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=xiaomaitangjiang/kicad_forge&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=xiaomaitangjiang/kicad_forge&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=xiaomaitangjiang/kicad_forge&type=date&legend=top-left" />
+ </picture>
+</a>
 
 ## 贡献
 

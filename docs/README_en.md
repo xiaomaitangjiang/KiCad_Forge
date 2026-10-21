@@ -12,6 +12,8 @@ KiCad Forge is a modern graphical library manager, built to make managing multi-
 
 English ~ [简体中文](../README.md)
 
+[Cross-platform builds, automated tests, and manual releases](CI.md)
+
 ![screenshot](../resources/main_view.png)
 
 [Features](#features) · [Quick Start](#quick-start) · [Download](#download) · [Contributing](../CONTRIBUTING.md) · [Important Notes](Attention_en.md)
@@ -21,23 +23,28 @@ English ~ [简体中文](../README.md)
 
 ## Features
 
-- **Multiple component libraries** — Bind symbol / footprint / 3D model directories into component libraries, browsed in groups in the sidebar
+- **Multiple component libraries** — Each component library groups symbol and footprint directories, with an optional 3D model directory; browse libraries in groups in the sidebar
 - **One-click batch import** — Scan a KiCad library directory and parse `.kicad_sym` / `.kicad_mod` files automatically (22,000+ symbols imported in seconds in real tests)
 - **Search & filter** — Fuzzy search by name, filter by library, locate parts quickly
-- **Automatic classification** — Rule engine labels symbols with types (resistor, MCU, sensor...); custom types and rules are supported
+- **Component type matching** — Exact exceptions take precedence over PCRE2 regex rules; unmatched parts remain `Unknown`. Choose the name, value, model/MPN, or reference field, and edit type icons and colors
 - **Link checking & auto-matching** — Check Symbol↔Footprint↔3D model link integrity, heuristic auto-matching for footprints
+- **LCSC import** — Look up an LCSC part number, choose the destination component library and an existing or new symbol sublibrary, then reuse one of the automatically found footprint candidates or create a new footprint
 - **Plugin system** — Python plugins run as independent processes, UI driven by `manifest.json`; ships with an [LCSC component importer](../plugins/lcsc_import/) and a [Git version manager](../plugins/git_version/) plugin
 - **Bilingual UI** — 中文 / English (i18next)
 - **Portable storage** — Local SQLite database, data directory travels with the app
+
+Preview matching rules against a sample or the database before applying them. Saving changes only updates the configuration. Applying saved rules fills unclassified parts and preserves assigned types. Directory imports and LCSC imports use the same saved rules.
 
 ## Quick Start
 
 ### Prerequisites
 
-- [xmake](https://xmake.io/)
-- [MSYS2](https://www.msys64.org/): `mingw-w64-x86_64-clang` toolchain, plus `mingw-w64-x86_64-sqlite3` and `mingw-w64-x86_64-fmt`
-- Python 3.10+: `pip install cairosvg Pillow` (used to generate the app icon from SVG)
-- Node.js (React 19 + Vite frontend)
+- [xmake](https://xmake.io/) 3.0.9+
+- [MSYS2](https://www.msys64.org/): `mingw-w64-x86_64-clang`, `mingw-w64-x86_64-lld`, and `mingw-w64-x86_64-gcc`
+- Python 3.12
+- Node.js 24 (React 19 + Vite frontend)
+
+Before the first build, prepare PCRE2 and the other locked dependencies as described in [docs/CI.md](CI.md#本地构建). Normal builds use the tracked `resources/app.ico`. Only changes to the icon artwork require CairoSVG and Pillow, followed by a manual run of `scripts/svg2ico.py`.
 
 > Defaults to `D:/msys64/mingw64`; set the `MSYS2_DIR` environment variable to point to a different MSYS2 installation.
 
@@ -45,7 +52,7 @@ English ~ [简体中文](../README.md)
 
 ```bash
 # 1. Install frontend dependencies
-cd webui && npm install && cd ..
+cd webui && npm ci && cd ..
 
 # 2. Configure and build (debug)
 xmake f -p mingw -c
@@ -115,22 +122,24 @@ Plugins live in `plugins/`, one folder per plugin, containing `manifest.json` + 
 {
   "id": "com.kicad_forge.lcsc_import",
   "name": "LCSC Component Importer",
-  "version": "1.1.0",
+  "version": "2.1.0",
   "author": "KiCad Forge",
   "description": "Download symbols, footprints, and 3D models from LCSC by part number",
   "license": "MIT",
+  "capabilities": [
+    "import"
+  ],
+  "one_click": true,
   "entry": "plugin.py",
   "entry_function": "import_component",
   "icon": "icon.svg",
-  "capabilities": ["import"],
-  "one_click": true,
   "actions": [
     {
       "id": "import",
       "name": "Import LCSC",
-      "description": "Import a component from LCSC by part number",
+      "description": "Find a part by LCSC number and import it into a component library package",
       "trigger": "dialog",
-      "template": "two_step",
+      "template": "lcsc_import",
       "analyze_action": "analyze",
       "protocol": "staged-import-v1",
       "icon": "icon.svg",
@@ -142,10 +151,41 @@ Plugins live in `plugins/`, one folder per plugin, containing `manifest.json` + 
       },
       "schema": {
         "fields": [
-          { "key": "lcsc_id", "label": "LCSC Part Number", "type": "text", "required": true },
-          { "key": "target_library", "label": "Target Symbol Library", "type": "library_picker", "required": true },
-          { "key": "footprint_choice", "label": "Footprint", "type": "search_picker",
-            "source": "footprints", "near_from": "footprint_name" }
+          {
+            "key": "lcsc_id",
+            "label": "LCSC Part Number",
+            "type": "text",
+            "required": true
+          },
+          {
+            "key": "target_component_library_id",
+            "label": "Component Library Package",
+            "type": "component_library_picker",
+            "required": true
+          },
+          {
+            "key": "symbol_library_choice",
+            "label": "Symbol Library",
+            "type": "symbol_library_choice",
+            "source": "component_symbol_libraries",
+            "modes": [
+              "existing",
+              "new"
+            ],
+            "required": true
+          },
+          {
+            "key": "footprint_choice",
+            "label": "Footprint",
+            "type": "footprint_choice",
+            "source": "footprints",
+            "near_from": "footprint_name",
+            "modes": [
+              "reuse",
+              "new"
+            ],
+            "required": true
+          }
         ]
       }
     },
@@ -154,12 +194,17 @@ Plugins live in `plugins/`, one folder per plugin, containing `manifest.json` + 
       "name": "Analyze LCSC",
       "description": "Download and inspect without writing to the library",
       "trigger": "hidden",
-      "button": { "show": false }
+      "hidden": true,
+      "button": {
+        "show": false
+      }
     }
   ],
   "dependencies": {
     "python": ">=3.10",
-    "pip": ["easyeda2kicad"]
+    "pip": [
+      "easyeda2kicad"
+    ]
   }
 }
 ```
@@ -184,8 +229,8 @@ Plugins live in `plugins/`, one folder per plugin, containing `manifest.json` + 
 | Field | Description |
 |---|---|
 | `trigger` | `"dialog"` popup form / `"inline"` one-click execution (default) / `"hidden"` hidden action (referenced by templates) |
-| `template` | UI template: `"two_step"` two-step flow (analyze & preview first, then confirm import) |
-| `analyze_action` | id of the hidden analyze action referenced by the `two_step` template |
+| `template` | `"lcsc_import"` opens the dedicated LCSC flow: look up the part → choose the destination component library → choose an existing or new symbol sublibrary → reuse or create a footprint; other plugins use the generic form |
+| `analyze_action` | ID of the hidden analysis action referenced by `lcsc_import` |
 | `protocol` | `"staged-import-v1"` staged import protocol |
 | `preflight` | action id executed before the dialog opens; its result (e.g. Git status) is shown at the top of the form |
 | `auto_args` | Argument keys filled in automatically by the host (e.g. `target_library`) |
@@ -199,8 +244,10 @@ Plugins live in `plugins/`, one folder per plugin, containing `manifest.json` + 
 | `type` | Description |
 |---|---|
 | `text` | Text input (default) |
-| `library_picker` | Dropdown for picking a symbol library |
-| `search_picker` | Searchable candidate list (e.g. footprint search), used with the `two_step` template |
+| `library_picker` | Symbol library dropdown in the generic form |
+| `component_library_picker` | `lcsc_import` only: choose a registered, writable component library with symbol and footprint directories |
+| `symbol_library_choice` | `lcsc_import` only: choose a physical `.kicad_sym` file within the destination package, including empty libraries, or enter a new sublibrary name; no default selection |
+| `footprint_choice` | `lcsc_import` only: reuse a footprint by UUID from automatic candidates or search results, or explicitly create a new one |
 
 **style: icon**
 ![icon](../resources/with_icon.png)
@@ -219,13 +266,17 @@ The built-in HTTP server exposes a REST API. Full documentation: [docs/API.md](A
 |---|---|---|
 | `/api/status` | GET | Health check / heartbeat |
 | `/api/symbols` | GET | List symbols (`?q=`, `?library=`) |
-| `/api/libraries` | GET/POST | Library CRUD |
+| `/api/libraries` | GET/POST | Symbol library CRUD |
+| `/api/component-libraries` | GET/POST | Manage and import component library directory groups |
 | `/api/plugins` | GET | List plugins |
 | `/api/plugins/{id}/icon` | GET | Plugin icon |
-| `/api/plugins/execute` | POST | Execute a plugin action |
 | `/api/classify` | POST | Run classification rules |
 | `/api/check` | POST | Check Symbol↔Footprint↔3D links |
-| `/api/settings` | GET/POST | Read/write settings |
+| `/api/config` | GET/POST | Read/write configuration |
+| `/api/component-type-matching` | GET/POST | Read or save type matching rules; saving does not classify parts |
+| `/api/component-type-matching/preview` | POST | Preview a sample or the database without database writes |
+| `/api/component-type-matching/apply` | POST | Apply a specified revision of saved rules to unclassified parts |
+| `/api/component-type-matching/reload` | POST | Reload matching rules from the data directory |
 | `/api/import` | POST | Import a directory (`?dir=`) |
 
 ## Download

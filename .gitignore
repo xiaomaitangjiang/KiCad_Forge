@@ -53,6 +53,7 @@ resources/app.ico
 .archify
 .tmp
 install_file
+/docs/AgentDocs/
 
 # Runtime data
 *.db
