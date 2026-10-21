@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>KiCad Forge Plugin Prototype</title>
+    <!-- The map must appear before the first module script. The runtime entries
+         are produced by the same Vite build as this page, so plugin bundles and
+         the host resolve one React/Cordis/SlotCore/SDK identity. -->
+    <script type="importmap">
+      {
+        "imports": {
+          "react": "/runtime/react.js",
+          "react-dom": "/runtime/react-dom.js",
+          "react-dom/client": "/runtime/react-dom.js",
+          "react/jsx-runtime": "/runtime/jsx-runtime.js",
+          "react-i18next": "/runtime/i18n.js",
+          "@kiforge/plugin-sdk": "/runtime/sdk.js"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/prototype/main.jsx"></script>
+  </body>
+</html>

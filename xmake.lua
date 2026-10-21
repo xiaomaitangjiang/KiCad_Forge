@@ -126,6 +126,8 @@ target("KiCad_Forge")
         add_files("resources/app.rc")
         if is_mode("release") then add_ldflags("-mwindows") end
     end
+    -- 前端：dist 落后于源码就重建；缺依赖时按 lockfile 安装（npm ci）。
+    -- 不做这一步，发布构建会直接打包上一次留下的 dist。
     before_build(function(target)
         local root = os.projectdir()
         local webui = path.join(root, "webui")
@@ -137,22 +139,76 @@ target("KiCad_Forge")
             table.join2(inputs, os.files(path.join(webui, "index.html")))
             table.join2(inputs, os.files(path.join(webui, "package.json")))
             table.join2(inputs, os.files(path.join(webui, "package-lock.json")))
+            -- The shared runtime imports SDK source; plugin source is NOT an
+            -- input here. Changing one plugin must not rebuild the host.
+            table.join2(inputs, os.files(path.join(webui, "packages", "plugin-sdk", "src", "**")))
             for _, f in ipairs(inputs) do
                 if os.mtime(f) > built then stale = true break end
             end
         end
-        if not stale then return end
-
-        local npm = is_host("windows") and "npm.cmd" or "npm"
-        if not os.isdir(path.join(webui, "node_modules")) then
-            print("  -> npm ci (webui)")
-            if not os.execv(npm, {"ci"}, {curdir = webui}) then
-                raise("webui: npm ci failed — 前端依赖无法按 lockfile 安装")
+        if stale then
+            local npm = is_host("windows") and "npm.cmd" or "npm"
+            if not os.isdir(path.join(webui, "node_modules")) then
+                print("  -> npm ci (webui)")
+                if not os.execv(npm, {"ci"}, {curdir = webui}) then
+                    raise("webui: npm ci failed — 前端依赖无法按 lockfile 安装")
+                end
+            end
+            print("  -> npm run build (webui)")
+            if not os.execv(npm, {"run", "build"}, {curdir = webui}) then
+                raise("webui: npm run build failed — 界面产物缺失或过期")
             end
         end
-        print("  -> npm run build (webui)")
-        if not os.execv(npm, {"run", "build"}, {curdir = webui}) then
-            raise("webui: npm run build failed — 界面产物缺失或过期")
+
+        -- Plugin/SDK outputs are tracked independently. Rebuild them when an
+        -- input is newer, but never put plugin sources into the webui inputs.
+        local sdk_dist = path.join(webui, "packages", "plugin-sdk", "dist", "index.js")
+        local plugins_stale = not os.isfile(sdk_dist)
+        if not plugins_stale then
+            local sdk_built = os.mtime(sdk_dist)
+            for _, f in ipairs(os.files(path.join(webui, "packages", "plugin-sdk", "src", "**"))) do
+                if os.mtime(f) > sdk_built then plugins_stale = true break end
+            end
+        end
+        local examples = path.join(root, "examples", "plugins")
+        if not plugins_stale and os.isdir(examples) then
+            for _, manifest in ipairs(os.files(path.join(examples, "*", "manifest.json"))) do
+                local dir = path.directory(manifest)
+                local out = path.join(dir, "dist", "index.js")
+                if not os.isfile(out) then plugins_stale = true break end
+                local built = os.mtime(out)
+                local inputs = os.files(path.join(dir, "src", "**"))
+                table.join2(inputs, {manifest, path.join(dir, "package.json"), path.join(dir, "tsconfig.json")})
+                for _, f in ipairs(inputs) do
+                    if os.mtime(f) > built then plugins_stale = true break end
+                end
+                if plugins_stale then break end
+            end
+        end
+        -- First-party plugin frontends live in plugins/<id>/frontend and are
+        -- built independently from the host webui.
+        local first_party_frontends = {
+            path.join(root, "plugins", "git_version", "frontend"),
+            path.join(root, "plugins", "lcsc_import", "frontend"),
+        }
+        if not plugins_stale then
+            for _, frontend in ipairs(first_party_frontends) do
+                local out = path.join(frontend, "dist", "index.js")
+                if not os.isfile(out) then plugins_stale = true break end
+                local built = os.mtime(out)
+                local inputs = os.files(path.join(frontend, "src", "**"))
+                table.join2(inputs, {path.join(frontend, "package.json"), path.join(frontend, "tsconfig.json")})
+                for _, f in ipairs(inputs) do
+                    if os.mtime(f) > built then plugins_stale = true break end
+                end
+                if plugins_stale then break end
+            end
+        end
+        if plugins_stale then
+            print("  -> build plugins (SDK + examples)")
+            if not os.execv("node", {path.join(root, "scripts", "build_plugins.mjs")}, {curdir = root}) then
+                raise("plugins: SDK/example build failed — 插件产物缺失或过期")
+            end
         end
     end)
 

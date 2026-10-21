@@ -1,0 +1,16 @@
+{
+  "manifestVersion": 2,
+  "id": "demo.supply-tab",
+  "name": "Demo Supply Tab",
+  "version": "1.0.0-rc.1",
+  "author": "KiCad Forge",
+  "description": "Phase-1 prototype third plugin extending the supply page tab slot",
+  "license": "MIT",
+  "engines": { "sdk": "^1.0.0" },
+  "frontend": {
+    "root": "dist",
+    "entry": "index.js",
+    "styles": [],
+    "requires": [{ "contract": "demo.supplier", "range": "^1.0.0" }]
+  }
+}

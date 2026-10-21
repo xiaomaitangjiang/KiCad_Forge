@@ -5,6 +5,21 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>KiCad Forge</title>
+    <!-- Frontend plugin bundles externalize the host runtime; both the real app
+         and the prototype page must resolve them to the same shared entries. -->
+    <script type="importmap">
+      {
+        "imports": {
+          "react": "/runtime/react.js",
+          "react/jsx-runtime": "/runtime/jsx-runtime.js",
+          "react-dom": "/runtime/react-dom.js",
+          "react-dom/client": "/runtime/react-dom.js",
+          "react-i18next": "/runtime/i18n.js",
+          "@kiforge/plugin-sdk": "/runtime/sdk.js"
+        }
+      }
+    </script>
+
   </head>
   <body>
     <div id="root"></div>

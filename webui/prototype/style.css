@@ -1,0 +1,60 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, "Segoe UI", sans-serif;
+}
+body { margin: 0; }
+.page {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  grid-template-rows: auto 1fr;
+  min-height: 100vh;
+}
+header {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  padding: 12px 20px;
+  border-bottom: 1px solid #8884;
+}
+header h1 { font-size: 16px; margin: 0; }
+aside {
+  padding: 12px;
+  border-right: 1px solid #8884;
+  font-size: 13px;
+}
+aside h2 { font-size: 12px; text-transform: uppercase; opacity: .65; margin: 16px 0 8px; }
+main { padding: 20px; }
+.plugin-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-bottom: 1px dashed #8883;
+}
+.muted { opacity: .65; }
+.error { color: #d33; margin-top: 4px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: #999; }
+.dot.ok { background: #2a2; }
+.diagnostics { white-space: pre-wrap; font-size: 11px; opacity: .8; }
+.kf-plugin-error {
+  border: 1px solid #d33;
+  color: #d33;
+  padding: 8px;
+  border-radius: 6px;
+  margin: 8px 0;
+}
+.kf-card {
+  border: 1px solid #8885;
+  border-radius: 10px;
+  padding: 14px;
+  margin-bottom: 14px;
+}
+.kf-card h3 { margin: 0 0 8px; font-size: 15px; }
+.kf-tab {
+  border: 1px solid #8885;
+  border-radius: 8px;
+  padding: 10px;
+  margin-top: 8px;
+}

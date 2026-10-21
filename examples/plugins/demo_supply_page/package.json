@@ -1,0 +1,16 @@
+{
+  "name": "demo-supply-page",
+  "private": true,
+  "version": "1.0.0-rc.1",
+  "type": "module",
+  "scripts": {
+    "build": "node ../../../webui/scripts/build-plugin.mjs .",
+    "typecheck": "node ../../../webui/node_modules/typescript/bin/tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@kiforge/plugin-sdk": "file:../../../webui/packages/plugin-sdk"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.17"
+  }
+}
