@@ -381,6 +381,7 @@ void ApiServer::setup_routes()  // NOLINT(readability-function-cognitive-complex
     register_library_routes(*srv_, *db_,
                             import_manager_ ? import_manager_->orchestrator() : nullptr);
     register_symbol_routes(*srv_, *db_);
+    register_library_manifest_routes(*srv_, *db_);
     register_plugin_routes(*srv_, plugins_, *db_);
     register_plugin_task_routes(*srv_, tasks_.get(), plugins_, *db_, config_);
     register_settings_routes(*srv_, *db_, import_manager_, config_);

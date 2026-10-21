@@ -4,6 +4,7 @@
 #include "core/repo/repositories.h"
 #include "interface/api/api_server.h"
 #include "interface/api/footprint_status_json.h"
+#include "interface/api/library_manifest.h"
 #include "interface/api/import_orchestrator.h"
 #include "interface/api/symbol_summary_json.h"
 #include "interface/api/routes.h"
@@ -807,6 +808,34 @@ void register_library_routes(httplib::Server& srv, storage::Database& db, Import
 // ============================================================
 // Symbol routes
 // ============================================================
+
+void register_library_manifest_routes(httplib::Server& srv, storage::Database& db)
+{
+    srv.Post("/api/library-manifest",
+             [&db](const httplib::Request& req, httplib::Response& r)
+             {
+                 json body;
+                 try
+                 {
+                     body = json::parse(req.body.empty() ? "{}" : req.body);
+                 }
+                 catch (const std::exception&)
+                 {
+                     send_json(r, {{"ok", false}, {"error", "Malformed JSON body"}}, 400);
+                     return;
+                 }
+                 const std::string root = body.value("root", "");
+                 const std::string target = body.value("target", "");
+                 if (root.empty())
+                 {
+                     send_json(r, {{"ok", false}, {"error", "Repository root is required"}}, 400);
+                     return;
+                 }
+                 auto manifest = build_library_manifest(db, root, target);
+                 const bool ok = manifest.value("ok", false);
+                 send_json(r, manifest, ok ? 200 : 400);
+             });
+}
 
 void register_symbol_routes(httplib::Server& srv, storage::Database& db)
 {
