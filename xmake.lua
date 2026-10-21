@@ -213,27 +213,24 @@ target("KiCad_Forge")
     end)
 
     after_build(function (target)
-        local root = path.directory(target:targetfile())
-        for _, name in ipairs({"webui", "plugins", "config"}) do
-            os.rm(path.join(root, name))
-        end
-        os.cp("$(projectdir)/webui/dist", path.join(root, "webui/dist"))
-        os.cp("$(projectdir)/plugins", path.join(root, "plugins"))
-        os.cp("$(projectdir)/config", path.join(root, "config"))
-        os.cp("$(projectdir)/resources/licenses", path.join(root, "licenses"))
-        for _, dir in ipairs(os.dirs(path.join(root, "plugins/**/__pycache__"))) do
-            os.rm(dir)
-        end
+        local root = path.absolute(path.directory(target:targetfile()), os.projectdir())
+        local find_tool = import("lib.detect.find_tool")
+        local python = find_tool(is_host("windows") and "python" or "python3") or find_tool("python")
+        assert(python, "Python is required to validate and stage runtime assets")
+        os.execv(python.program, {"-B", "-X", "utf8", path.join(os.projectdir(), "scripts/sync_runtime_assets.py"),
+                                "--project", os.projectdir(), "--output", root})
         os.mkdir(path.join(root, "data"))
-
         if target:is_plat("mingw") then
             local cxx = target:tool("cxx")
             local bindir = path.directory(cxx)
-            -- MinGW's C++ runtime must also be available outside the MSYS2 shell.
-            for _, dll in ipairs({"libstdc++-6.dll", "libgcc_s_seh-1.dll", "libwinpthread-1.dll"}) do
-                local source = path.join(bindir, dll)
+            for _, name in ipairs({"libstdc++-6.dll", "libgcc_s_seh-1.dll", "libwinpthread-1.dll"}) do
+                local source = path.join(bindir, name)
+                if not os.isfile(source) then source = path.join(msys2, "bin", name) end
                 assert(os.isfile(source), "Missing MinGW runtime: " .. source)
-                os.cp(source, path.join(root, dll))
+                os.cp(source, path.join(root, name))
+            end
+            if not has_config("portable_deps") then
+                os.cp(path.join(msys2, "bin/libfmt-12.dll"), path.join(root, "libfmt-12.dll"))
             end
         end
     end)
