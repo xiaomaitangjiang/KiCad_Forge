@@ -2,6 +2,7 @@ import type { ModelApi, SnapshotStore, TaskSnapshot } from '@kiforge/plugin-sdk'
 import type { TaskApi } from './task-adapter.js'
 
 export interface LcscModelSnapshot {
+  step: 'lookup' | 'target' | 'symbol' | 'footprint'
   toast: string
   task: TaskSnapshot | null
   completed: boolean
