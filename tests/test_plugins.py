@@ -1,17 +1,12 @@
 """Offline tests for the bundled Python plugin entry points and library operations."""
 
-import importlib.util
 import json
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 import tempfile
-from types import SimpleNamespace
 import unittest
-from unittest import mock
-
 
 PLUGINS = Path(__file__).resolve().parents[1] / "plugins"
 
@@ -68,30 +63,21 @@ class PluginTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertIn("No Git repository", result["error"])
 
-    def test_lcsc_rejects_missing_target_without_network(self):
+    def test_lcsc_requires_host_staging_protocol_without_network(self):
         result = self.invoke("lcsc_import", "import", {"lcsc_id": "C37593"}, expected_exit=1)
         self.assertFalse(result["ok"])
-        self.assertIn("target_library", result["error"])
+        self.assertIn("staged-import-v1 staging_dir", result["error"])
 
-    def test_lcsc_merges_symbols_and_copies_footprints(self):
-        spec = importlib.util.spec_from_file_location("lcsc_plugin_test", PLUGINS / "lcsc_import/plugin.py")
-        plugin = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(plugin)
-        source = PLUGINS / "lcsc_import/fetched/C37593"
-        fetched = self.directory / "fetched"
-        shutil.copytree(source, fetched)
+    def test_lcsc_legacy_target_argument_never_writes_the_library(self):
         target = self.directory / "target library.kicad_sym"
-        target.write_text('(kicad_symbol_lib (version 20231120) (symbol "Existing"))\n', encoding="utf-8")
-        # Reuse the checked-in exporter output; the online fetch is intentionally mocked.
-        with mock.patch.object(plugin.subprocess, "run", return_value=SimpleNamespace(returncode=0, stderr="")):
-            result = plugin.fetch_and_merge("C37593", str(target), str(fetched))
-        self.assertTrue(result["ok"])
-        self.assertGreater(result["block_count"], 0)
-        self.assertGreater(result["footprints_copied"], 0)
-        merged = target.read_text(encoding="utf-8")
-        self.assertIn('(symbol "Existing")', merged)
-        self.assertNotIn("unspecified line", merged)
-        self.assertTrue(list((self.directory / "target library.pretty").glob("*.kicad_mod")))
+        original = '(kicad_symbol_lib (version 20231120) (symbol "Existing"))\n'
+        target.write_text(original, encoding="utf-8")
+        result = self.invoke("lcsc_import", "import", {
+            "lcsc_id": "C37593", "target_library": str(target)}, expected_exit=1)
+        self.assertFalse(result["ok"])
+        self.assertEqual(target.read_text(encoding="utf-8"), original)
+        self.assertFalse(target.with_suffix(".pretty").exists())
+
 
 
 if __name__ == "__main__":

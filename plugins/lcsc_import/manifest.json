@@ -1,48 +1,64 @@
 {
+  "manifestVersion": 2,
   "id": "com.kicad_forge.lcsc_import",
   "name": "LCSC Component Importer",
-  "version": "1.1.0",
+  "version": "2.1.0",
   "author": "KiCad Forge",
   "description": "Download symbols, footprints, and 3D models from LCSC by part number",
   "license": "MIT",
   "capabilities": ["import"],
   "one_click": true,
-  "entry": "plugin.py",
-  "entry_function": "import_component",
   "icon": "icon.svg",
-  "actions": [
-    {
-      "id": "import",
-      "name": "Import LCSC",
-      "description": "Import a component from LCSC by part number",
-      "trigger": "dialog",
-      "template": "two_step",
-      "analyze_action": "analyze",
-      "protocol": "staged-import-v1",
-      "icon": "icon.svg",
-      "button": {
-        "show": true,
-        "style": "both",
-        "location": "sidebar",
-        "tooltip": "Download from LCSC"
+  "engines": { "kiforge": "^1.0.0", "sdk": "^1.1.0" },
+  "python": {
+    "entry": "plugin.py",
+    "entry_function": "import_component",
+    "actions": [
+      {
+        "id": "import",
+        "name": "Import LCSC",
+        "description": "Find a part by LCSC number and import it into a component library package",
+        "trigger": "dialog",
+        "template": "lcsc_import",
+        "analyze_action": "analyze",
+        "protocol": "staged-import-v1",
+        "cancelable": true,
+        "icon": "icon.svg",
+        "button": {
+          "show": true,
+          "style": "both",
+          "location": "sidebar",
+          "tooltip": "Download from LCSC"
+        },
+        "schema": {
+          "fields": [
+            { "key": "lcsc_id", "label": "LCSC Part Number", "type": "text", "required": true },
+            { "key": "target_component_library_id", "label": "Component Library Package",
+              "type": "component_library_picker", "required": true },
+            { "key": "symbol_library_choice", "label": "Symbol Library", "type": "symbol_library_choice",
+              "source": "component_symbol_libraries", "modes": ["existing", "new"], "required": true },
+            { "key": "footprint_choice", "label": "Footprint", "type": "footprint_choice",
+              "source": "footprints", "near_from": "footprint_name",
+              "modes": ["reuse", "new"], "required": true }
+          ]
+        }
       },
-      "schema": {
-        "fields": [
-          { "key": "lcsc_id", "label": "LCSC Part Number", "type": "text", "required": true },
-          { "key": "target_library", "label": "Target Symbol Library", "type": "library_picker", "required": true },
-          { "key": "footprint_choice", "label": "Footprint", "type": "search_picker",
-            "source": "footprints", "near_from": "footprint_name" }
-        ]
+      {
+        "id": "analyze",
+        "name": "Analyze LCSC",
+        "description": "Download and inspect without writing to the library",
+        "trigger": "hidden",
+        "hidden": true,
+        "cancelable": true,
+        "button": { "show": false }
       }
-    },
-    {
-      "id": "analyze",
-      "name": "Analyze LCSC",
-      "description": "Download and inspect without writing to the library",
-      "trigger": "hidden",
-      "button": { "show": false }
-    }
-  ],
+    ]
+  },
+  "frontend": {
+    "root": "frontend",
+    "entry": "dist/index.js",
+    "styles": ["dist/style.css"]
+  },
   "dependencies": {
     "python": ">=3.10",
     "pip": ["easyeda2kicad"]
