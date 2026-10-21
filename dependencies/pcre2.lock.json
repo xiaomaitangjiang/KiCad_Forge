@@ -1,0 +1,106 @@
+{
+  "schema_version": 2,
+  "engine": {
+    "name": "PCRE2",
+    "syntax": "PCRE2",
+    "code_unit_width": 8,
+    "linkage": "static",
+    "jit": false,
+    "used_by": [
+      "src/classifier/matching_regex.cpp"
+    ]
+  },
+  "target": {
+    "platform": "mingw",
+    "arch": "x86_64",
+    "toolchain": "MSYS2 mingw-w64-x86_64 (clang, MinGW 目标)",
+    "sdk_root_env": "MSYS2_DIR",
+    "sdk_root_default": "D:/msys64/mingw64"
+  },
+  "package": {
+    "manager": "pacman",
+    "repository": "MSYS2 mingw64",
+    "name": "mingw-w64-x86_64-pcre2",
+    "version": "10.47-1",
+    "source": "MSYS2 官方 mingw64 仓库的已验证离线包（本机 pacman 缓存，逐字节比对过 SDK 文件）",
+    "cache_file": "mingw-w64-x86_64-pcre2-10.47-1-any.pkg.tar.zst",
+    "cache_sha256": "7c9e3cd47af02a096c0c1810d1021f63c5fb1d22dbec91fa019d8b37eda00d98",
+    "vendored_archive": "dependencies/mingw-w64-x86_64-pcre2-10.47-1-any.pkg.tar.zst"
+  },
+  "sdk": {
+    "version": "10.47",
+    "version_header": "include/pcre2.h",
+    "version_macros": {
+      "PCRE2_MAJOR": 10,
+      "PCRE2_MINOR": 47
+    },
+    "files": [
+      {
+        "path": "include/pcre2.h",
+        "sha256": "058462dc030e845ee627e19ac36347f561f5cc44d89eaf1c0010f2b363ab68d5"
+      },
+      {
+        "path": "lib/libpcre2-8.a",
+        "sha256": "47c00546850d6614c833d14f6642beef88e5db04c4ff4dae036d6899b37c5eea"
+      },
+      {
+        "path": "share/licenses/pcre2/LICENCE.md",
+        "sha256": "197d8a73ffee0d6b09adba2f9c677b5f5aede24edf89258a68e48248d010d811"
+      }
+    ]
+  },
+  "licenses": {
+    "pcre2": {
+      "spdx": "BSD-3-Clause WITH PCRE2-exception",
+      "upstream": "https://github.com/PCRE2Project/pcre2/blob/pcre2-10.47/LICENCE.md",
+      "vendored": "resources/licenses/pcre2-LICENCE.md",
+      "sha256": "197d8a73ffee0d6b09adba2f9c677b5f5aede24edf89258a68e48248d010d811",
+      "note": "与 SDK 的 share/licenses/pcre2/LICENCE.md 逐字节相同"
+    },
+    "sljit": {
+      "spdx": "BSD-2-Clause",
+      "component": "PCRE2 的 deps/sljit 子模块（PCRE2 10.47 tag 对应 commit 45f910b78c6605ebf5b53d3ec7cb00f2312fe417）",
+      "upstream": "https://raw.githubusercontent.com/zherczeg/sljit/45f910b78c6605ebf5b53d3ec7cb00f2312fe417/LICENSE",
+      "commit": "45f910b78c6605ebf5b53d3ec7cb00f2312fe417",
+      "vendored": "resources/licenses/sljit-LICENSE.txt",
+      "sha256": "5f216505c0f6ea3273caec89e766eef93cdeb7bbb0c429f9360116d7c938feeb",
+      "note": "静态库 libpcre2-8.a 内含 sljit 代码；不调用 JIT 不免除随二进制分发该许可原文的义务"
+    }
+  },
+  "link": {
+    "library": "lib/libpcre2-8.a",
+    "include_dir": "include",
+    "define": "PCRE2_STATIC",
+    "dll_forbidden": true,
+    "consumers": [
+      "KiCad_Forge",
+      "bench_import",
+      "test_service_startup",
+      "test_data_integrity",
+      "test_matching_regex_raii"
+    ]
+  },
+  "offline": {
+    "install": "Windows: use the verified SDK, or extract the vendored MSYS2 package with scripts/prepare_dependencies.py. Linux/macOS: build the vendored official source with the same script and system CMake.",
+    "verify": "Configuration checks the archive, licenses and version macros; Windows also checks the exact SDK hashes. Native builds verify the generated static SDK manifest. No source is downloaded during the application build.",
+    "failure_hint": "Run scripts/prepare_dependencies.py for the configured platform/architecture/mode. Never replace PCRE2 with a system library or another release."
+  },
+  "source": {
+    "version": "10.47",
+    "url": "https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.47/pcre2-10.47.tar.bz2",
+    "archive": "dependencies/pcre2-10.47.tar.bz2",
+    "sha256": "47fe8c99461250d42f89e6e8fdaeba9da057855d06eb7fc08d9ca03fd08d7bc7",
+    "build_system": "Official upstream CMakeLists.txt",
+    "configs": {
+      "BUILD_SHARED_LIBS": "OFF",
+      "BUILD_STATIC_LIBS": "ON",
+      "PCRE2_BUILD_PCRE2_8": "ON",
+      "PCRE2_BUILD_PCRE2_16": "OFF",
+      "PCRE2_BUILD_PCRE2_32": "OFF",
+      "PCRE2_SUPPORT_JIT": "OFF",
+      "PCRE2_BUILD_PCRE2GREP": "OFF",
+      "PCRE2_BUILD_TESTS": "OFF",
+      "CMAKE_INSTALL_LIBDIR": "lib"
+    }
+  }
+}

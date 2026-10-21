@@ -1,10 +1,11 @@
 # Xmake
 .xmake/
 build/
-dist/
-test-results/
-__pycache__/
-*.pyc
+/dist/
+/test-results/
+# Generated resolver record contains absolute paths; committed dependency locks
+# live in dependencies/, and CI uploads this per-run record as a diagnostic.
+xmake-requires.lock
 
 # IDE
 .idea/
@@ -27,6 +28,18 @@ plugins/**/*.dll
 plugins/**/*.so
 plugins/**/*.dylib
 
+# Frontend plugin build outputs (locks stay tracked)
+examples/plugins/*/dist/
+examples/plugins/*/node_modules/
+plugins/*/frontend/dist/
+plugins/*/frontend/node_modules/
+webui/packages/plugin-sdk/dist/
+tests/types/node_modules/
+
+# Python runtime cache
+__pycache__/
+*.pyc
+
 # macOS
 .DS_Store
 *.app
@@ -37,9 +50,9 @@ plugins/**/*.dylib
 
 # Auto-generated resources
 resources/app.ico
-*.pyc
-.claude/
-.codegraph/
+.archify
+.tmp
+install_file
 
 # Runtime data
 *.db
@@ -50,3 +63,7 @@ resources/app.ico
 # Logs
 *.log
 logs/
+
+.claude/
+
+.codegraph/

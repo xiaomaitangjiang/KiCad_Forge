@@ -1,0 +1,115 @@
+{
+  "repository": "https://github.com/xmake-io/xmake-repo",
+  "commit": "01dcc6e2521785b4fee3a987008fe9b715fb51d5",
+  "recipes": [
+    {
+      "name": "spdlog",
+      "path": "dependencies/xmake-repo/packages/s/spdlog/xmake.lua",
+      "sha256": "a6d7e5897454f0b8b5ba8b59f59ad975c4e3214fe086158a2b3c6e4ea45137b0",
+      "version": "1.17.0",
+      "source_sha256": "b11912a82d149792fef33fabd0503b13d54aeac25c1464755461d4108ea71fc2",
+      "source_url": "https://github.com/gabime/spdlog/archive/refs/tags/v1.17.0.zip",
+      "platforms": [
+        "mingw",
+        "linux",
+        "macosx"
+      ],
+      "upstream_sha256": "5b299effb366420b4920c5b89e6535b76173136d91ee01f8f7d3423486a93549",
+      "adaptation": "Remove Git-tag fallback URLs so archive SHA256 failure cannot fall back to an unverified mutable Git tag. Build/install logic is unchanged."
+    },
+    {
+      "name": "nlohmann_json",
+      "path": "dependencies/xmake-repo/packages/n/nlohmann_json/xmake.lua",
+      "sha256": "412e55dff53039470355a4dbbf23828850fd04c0001495ad78ea52404b5511ab",
+      "version": "3.12.0",
+      "source_sha256": "4b92eb0c06d10683f7447ce9406cb97cd4b453be18d7279320f7b2f025c10187",
+      "source_url": "https://github.com/nlohmann/json/archive/refs/tags/v3.12.0.tar.gz",
+      "platforms": [
+        "mingw",
+        "linux",
+        "macosx"
+      ],
+      "upstream_sha256": "ced6f0eeb8be76bc72bc8f4090c9eb3f4da8c0e1bad0fbc3f8b2c384c86cf35d",
+      "adaptation": "Remove Git-tag fallback URLs so archive SHA256 failure cannot fall back to an unverified mutable Git tag. Build/install logic is unchanged."
+    },
+    {
+      "name": "toml++",
+      "path": "dependencies/xmake-repo/packages/t/toml++/xmake.lua",
+      "sha256": "02894aaa959e9748bcf18d44a97a8d3a7af28c884cfd965b0c2a75f8321d7f70",
+      "version": "3.4.0",
+      "source_sha256": "8517f65938a4faae9ccf8ebb36631a38c1cadfb5efa85d9a72e15b9e97d25155",
+      "source_url": "https://github.com/marzer/tomlplusplus/archive/refs/tags/v3.4.0.tar.gz",
+      "platforms": [
+        "mingw",
+        "linux",
+        "macosx"
+      ],
+      "upstream_sha256": "8887ca15abcb9200fd98cfb733afb5b7bdae9dd99234d7bc6e189291af0821d1",
+      "adaptation": "Remove Git-tag fallback URLs; install the unchanged public include tree with xmake os.cp for the header-only configuration, avoiding unnecessary CMake/Ninja/make tool dependencies. Source version, source SHA256, configs, defines and compiled-library behavior remain unchanged."
+    },
+    {
+      "name": "doctest",
+      "path": "dependencies/xmake-repo/packages/d/doctest/xmake.lua",
+      "sha256": "51670b1fb5c9c14a72a7498237b1f7bcd3db8fff6f44385c5e198d2e484ff4a2",
+      "version": "2.5.2",
+      "source_sha256": "9189960c2bbbc4f3382ce0773b2bb5f13e3afd8fed47f55f193e11e85a4f9854",
+      "source_url": "https://github.com/doctest/doctest/archive/refs/tags/v2.5.2.tar.gz",
+      "platforms": [
+        "mingw",
+        "linux",
+        "macosx"
+      ],
+      "upstream_sha256": "6e3f0ce7781d2bbac01f56524e63b65dcdd4fd6cd28ff42018d7d0fee0605745",
+      "adaptation": "Remove Git-tag fallback URLs so archive SHA256 failure cannot fall back to an unverified mutable Git tag. Build/install logic is unchanged."
+    },
+    {
+      "name": "fast_float",
+      "path": "dependencies/xmake-repo/packages/f/fast_float/xmake.lua",
+      "sha256": "84916e8704058b66ffde9e775294be9a27427d686adf5fc503d851aa2ca2f4ff",
+      "version": "8.3.0",
+      "source_sha256": "90485994d0fed61d0693e8dba32c464b0e8adf7f2e7c2efbf5bff0df5ef5b13f",
+      "source_url": "https://github.com/fastfloat/fast_float/archive/refs/tags/v8.3.0.tar.gz",
+      "platforms": [
+        "macosx"
+      ],
+      "upstream_sha256": "85def77759838bcc5bd5789ae4a465defef07fc5367913af255fac581d0fadbb",
+      "adaptation": "Remove Git-tag fallback URLs; install the unchanged public include tree with xmake os.cp for the header-only configuration, avoiding unnecessary CMake/Ninja/make tool dependencies. Source version, source SHA256, configs, defines and compiled-library behavior remain unchanged."
+    },
+    {
+      "name": "sqlite3",
+      "path": "dependencies/xmake-repo/packages/s/sqlite3/xmake.lua",
+      "sha256": "567a35b1c7faa590b63b3a034aa8b7f61fc52903caedfe187a6e9a3128679069",
+      "version": "3.53.0+400",
+      "source_sha256": "0e9483900e92cd5de8fd48d16bf9200145a61f7fd5be542a5ac81d8a9516eb9c",
+      "source_url": "https://sqlite.org/2026/sqlite-autoconf-3530400.tar.gz",
+      "platforms": [
+        "mingw",
+        "linux",
+        "macosx"
+      ]
+    }
+  ],
+  "support_files": [
+    {
+      "path": "dependencies/xmake-repo/packages/n/nlohmann_json/patches/v3.12.0/fix-ndk.patch",
+      "sha256": "e1e6958da01c142fd72dcb13ead1624a19e22f88b7b602fd440db6ac984561cf"
+    },
+    {
+      "path": "dependencies/xmake-repo/packages/c/cmake/xmake.lua",
+      "sha256": "522d0d4f99e96affd6c21ade8abecb8bdbb830aadff3692b1179a1580bbf707a"
+    },
+    {
+      "path": "dependencies/xmake-repo/LICENSE.md",
+      "sha256": "aa5d02bf1e5120f970104a71dee4c342f6afb8b7a0f06c6233bd4f344f99476e"
+    },
+    {
+      "path": "dependencies/xmake-repo/packages/c/cmake/schemes/binary.lua",
+      "sha256": "18521474e63110b5c792bc3beda6854513c10b9479d13d454f45d8228e95c0cf"
+    },
+    {
+      "path": "dependencies/xmake-repo/packages/c/cmake/schemes/source.lua",
+      "sha256": "bf8bb454b513f28259700973a2c57a4a969442b7a93fdccd1882d04ce7c6f595"
+    }
+  ],
+  "policy": "Vendored official recipe snapshots retain upstream commit/hash provenance. Five URL adapters remove unverified Git fallbacks; toml++ and fast_float additionally install their header-only public include trees directly. Source archives must match locked SHA256. Explicit dependency preparation resolves packages before application build. PCRE2 native builds retain upstream CMake, using a pre-existing system build tool."
+}
