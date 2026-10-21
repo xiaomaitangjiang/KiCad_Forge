@@ -43,8 +43,69 @@ jobs:
             exit 1
           fi
 
-  build:
+  frontend:
+    name: Plugin SDK, types and frontend regressions
     needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: |
+            webui/package-lock.json
+            examples/plugins/*/package-lock.json
+            plugins/*/frontend/package-lock.json
+
+      - name: Install the locked frontend toolchain
+        run: |
+          mkdir -p test-results
+          npm ci --prefix webui --no-audit --no-fund 2>&1 | tee test-results/frontend-install.log
+
+      - name: Verify framework versions and dependency licenses
+        run: node scripts/frontend_lock.mjs --verify 2>&1 | tee test-results/frontend-lock.log
+
+      - name: Lint the frontend
+        run: npm run lint --prefix webui 2>&1 | tee test-results/frontend-lint.log
+
+      - name: Build the SDK and every plugin before tests read their artifacts
+        run: node scripts/build_plugins.mjs 2>&1 | tee test-results/plugin-build.log
+
+      - name: Build the host and shared browser runtime
+        run: npm run build --prefix webui 2>&1 | tee test-results/frontend-build.log
+
+      - name: Typecheck the public SDK fixtures
+        run: node webui/node_modules/typescript/bin/tsc -p tests/types/tsconfig.json 2>&1 | tee test-results/sdk-types.log
+
+      - name: Typecheck example and first-party plugin sources
+        run: |
+          for plugin_dir in examples/plugins/demo_* plugins/git_version/frontend plugins/lcsc_import/frontend; do
+            npm ci --prefix "$plugin_dir" --no-audit --no-fund
+            npm run typecheck --prefix "$plugin_dir"
+          done 2>&1 | tee test-results/plugin-types.log
+
+      - name: Test helpers and the public plugin runtime contracts
+        run: node --test webui/tests/*.test.js webui/tests/*.test.mjs 2>&1 | tee test-results/frontend-tests.log
+
+      - name: Upload frontend diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: logs-frontend
+          path: test-results/
+          if-no-files-found: error
+          retention-days: 7
+
+  build:
+    needs: [validate, frontend]
     name: ${{ matrix.platform.name }} / ${{ matrix.mode }}
     runs-on: ${{ matrix.platform.os }}
     timeout-minutes: 40
@@ -63,6 +124,7 @@ jobs:
     env:
       BUILD_DIR: build/${{ matrix.platform.plat }}/${{ matrix.platform.arch }}/${{ matrix.mode }}
       PACKAGE_NAME: KiCad_Forge-${{ matrix.platform.name }}-${{ matrix.mode }}
+      PCRE2_SDK_DIR: ${{ github.workspace }}/build/dependencies/pcre2/${{ matrix.platform.plat }}/${{ matrix.platform.arch }}/${{ matrix.mode }}/install
 
     steps:
       - uses: actions/checkout@v7
@@ -83,7 +145,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y g++-14
+          sudo apt-get install -y g++-14 cmake
 
       - uses: msys2/setup-msys2@v2
         if: runner.os == 'Windows'
@@ -99,8 +161,20 @@ jobs:
       - uses: xmake-io/github-action-setup-xmake@v1
         with:
           xmake-version: "3.1.1"
-          package-cache: true
-          package-cache-key: ${{ matrix.platform.name }}-${{ hashFiles('xmake.lua') }}
+          # Install the tool before dependency preparation; automatic package
+          # caching loads the project before the matrix configuration exists.
+          package-cache: false
+
+      - name: Prepare the locked static PCRE2 SDK
+        run: |
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            echo "MSYS2_DIR=$(cygpath -m "$MINGW_PREFIX")" >> "$GITHUB_ENV"
+            python scripts/prepare_dependencies.py --plat mingw --arch x86_64 --mode "${{ matrix.mode }}"
+          elif [[ "${{ runner.os }}" == "Linux" ]]; then
+            python scripts/prepare_dependencies.py --plat linux --arch x86_64 --mode "${{ matrix.mode }}" --cc gcc-14
+          else
+            python scripts/prepare_dependencies.py --plat macosx --arch "${{ matrix.platform.arch }}" --mode "${{ matrix.mode }}" --cc clang
+          fi
 
       - name: Build the frontend
         working-directory: webui
@@ -108,14 +182,29 @@ jobs:
           npm ci
           npm run build
 
-      - name: Configure the native build
+      - name: Build the plugin SDK and example/first-party plugin bundles
+        run: node scripts/build_plugins.mjs
+
+      - name: Test frontend helpers on the native platform
+        if: matrix.mode == 'debug'
+        run: node --test webui/tests/*.test.js webui/tests/*.test.mjs
+
+      - name: Test the actual LCSC and component type browser interactions
+        if: runner.os == 'Windows' && matrix.mode == 'debug'
+        run: |
+          node webui/tests/run-lcsc-browser.mjs
+          node webui/tests/run-lcsc-browser.mjs --types
+          node webui/tests/run-lcsc-browser.mjs --type-matching
+          node webui/tests/run-plugin-browser.mjs
+
+      - name: Prepare the remaining locked dependencies and configure the native build
         run: |
           if [[ "${{ runner.os }}" == "Windows" ]]; then
-            xmake f -y -c -p mingw -a x86_64 -m "${{ matrix.mode }}" --mingw="$(cygpath -m "$MINGW_PREFIX")"
+            xmake f -y -c -p mingw -a x86_64 -m "${{ matrix.mode }}" --portable_deps=y --mingw="$(cygpath -m "$MINGW_PREFIX")"
           elif [[ "${{ runner.os }}" == "Linux" ]]; then
-            xmake f -y -c -p linux -a x86_64 -m "${{ matrix.mode }}" --cc=gcc-14 --cxx=g++-14 --ld=g++-14 --sh=g++-14
+            xmake f -y -c -p linux -a x86_64 -m "${{ matrix.mode }}" --portable_deps=y --cc=gcc-14 --cxx=g++-14 --ld=g++-14 --sh=g++-14
           else
-            xmake f -y -c -p macosx -a "${{ matrix.platform.arch }}" -m "${{ matrix.mode }}"
+            xmake f -y -c -p macosx -a "${{ matrix.platform.arch }}" -m "${{ matrix.mode }}" --portable_deps=y
           fi
 
       - name: Compile the application and unit tests
@@ -124,10 +213,10 @@ jobs:
       - name: Check Python plugin syntax
         run: python -m compileall -q plugins
 
-      - name: Test bundled Python plugins
-        run: python -m unittest discover -s tests -p test_plugins.py -v
+      - name: Test Python plugins and build helpers
+        run: python -B -m unittest tests.test_plugins tests.test_lcsc_staging tests.test_lcsc_workflow tests.test_installer tests.test_runtime_assets -v
 
-      - name: Run all four unit test executables
+      - name: Run every registered C++ regression executable
         run: xmake test -v
 
       - name: Stage the portable bundle
@@ -135,6 +224,23 @@ jobs:
 
       - name: Run the relocated bundle and test API startup and shutdown
         run: python scripts/smoke_test.py --binary "dist/$PACKAGE_NAME/KiCad_Forge${{ matrix.platform.exe }}"
+
+      - name: Test real WebView2 loading, restart persistence and Git actions
+        if: runner.os == 'Windows' && matrix.mode == 'debug'
+        timeout-minutes: 8
+        env:
+          KFORGE_STATE_E2E: "1"
+          KFORGE_GIT_WRITE_E2E: "1"
+          KFORGE_IMPORTS_E2E: "1"
+        run: |
+          set -euo pipefail
+          mkdir -p test-results/webview2
+          export KFORGE_BUILD_ROOT="$(cygpath -m "$PWD/dist/$PACKAGE_NAME")"
+          export KFORGE_TEST_RESULTS="$(cygpath -m "$PWD/test-results/webview2")"
+          node webui/tests/run-plugin-webview2.mjs 2>&1 | tee test-results/webview2/prototype.log
+          node webui/tests/run-plugin-state-e2e.mjs 2>&1 | tee test-results/webview2/restart.log
+          node webui/tests/run-git-write-e2e.mjs 2>&1 | tee test-results/webview2/git-actions.log
+          node webui/tests/run-import-contract-e2e.mjs 2>&1 | tee test-results/webview2/import-contract.log
 
       - name: Upload test diagnostics
         if: always()
@@ -144,6 +250,7 @@ jobs:
           path: |
             test-results/
             build/.gens/**/tests/**
+            xmake-requires.lock
           if-no-files-found: ignore
           retention-days: 7
 

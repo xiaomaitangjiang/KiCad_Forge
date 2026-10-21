@@ -13,6 +13,7 @@ from io import BytesIO
 
 from scripts.package import stage_bundle
 from scripts.prepare_dependencies import verify
+from scripts import smoke_test as smoke
 
 
 PLUGINS = Path(__file__).resolve().parents[1] / "plugins"
@@ -145,6 +146,36 @@ class BundleTests(unittest.TestCase):
             verify(self.binary, "0" * 64)
         with self.assertRaises(RuntimeError):
             verify(self.directory / "missing.archive", "0" * 64)
+
+
+class SmokeHttpTests(unittest.TestCase):
+    def test_json_request_distinguishes_get_and_an_empty_post_object(self):
+        opener = mock.Mock()
+        opener.open.side_effect = [BytesIO(b'{"ok":true}'), BytesIO(b'{"ok":false,"error":"bad"}')]
+        self.assertTrue(smoke.request_json(opener, "http://127.0.0.1:1234", "/api/test")["ok"])
+        self.assertFalse(smoke.request_json(opener, "http://127.0.0.1:1234", "/api/test", {})["ok"])
+        get = opener.open.call_args_list[0].args[0]
+        post = opener.open.call_args_list[1].args[0]
+        self.assertEqual(get.get_method(), "GET")
+        self.assertIsNone(get.data)
+        self.assertEqual(post.get_method(), "POST")
+        self.assertEqual(json.loads(post.data), {})
+        self.assertEqual(post.get_header("Content-type"), "application/json")
+
+    def test_json_request_rejects_non_object_and_malformed_responses(self):
+        opener = mock.Mock()
+        for response in (b"[]", b"null", b"broken JSON"):
+            opener.open.return_value = BytesIO(response)
+            with self.subTest(response=response), self.assertRaises((RuntimeError, json.JSONDecodeError)):
+                smoke.request_json(opener, "http://127.0.0.1:1234", "/api/test")
+
+    def test_matching_save_payload_excludes_read_only_metadata_and_rejects_missing_fields(self):
+        config = {"schema_version": 1, "revision": 4, "rules": [], "exceptions": []}
+        full = {**config, "ok": True, "scope": "global", "engine": {"name": "PCRE2"},
+                "load_error": "", "has_snapshot": True}
+        self.assertEqual(smoke.matching_config_payload(full), config)
+        with self.assertRaises(RuntimeError):
+            smoke.matching_config_payload({key: value for key, value in full.items() if key != "rules"})
 
 
 if __name__ == "__main__":
