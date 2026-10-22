@@ -2,7 +2,7 @@ name: Cross-platform build and test
 
 on:
   push:
-    branches: [master, 'codex/**']
+    branches: [master, 'ci/**']
   pull_request:
   workflow_dispatch:
     inputs:
