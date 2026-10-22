@@ -2,7 +2,7 @@ import { useTranslation } from 'react-i18next'
 
 // 中心区外壳：页签、面包屑和返回只处理页面身份，不持有页面业务状态。
 export default function CenterWorkspace({
-  tabs = [], activeId, onSelect, onClose, onBack, canBack = false, breadcrumb = [], children,
+  tabs = [], activeId, onSelect, onClose, onBack, onOpenHome, canBack = false, breadcrumb = [], children,
   groupId, onSplit, onMoveNext, canSplit = false, canMoveNext = false,
 }) {
   const { t } = useTranslation()
@@ -82,6 +82,10 @@ export default function CenterWorkspace({
         {current ? children : (
           <div className="center-group-placeholder">
             <p>{t('workbench.emptyGroupHint')}</p>
+            <button type="button" className="center-group-empty-action"
+              data-testid="center-empty-open-home" onClick={() => onOpenHome?.()}>
+              {t('workbench.openHome')}
+            </button>
           </div>
         )}
       </div>

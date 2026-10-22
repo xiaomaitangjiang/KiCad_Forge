@@ -56,7 +56,7 @@ test('parseWorkbenchLayout accepts a complete version 1 snapshot', () => {
     version: 2,
     primarySidebar: { visible: false, width: 333, activeViewId: 'kf:github' },
     auxiliarySidebar: { visible: false, width: 444, activeViewId: 'inspector:detail' },
-    bottomPanel: { visible: true, height: 260, activeViewId: 'output' },
+    bottomPanel: { visible: true, height: 260, activeViewId: 'tasks' },
     center: {
       activeGroupId: 'g1',
       nextId: 2,
@@ -65,6 +65,29 @@ test('parseWorkbenchLayout accepts a complete version 1 snapshot', () => {
     },
   })
   assert.equal(parsed.recovered, false)
+})
+
+test('parse and serialize migrate the legacy output bottom view to tasks', () => {
+  const parsed = parseWorkbenchLayout(JSON.stringify({
+    version: 2,
+    primarySidebar: { visible: true, width: 300, activeViewId: 'kf:github' },
+    auxiliarySidebar: { visible: true, width: 320, activeViewId: 'inspector:detail' },
+    bottomPanel: { visible: true, height: 260, activeViewId: ' output ' },
+    center: defaultLayout().center,
+  }))
+  assert.equal(parsed.recovered, false)
+  assert.deepEqual(parsed.layout.bottomPanel, { visible: true, height: 260, activeViewId: 'tasks' })
+  assert.equal(parsed.layout.primarySidebar.activeViewId, 'kf:github')
+  assert.equal(parsed.layout.auxiliarySidebar.activeViewId, 'inspector:detail')
+  assert.deepEqual(parsed.layout.center, defaultLayout().center)
+
+  const saved = serializeWorkbenchLayout(parsed.layout)
+  assert.equal(saved.includes('output'), false)
+  const savedLayout = JSON.parse(saved)
+  assert.equal(savedLayout.bottomPanel.activeViewId, 'tasks')
+  const reopened = parseWorkbenchLayout(saved)
+  assert.equal(reopened.recovered, false)
+  assert.deepEqual(reopened.layout, parsed.layout)
 })
 
 test('parseWorkbenchLayout round-trips a version 2 center split and rejects a broken tree', () => {
@@ -99,6 +122,28 @@ test('parseWorkbenchLayout round-trips a version 2 center split and rejects a br
   const broken = parseWorkbenchLayout(JSON.stringify({ version: 2, ...base, center: brokenCenter }))
   assert.equal(broken.recovered, true)
   assert.deepEqual(broken.layout.center, defaultLayout().center)
+})
+
+test('parseWorkbenchLayout preserves a closed home in an otherwise valid center', () => {
+  const center = {
+    activeGroupId: 'g1',
+    nextId: 2,
+    tree: { type: 'group', groupId: 'g1', size: 100 },
+    groups: [{ id: 'g1', pages: [], active: null, size: 100 }],
+  }
+  const base = {
+    primarySidebar: { visible: true, width: 280, activeViewId: WORKBENCH_WORKSPACE_VIEW },
+    auxiliarySidebar: { visible: true, width: 280, activeViewId: null },
+    bottomPanel: { visible: false, height: 220, activeViewId: 'tasks' },
+  }
+  const parsed = parseWorkbenchLayout(JSON.stringify({ version: 2, ...base, center }))
+  assert.equal(parsed.recovered, false)
+  assert.deepEqual(parsed.layout.center, center)
+  assert.deepEqual(JSON.parse(serializeWorkbenchLayout(parsed.layout)).center, center)
+
+  const reopened = parseWorkbenchLayout(serializeWorkbenchLayout(createDefaultWorkbenchLayout()))
+  assert.equal(reopened.recovered, false)
+  assert.deepEqual(reopened.layout.center, defaultLayout().center)
 })
 
 test('parseWorkbenchLayout clamps only the broken fields and reports recovery', () => {
@@ -148,7 +193,7 @@ test('serializeWorkbenchLayout clamps every dimension and coerces flags', () => 
     version: 2,
     primarySidebar: { visible: true, width: 200, activeViewId: WORKBENCH_WORKSPACE_VIEW },
     auxiliarySidebar: { visible: true, width: 520, activeViewId: null },
-    bottomPanel: { visible: false, height: 120, activeViewId: 'output' },
+    bottomPanel: { visible: false, height: 120, activeViewId: 'tasks' },
     center: {
       activeGroupId: 'g1',
       nextId: 2,

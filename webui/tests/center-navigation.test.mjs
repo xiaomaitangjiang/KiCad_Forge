@@ -69,9 +69,75 @@ test('closing a background tab keeps the active page', () => {
   assert.equal(state.history.includes(viewPageKey('a')), false)
 })
 
-test('home tab cannot be closed', () => {
-  const state = createCenterNavigation()
-  assert.equal(close(state, CENTER_HOME), state)
+test('closing the home tab leaves one empty group that can reopen it', () => {
+  let state = close(createCenterNavigation(), CENTER_HOME)
+  assert.deepEqual(state.tabs, [])
+  assert.equal(state.active, null)
+  assert.equal(state.groups.length, 1)
+  assert.deepEqual(state.groups[0].pages, [])
+  assert.equal(state.history.length, 0)
+  assert.equal(state.index, -1)
+
+  state = select(state, CENTER_HOME)
+  assert.deepEqual(state.tabs, [CENTER_HOME])
+  assert.equal(state.active, CENTER_HOME)
+  assert.equal(state.groups.length, 1)
+})
+
+test('reopening home focuses the existing page instead of duplicating it', () => {
+  let state = select(createCenterNavigation(), CENTER_SETTINGS)
+  state = select(state, CENTER_HOME)
+  assert.deepEqual(state.tabs, [CENTER_HOME, CENTER_SETTINGS])
+  assert.equal(state.active, CENTER_HOME)
+
+  state = split(state, 'row')
+  state = select(state, viewPageKey('a'))
+  assert.equal(state.activeGroupId, 'g2')
+  state = select(state, CENTER_HOME)
+  assert.equal(state.activeGroupId, 'g1')
+  assert.equal(state.groups.flatMap(group => group.pages).filter(page => page === CENTER_HOME).length, 1)
+})
+
+test('closing the last page of an active secondary group merges into the nearest group', () => {
+  let state = split(createCenterNavigation(), 'row')
+  state = select(state, CENTER_SETTINGS)
+  state = close(state, CENTER_SETTINGS, 'g2')
+  assert.equal(state.groups.length, 1)
+  assert.equal(state.activeGroupId, 'g1')
+  assert.deepEqual(state.tabs, [CENTER_HOME])
+})
+
+test('closing home in a non-active group removes only that secondary group', () => {
+  let state = split(createCenterNavigation(), 'row')
+  state = select(state, CENTER_SETTINGS)
+  state = close(state, CENTER_HOME, 'g1')
+  assert.equal(state.groups.length, 1)
+  assert.equal(state.activeGroupId, 'g2')
+  assert.deepEqual(state.tabs, [CENTER_SETTINGS])
+})
+
+test('home can move between groups like any other page', () => {
+  let state = split(createCenterNavigation(), 'row')
+  state = move(state, CENTER_HOME, 'g2')
+  assert.equal(state.groups.length, 1)
+  assert.equal(state.activeGroupId, 'g2')
+  assert.deepEqual(state.tabs, [CENTER_HOME])
+})
+
+test('prune keeps a closed home closed', () => {
+  let state = close(createCenterNavigation(), CENTER_HOME)
+  state = prune(state, [])
+  assert.deepEqual(state.tabs, [])
+  assert.equal(state.active, null)
+})
+
+test('a closed home round-trips through parse and serialize', () => {
+  const snapshot = serializeCenterState(close(createCenterNavigation(), CENTER_HOME))
+  const parsed = parseCenterState(snapshot)
+  assert.equal(parsed.recovered, false)
+  assert.deepEqual(parsed.state.tabs, [])
+  assert.equal(parsed.state.active, null)
+  assert.deepEqual(serializeCenterState(parsed.state), snapshot)
 })
 
 test('prune removes withdrawn views and focuses the last open tab when active disappears', () => {
@@ -85,14 +151,14 @@ test('prune removes withdrawn views and focuses the last open tab when active di
   assert.equal(state.active, CENTER_HOME)
 })
 
-test('open center tabs are bounded while home and the active page stay', () => {
+test('open center tabs are bounded while the active page stays', () => {
   let state = createCenterNavigation()
   for (let i = 0; i < MAX_CENTER_TABS + 8; i += 1) state = select(state, viewPageKey(`v${i}`))
   assert.equal(state.tabs.length, MAX_CENTER_TABS)
-  assert.equal(state.tabs[0], CENTER_HOME)
   assert.equal(state.active, viewPageKey(`v${MAX_CENTER_TABS + 7}`))
   assert.ok(state.tabs.includes(state.active))
   assert.equal(state.tabs.includes(viewPageKey('v0')), false)
+  assert.equal(state.tabs.includes(CENTER_HOME), false)
   assert.equal(state.history.every(key => state.tabs.includes(key)), true)
 })
 

@@ -53,6 +53,7 @@ function GroupView({ group, center, tabFor, breadcrumbFor, renderPage, isActive,
         activeId={group.active}
         onSelect={(key) => center.selectInGroup(group.id, key)}
         onClose={(key) => center.close(key, group.id)}
+        onOpenHome={() => center.ensureHomeOpen()}
         onBack={() => center.back(group.id)}
         canBack={group.index > 0}
         breadcrumb={breadcrumbFor(group.active)}

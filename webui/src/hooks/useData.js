@@ -93,8 +93,17 @@ export function useMatches() {
 
 export function useSettings() {
   const { data, load: loadSettings } = useRequest(api.loadConfig)
-  const [settings, setSettings] = useState({})
-  useEffect(() => { if (data) setSettings(data) }, [data])
+  // Expose the server snapshot on the same render that flips configReady.
+  // A separate useEffect(state) left workbench hydration reading the previous
+  // empty object for one frame; under load that frame can win the layout race.
+  const [local, setLocal] = useState(null)
+  const settings = local ?? data ?? {}
+  const setSettings = useCallback((next) => {
+    setLocal(previous => (typeof next === 'function'
+      ? next(previous ?? data ?? {})
+      : next))
+  }, [data])
+  useEffect(() => { setLocal(null) }, [data])
   // data 为 null 才代表配置还没回来；{} 是合法空配置，不能拿它判断就绪。
   const configReady = data !== null && data !== undefined
   return { settings, setSettings, loadSettings, configReady }

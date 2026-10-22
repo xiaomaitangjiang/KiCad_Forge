@@ -43,8 +43,8 @@ export function useWorkbenchLayout(config, configReady) {
 
   useEffect(() => {
     if (hydratedRef.current || !configReady) return undefined
-    // useSettings 的 configReady 比 settings state 早一帧：等一帧再读 ref，
-    // 否则会拿空对象水合成默认布局。
+    // 等一帧让同一次 render 的 config 引用落到 ref 后再水合；useSettings 已把
+    // 服务端快照与 configReady 对齐，避免读到上一帧的空配置。
     const frame = requestAnimationFrame(() => {
       if (hydratedRef.current) return
       hydratedRef.current = true

@@ -329,7 +329,8 @@ await runAppFixture('workbench-e2e', async ({ launch, stop, json, waitFor, resul
   await waitFor(() => cdp.eval('[...document.querySelectorAll(\'.center-group[data-center-group="g2"] [data-center-tab-close]\')].some((node) => node.dataset.centerTabClose === "kf:settings")'), 4000, 'page moves to next group')
   groupState = await groupSnapshot()
   check(groupState.groups[1].closable.includes('kf:settings'), 'settings should move into g2: ' + JSON.stringify(groupState))
-  check(groupState.groups[0].closable.length === 0, 'g1 should keep only home: ' + JSON.stringify(groupState))
+  check(groupState.groups[0].closable.length === 1 && groupState.groups[0].closable[0] === 'kf:symbols',
+    'g1 should keep only home and expose its close button: ' + JSON.stringify(groupState))
   await cdp.eval(`document.querySelector('.activitybar button[aria-label="设置"]')?.click()`)
   await sleep(200)
   groupState = await groupSnapshot()
@@ -457,7 +458,10 @@ await runAppFixture('workbench-e2e', async ({ launch, stop, json, waitFor, resul
   }
   await setLayout(json, origin, missingPageLayout)
   await reload(cdp, waitFor)
-  await waitFor(() => cdp.eval('document.querySelectorAll("[data-center-tab-close]").length === 0'), 5000, 'missing plugin page pruned')
+  await waitFor(() => cdp.eval(`(() => {
+    const tabs = [...document.querySelectorAll('.center-tab-label')].map((node) => node.textContent.trim())
+    return tabs.length === 1 && tabs[0] === '全部元件' && !document.querySelector('.plugin-view')
+  })()`), 5000, 'missing plugin page pruned')
   const missingState = await cdp.eval(`({
     tabs: [...document.querySelectorAll('.center-tab-label')].map((node) => node.textContent.trim()),
     emptyViews: document.querySelectorAll('.plugin-view').length,

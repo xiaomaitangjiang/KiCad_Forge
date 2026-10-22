@@ -681,12 +681,17 @@
   },
   "workbench": {
     "tasks": "任务",
-    "output": "输出",
     "problems": "问题",
     "emptyPanel": "暂无内容",
-    "emptyOutput": "该任务没有输出。",
     "noTasks": "暂无任务",
     "noProblems": "暂无问题",
+    "copyDiagnostics": "复制诊断信息",
+    "diagnosticsCopied": "诊断信息已复制",
+    "diagnosticsCopyFailed": "复制失败，请手动选择错误文本",
+    "showError": "展开错误",
+    "hideError": "收起错误",
+    "taskUncertain": "结果待核对",
+    "taskUncertainHint": "任务结果不确定，请手动核对后再继续；不会自动重试写入",
     "closePanel": "关闭面板",
     "closeSidebar": "关闭侧栏",
     "bottomPanel": "底部面板",
@@ -700,6 +705,7 @@
     "splitDown": "向下拆分",
     "moveToNextGroup": "移动当前页到下一组",
     "emptyGroup": "空分组",
-    "emptyGroupHint": "从工具栏或侧栏打开页面，或把页签拖到这里。"
+    "emptyGroupHint": "从工具栏或侧栏打开页面，或把页签拖到这里。",
+    "openHome": "打开全部元件"
   }
 }

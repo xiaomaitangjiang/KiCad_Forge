@@ -46,6 +46,13 @@ function sanitizeViewId(value, fallback, allowNull = false) {
   return fallback
 }
 
+// O1: the bottom panel no longer has an output tab. Old snapshots are migrated
+// on read and can never be written back, while other unknown ids stay untouched.
+function normalizeBottomViewId(value, fallback) {
+  const id = sanitizeViewId(value, fallback)
+  return id === 'output' ? 'tasks' : id
+}
+
 export function createDefaultWorkbenchLayout() {
   return {
     version: WORKBENCH_LAYOUT_VERSION,
@@ -126,10 +133,11 @@ export function parseWorkbenchLayout(raw) {
     width: readDimension(auxiliarySource, 'width', 'auxiliary', fallback.auxiliarySidebar.width, 'auxiliarySidebar.width', issues),
     activeViewId: readViewId(auxiliarySource, 'activeViewId', fallback.auxiliarySidebar.activeViewId, 'auxiliarySidebar.activeViewId', issues, true),
   }
+  const bottomViewId = readViewId(bottomSource, 'activeViewId', fallback.bottomPanel.activeViewId, 'bottomPanel.activeViewId', issues)
   const bottomPanel = {
     visible: readBoolean(bottomSource, 'visible', fallback.bottomPanel.visible, 'bottomPanel.visible', issues),
     height: readDimension(bottomSource, 'height', 'bottom', fallback.bottomPanel.height, 'bottomPanel.height', issues),
-    activeViewId: readViewId(bottomSource, 'activeViewId', fallback.bottomPanel.activeViewId, 'bottomPanel.activeViewId', issues),
+    activeViewId: normalizeBottomViewId(bottomViewId, fallback.bottomPanel.activeViewId),
   }
 
   // v1 快照没有 center：迁移为默认中心分组，不算损坏；v2 起 center 是完整子快照。
@@ -171,7 +179,7 @@ export function serializeWorkbenchLayout(layout) {
     bottomPanel: {
       visible: bottom.visible === true,
       height: clampWidth('bottom', bottom.height, 220),
-      activeViewId: sanitizeViewId(bottom.activeViewId, 'tasks'),
+      activeViewId: normalizeBottomViewId(bottom.activeViewId, 'tasks'),
     },
     center: serializeCenterState(parseCenterState(value.center).state),
   })

@@ -86,7 +86,7 @@ function trimPageLimit(groups, keepKey) {
     let victimGroup = null
     let victim = null
     for (const group of next) {
-      victim = group.pages.find(page => page !== CENTER_HOME && page !== keepKey && page !== group.active)
+      victim = group.pages.find(page => page !== keepKey && page !== group.active)
       if (victim) { victimGroup = group; break }
     }
     if (!victim || !victimGroup) break
@@ -218,7 +218,7 @@ function splitGroup(state, direction) {
 }
 
 function movePage(state, key, targetGroupId) {
-  if (!key || key === CENTER_HOME) return state
+  if (!key) return state
   const source = findGroupByPage(state, key)
   const target = state.groups.find(group => group.id === targetGroupId)
   if (!source || !target) return state
@@ -254,19 +254,27 @@ function moveNext(state) {
 }
 
 function closePage(state, key, groupId) {
-  if (!key || key === CENTER_HOME) return state
+  if (!key) return state
   const group = groupId
     ? state.groups.find(item => item.id === groupId)
     : findGroupByPage(state, key)
   if (!group || !group.pages.includes(key)) return state
   if (group.pages.length === 1) {
-    if (state.groups.length === 1) return state
-    const ids = collectGroupIds(state.tree)
-    const groups = state.groups.filter(item => item.id !== group.id)
-    const tree = removeGroup(state.tree, group.id)
-    let activeGroupId = state.activeGroupId
-    if (activeGroupId === group.id) activeGroupId = ids[Math.min(ids.indexOf(group.id), ids.length - 2)] || groups[0].id
-    return project({ ...state, groups, tree, activeGroupId })
+    // 次级组只有一页时合并掉；最后一个组保留零页空态，由重开入口恢复。
+    if (state.groups.length > 1) {
+      const ids = collectGroupIds(state.tree)
+      const groups = state.groups.filter(item => item.id !== group.id)
+      const tree = removeGroup(state.tree, group.id)
+      const remaining = ids.filter(id => id !== group.id)
+      const oldIndex = Math.max(0, ids.indexOf(group.id))
+      let activeGroupId = state.activeGroupId
+      if (activeGroupId === group.id) {
+        activeGroupId = remaining[Math.min(oldIndex, remaining.length - 1)] || groups[0].id
+      }
+      return project({ ...state, groups, tree, activeGroupId })
+    }
+    const cleaned = cleanGroup(group, [], null)
+    return project({ ...state, groups: state.groups.map(item => item.id === group.id ? cleaned : item) })
   }
   const oldIndex = group.pages.indexOf(key)
   const pages = group.pages.filter(page => page !== key)
@@ -305,11 +313,6 @@ function prunePages(state, viewIds) {
       removed = true
       break
     }
-  }
-  if (!groups.some(group => group.pages.includes(CENTER_HOME))) {
-    groups = groups.map((group, index) => index === 0
-      ? cleanGroup(group, [CENTER_HOME, ...group.pages], CENTER_HOME)
-      : group)
   }
   let activeGroupId = state.activeGroupId
   if (!groups.some(group => group.id === activeGroupId)) activeGroupId = collectGroupIds(tree)[0] || groups[0].id
@@ -476,16 +479,12 @@ export function parseCenterState(raw) {
     for (let index = groups.length - 1; index >= 0 && keep > MAX_CENTER_TABS; index -= 1) {
       const group = groups[index]
       while (keep > MAX_CENTER_TABS && group.pages.length > 1) {
-        const victim = group.pages.find(page => page !== CENTER_HOME && page !== group.active)
+        const victim = group.pages.find(page => page !== group.active)
         if (!victim) break
         group.pages = group.pages.filter(page => page !== victim)
         keep -= 1
       }
     }
-  }
-  if (!groups.some(group => group.pages.includes(CENTER_HOME))) {
-    recovered = true
-    groups[0] = cleanGroup(groups[0], [CENTER_HOME, ...groups[0].pages], CENTER_HOME)
   }
   let activeGroupId = ids.has(raw.activeGroupId) ? raw.activeGroupId : groups[0].id
   if (activeGroupId !== raw.activeGroupId) recovered = true
@@ -509,6 +508,7 @@ export function useCenterNavigation() {
   const [hydrated, setHydrated] = useState(false)
   const select = useCallback((key, groupId) => dispatch({ type: 'select', key, groupId }), [])
   const selectView = useCallback((viewId, groupId) => dispatch({ type: 'select', key: viewPageKey(viewId), groupId }), [])
+  const ensureHomeOpen = useCallback(() => dispatch({ type: 'select', key: CENTER_HOME }), [])
   const close = useCallback((key, groupId) => dispatch({ type: 'close', key, groupId }), [])
   const back = useCallback((groupId) => dispatch({ type: 'back', groupId }), [])
   const prune = useCallback((viewIds) => dispatch({ type: 'prune', viewIds }), [])
@@ -541,6 +541,7 @@ export function useCenterNavigation() {
     hydrated,
     select,
     selectView,
+    ensureHomeOpen,
     close,
     back,
     prune,
@@ -552,6 +553,6 @@ export function useCenterNavigation() {
     resizeGroup,
     resizeGroups,
     hydrate,
-  }), [state, activeGroup, viewId, hydrated, select, selectView, close, back, prune, selectInGroup,
+  }), [state, activeGroup, viewId, hydrated, select, selectView, ensureHomeOpen, close, back, prune, selectInGroup,
     activateGroup, splitGroup, movePage, moveNext, resizeGroup, resizeGroups, hydrate])
 }

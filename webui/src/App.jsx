@@ -20,7 +20,7 @@ import Inspector from './components/Inspector'
 import { SettingsModal, RulesModal, PluginsModal, TypeModal, CreateLibraryModal, ImportingModal, ClassifyResultModal, MatchSuggestModal, DeleteLibraryModal, ConfirmDialog } from './components/Modals'
 import TypeMatchingModal from './components/TypeMatchingModal'
 import { committedRefreshOutcome, isMatchingReport } from './lib/typeMatching'
-import { describeEditRefresh, selectableCommitIds } from './lib/editRefresh'
+import { nextEditRefreshAttempt, planEditRefreshRetry, runEditRefreshFlow } from './lib/editRefresh'
 import { createSymbolRefresher, switchWorkspaceQuery, selectAllQuery } from './lib/symbolRefresh'
 import { startDesktopSession, statusCountText } from './lib/desktopSession'
 import { appPluginRuntime } from './plugin-host/app-host'
@@ -110,13 +110,27 @@ export default function App() {
     toastMsg(t('workbench.layoutRecovered'))
   }, [workbench.recovered, toastMsg, t])
 
+  // 提交后刷新的归属（N1）：用户查询/筛选/工作区/中心页每变一次就推进意图
+  // 代次。刷新流程冻结发起时的代次，只有仍是最新意图时才允许发布列表、改
+  // 查询/筛选、选中对象或清通知。noticeEpoch 单独记录“用户关闭通知”。
+  const editRefreshIntentRef = useRef({
+    intentEpoch: 0, workspaceId: '', route: '', noticeEpoch: 0, selectionEpoch: 0,
+  })
+  const suppressEditIntentRef = useRef(false)
+  const markEditIntent = useCallback(() => {
+    if (!suppressEditIntentRef.current) editRefreshIntentRef.current.intentEpoch += 1
+  }, [])
+  const markSelectionIntent = useCallback(() => {
+    if (!suppressEditIntentRef.current) editRefreshIntentRef.current.selectionEpoch += 1
+  }, [])
+
   // UI state
-  const [filter, setFilter] = useState('')
+  const [filter, setFilterState] = useState('')
   const [search, setSearchState] = useState('')
   // 对象列表选择（ED-020..024）：只存 UUID；集合与详情对象分开。
   const [selection, setSelection] = useState(emptySelection)
   const [targetLib, setTargetLibState] = useState('')
-  const [issueFilter, setIssueFilter] = useState(false)
+  const [issueFilter, setIssueFilterState] = useState(false)
   // 对象粘贴/移动的目标与冲突确认（ED-031/032、ED-042）；粘贴只在前端持有
   // 待提交的剪贴板内容，移动只持有宿主 token 与直接项身份。
   const [pasteIntent, setPasteIntent] = useState(null)
@@ -126,21 +140,35 @@ export default function App() {
   // 提交后刷新结果（R6）：只有全部必要读取都发布并真正定位到对象才算成功；
   // 失败时保留旧数据与旧查询，只允许“重试读取”，绝不重发写请求。
   const [editRefresh, setEditRefresh] = useState(null)
+  // 通知的归属以 ref 为准：所有写入都经过 editRefreshPresenter，渲染时不再
+  // 用 state 回写 ref，避免异步流程刚设的 attempt 被一次旧渲染覆盖。
   const editRefreshRef = useRef(null)
-  editRefreshRef.current = editRefresh
+  // 刷新编号只用于归属，与当前通知是否存在无关：清通知/失败/成功都不能让
+  // 编号回退，否则在途的旧刷新会与后来者复用同一个编号。
+  const editRefreshAttemptRef = useRef(0)
 
   // 查询状态（关键词 + 目标库）同时放在 state（渲染）和 ref（刷新读取）里。
   // 两个 setter 是唯一入口：改 UI 的同时同步 ref —— 只在 useEffect 里补 ref
   // 会漏掉“等待期间用户改了查询”的情况。
   const queryRef = useRef({ search: '', targetLib: '' })
   const setSearch = useCallback((value) => {
+    markEditIntent()
     queryRef.current.search = value
     setSearchState(value)
-  }, [])
+  }, [markEditIntent])
   const setTargetLib = useCallback((value) => {
+    markEditIntent()
     queryRef.current.targetLib = value
     setTargetLibState(value)
-  }, [])
+  }, [markEditIntent])
+  const setFilter = useCallback((value) => {
+    markEditIntent()
+    setFilterState(value)
+  }, [markEditIntent])
+  const setIssueFilter = useCallback((value) => {
+    markEditIntent()
+    setIssueFilterState(value)
+  }, [markEditIntent])
 
   // ---- Unified query state: keyword + library travel together ----
   // 稳定的刷新回调：调用时才从 ref 取最新查询，所有“操作完成后刷新”都用它。
@@ -288,6 +316,14 @@ export default function App() {
     return compLibraries.some(c => c.id === configured) ? configured : (compLibraries[0]?.id || '')
   }, [settings.active_component_library, compLibraries])
 
+  // 刷新归属里要比较的实时上下文。工作区/中心页变化由下面的 effect 推进代次；
+  // 渲染时同步 ref，网络回调即使赶在 effect 前也能看到最新值。
+  editRefreshIntentRef.current.workspaceId = activeLib
+  editRefreshIntentRef.current.route = `${center.activeGroupId}:${center.active}`
+  useEffect(() => {
+    markEditIntent()
+  }, [activeLib, center.activeGroupId, center.active, markEditIntent])
+
   // Libraries of the active workspace — symbols are filtered by their library ids.
   // A concrete workspace with no libraries shows an EMPTY list (never falls back
   // to symbols of other workspaces).
@@ -329,16 +365,23 @@ export default function App() {
 
   const selectSymbol = useCallback((symbol, options = {}) => {
     if (!symbol?.id) return
+    markSelectionIntent()
     const mode = options.mode || 'single'
     setSelection(current => {
       if (mode === 'toggle') return toggleSelection(current, symbol.id)
       if (mode === 'range') return extendSelection(current, symbol.id, resultIds)
       return selectOnly(symbol.id)
     })
-  }, [resultIds])
+  }, [markSelectionIntent, resultIds])
 
-  const clearSymbolSelection = useCallback(() => setSelection(clearSelection()), [])
-  const selectAllLoaded = useCallback(() => setSelection(selectAllIn(resultIds)), [resultIds])
+  const clearSymbolSelection = useCallback(() => {
+    markSelectionIntent()
+    setSelection(clearSelection())
+  }, [markSelectionIntent])
+  const selectAllLoaded = useCallback(() => {
+    markSelectionIntent()
+    setSelection(selectAllIn(resultIds))
+  }, [markSelectionIntent, resultIds])
 
   // 工具栏「剪切」是否显示为可用：只按已加载对象与库锁判断；真正授权在宿主，
   // 这里不能把只读源库显示成可写（ED-013/030）。
@@ -424,78 +467,84 @@ export default function App() {
     return t(key, { count: entry.count ?? 0 })
   }, [t])
 
-  // 提交后的只读刷新（R6）。先探测目标查询与各只读快照，全部发布后才把
-  // 查询/筛选/选择改成提交结果；失败时旧列表、旧查询原样保留，并保留同一
-  // 请求供「重试读取」使用 —— 重试绝不重发粘贴/移动/撤销/重做。
-  const runEditRefresh = useCallback(async (request) => {
-    const attempt = (editRefreshRef.current?.attempt || 0) + 1
-    const pending = { ...request, attempt, status: 'refreshing', error: '' }
-    editRefreshRef.current = pending
-    setEditRefresh(pending)
-    const query = request.query || { search: '', targetLib: '' }
-    // 符号列表用直接读取探测，不先改 UI 查询，也不先覆盖已加载列表；
-    // 其它只读快照可以独立发布，失败时 useRequest 保留旧数据。
-    const probe = api.symbols(query.search, query.targetLib)
-      .then(data => ({ status: Array.isArray(data) ? 'published' : 'failed', data }))
-    const results = await Promise.allSettled([
-      probe, loadLibrariesTracked(), loadStatusTracked(), refreshEditHistory(),
-    ])
-    const report = describeEditRefresh(results)
-    if (report.status !== 'published') {
-      const error = report.error || tRef.current('toast.failedUnknown')
-      const next = { ...request, attempt, status: report.status, error }
-      editRefreshRef.current = next
-      setEditRefresh(next)
-      toastMsg(report.status === 'failed'
-        ? tRef.current('topbar.commitRefreshFailed', { error })
-        : tRef.current('topbar.commitRefreshSuperseded'))
-      return report
-    }
-    // 探测通过才用同一查询发布列表；发布成功后切换查询与目标库。
-    const publish = await loadSymbolsTracked(query.search, query.targetLib)
-    if (publish?.status !== 'published') {
-      const error = publish?.error?.message || publish?.error || tRef.current('toast.failedUnknown')
-      const next = { ...request, attempt, status: publish?.status || 'failed', error }
-      editRefreshRef.current = next
-      setEditRefresh(next)
-      toastMsg(tRef.current('topbar.commitRefreshFailed', { error }))
-      return { ...report, status: next.status }
-    }
-    if (request.locate) {
-      setSearch('')
-      setTargetLib(request.targetLibraryId || '')
-      setFilter('')
-      setIssueFilter(false)
-    }
-    const { selected, missing } = selectableCommitIds(publish.data, request.ids, request.targetLibraryId || '')
-    if (missing.length > 0) {
-      const error = tRef.current('topbar.commitRefreshMissing', { count: missing.length })
-      if (request.requireAll) {
-        const next = { ...request, attempt, status: 'failed', error, missingCount: missing.length }
-        editRefreshRef.current = next
-        setEditRefresh(next)
-        toastMsg(error)
-        return { ...report, status: 'failed' }
-      }
-      // 历史恢复的目标可能不在当前筛选/查询里：已生效的读取不报失败，但也不
-      // 假装全部定位成功，不弹成功提示。
+  // 提交后的只读刷新（R6/N1）：runEditRefreshFlow 冻结发起时的查询、工作区、
+  // 中心页与通知代次；用户随后改搜索/换库/换工作区/第二次编辑都会推进代次，
+  // 旧流程只清自己的通知，不再发布旧列表或覆盖新查询。失败时保留旧数据与
+  // 旧查询，重试只读；重试前重新核对当前意图，绝不重发粘贴/移动/撤销/重做。
+  const readEditRefreshContext = useCallback(() => ({
+    attempt: editRefreshRef.current?.attempt ?? 0,
+    intentEpoch: editRefreshIntentRef.current.intentEpoch,
+    workspaceId: editRefreshIntentRef.current.workspaceId,
+    route: editRefreshIntentRef.current.route,
+    noticeEpoch: editRefreshIntentRef.current.noticeEpoch,
+    selectionEpoch: editRefreshIntentRef.current.selectionEpoch,
+  }), [])
+  const editRefreshPresenter = useMemo(() => ({
+    pending(notice) {
+      editRefreshRef.current = notice
+      setEditRefresh(notice)
+    },
+    failed(notice) {
+      editRefreshRef.current = notice
+      setEditRefresh(notice)
+    },
+    clear(attempt) {
+      // 只清自己这张卡片：另一个刷新的失败/进行中通知不能被旧流程抹掉。
+      if (editRefreshRef.current?.attempt !== attempt) return
       editRefreshRef.current = null
       setEditRefresh(null)
-      return report
-    }
-    if (selected.length > 0) setSelection({ ids: selected, activeId: selected[0], anchorId: selected[0] })
-    editRefreshRef.current = null
-    setEditRefresh(null)
-    if (request.successKey) toastMsg(tRef.current(request.successKey, request.successParams || {}))
-    return report
-  }, [loadSymbolsTracked, loadLibrariesTracked, loadStatusTracked, refreshEditHistory, setSearch, setTargetLib, toastMsg])
+    },
+    applyQuery(targetLibraryId) {
+      // 这是刷新自己的受控迁移，不是用户输入；不能推进意图代次。
+      suppressEditIntentRef.current = true
+      try {
+        setSearch('')
+        setTargetLib(targetLibraryId || '')
+        setFilter('')
+        setIssueFilter(false)
+      } finally {
+        suppressEditIntentRef.current = false
+      }
+    },
+    select(ids) {
+      setSelection({ ids, activeId: ids[0], anchorId: ids[0] })
+    },
+  }), [setFilter, setIssueFilter, setSearch, setTargetLib])
+  const runEditRefresh = useCallback(async (request) => {
+    const attempt = editRefreshAttemptRef.current = nextEditRefreshAttempt(editRefreshAttemptRef.current)
+    return runEditRefreshFlow({
+      request,
+      attempt,
+      readContext: readEditRefreshContext,
+      getNoticeAttempt: () => editRefreshRef.current?.attempt ?? null,
+      reads: {
+        // 符号列表仍通过 request model 发布，保留最新 epoch 的 latest-wins；
+        // 探测只用于判断读回是否可用，发布前后都会复核归属。
+        probe: (search, targetLib) => api.symbols(search, targetLib),
+        libraries: loadLibrariesTracked,
+        status: loadStatusTracked,
+        history: refreshEditHistory,
+        publish: loadSymbolsTracked,
+      },
+      present: editRefreshPresenter,
+      toast: toastMsg,
+      translate: (key, params) => tRef.current(key, params),
+    })
+  }, [editRefreshPresenter, loadLibrariesTracked, loadStatusTracked, loadSymbolsTracked,
+    readEditRefreshContext, refreshEditHistory, toastMsg])
   const retryEditRefresh = useCallback(() => {
     const current = editRefreshRef.current
     if (!current || current.status === 'refreshing') return
-    const { kind, ids, query, targetLibraryId, locate, requireAll, successKey, successParams } = current
-    return runEditRefresh({ kind, ids, query, targetLibraryId, locate, requireAll, successKey, successParams })
-  }, [runEditRefresh])
+    const plan = planEditRefreshRetry(current, {
+      query: { ...queryRef.current },
+      context: readEditRefreshContext(),
+    })
+    if (!plan) return
+    return runEditRefresh(plan.request)
+  }, [readEditRefreshContext, runEditRefresh])
   const dismissEditRefresh = useCallback(() => {
+    // 关闭即作废旧刷新：晚到的失败提示/成功 toast 不能再出现。
+    editRefreshIntentRef.current.noticeEpoch += 1
     editRefreshRef.current = null
     setEditRefresh(null)
   }, [])
@@ -760,6 +809,7 @@ export default function App() {
   }, [pluginsReady, workbench.layout.bottomPanel.visible])
 
   async function switchWorkspace(id) {
+    center.ensureHomeOpen()
     setSettings(prev => ({ ...prev, active_component_library: id }))
     // Context change → reset the whole query state (selection, keyword, lib)
     clearSymbolSelection(); setFilter(''); setIssueFilter(false); loadLibraries()
@@ -774,6 +824,7 @@ export default function App() {
   }
 
   async function selectLibrary(libId) {
+    center.ensureHomeOpen()
     setFilter(''); clearSymbolSelection(); setTargetLib(libId)
     loadSymbols(queryRef.current.search, libId)
   }
@@ -906,12 +957,13 @@ export default function App() {
   // “All” 保留关键词（那是用户输入）：清筛选与选中，只同步清 targetLib 并按最新
   // ref 刷新一次（原先区块里的重复 clear 合并到这里，不重复发 GET）
   function selectAllSymbols() {
+    center.ensureHomeOpen()
     setFilter(''); setIssueFilter(false); clearSymbolSelection()
     selectAllQuery({ resetTargetLib: setTargetLib, refresh: refreshSymbols })
   }
-  function selectIssues() { toggleIssues(); clearSymbolSelection() }
+  function selectIssues() { center.ensureHomeOpen(); toggleIssues(); clearSymbolSelection() }
   function runAutoMatch() { autoMatch(); clearSymbolSelection() }
-  function selectType(id) { setFilter(id); clearSymbolSelection() }
+  function selectType(id) { center.ensureHomeOpen(); setFilter(id); clearSymbolSelection() }
   function openSettings() { loadSettings(); center.select(CENTER_SETTINGS) }
   function requestDeleteLibrary(request) { setPendingDeleteLib(request) }
   async function togglePluginEnabled(plugin) {
@@ -991,7 +1043,7 @@ export default function App() {
     [CENTER_MATCHING]: t('matching.title'),
   }), [t])
   const tabFor = useCallback((key) => {
-    if (key === CENTER_HOME) return { id: key, label: t('sidebar.allSymbols'), closable: false }
+    if (key === CENTER_HOME) return { id: key, label: t('sidebar.allSymbols'), closable: true }
     if (key.startsWith('view:')) {
       const viewId = key.slice(5)
       const entry = viewEntries.find((item) => item.options.id === viewId)
@@ -1096,7 +1148,8 @@ export default function App() {
           sidebarProps={{
             workspace: { items: compLibraries, selectedId: activeLib, onSelect: switchWorkspace },
             navigation: {
-              activeAll: !filter && !issueFilter, activeIssues: issueFilter,
+              activeAll: center.active === CENTER_HOME && !filter && !issueFilter,
+              activeIssues: center.active === CENTER_HOME && issueFilter,
               allCount: statusCountText(status, 'symbols'),
               allCountTitle: libraryStatsNotice || undefined,
               allCountLabel: `${t('sidebar.allSymbols')}: ${statusCountText(status, 'symbols')}`,

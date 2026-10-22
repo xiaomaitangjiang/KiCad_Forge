@@ -47,11 +47,16 @@ test('recovery records terminal tasks and observes live ones without a second li
   assert.equal(calls.list, 1)
   assert.equal(overview.hasTask('t1'), true)
   assert.equal(overview.hasTask('t2'), true)
-  assert.equal(overview.getSnapshot().tasks.find(task => task.id === 't1')?.result?.output, 'first')
+  const recovered = overview.getSnapshot().tasks.find(task => task.id === 't1')
+  assert.equal(recovered?.summary, 'first')
+  assert.equal(recovered?.state, 'succeeded')
+  assert.equal('result' in recovered, false, 'the overview keeps only a bounded summary')
 
   const finished = await waitFor(() => overview.getSnapshot().tasks.find(task => task.id === 't2' && task.state === 'succeeded'))
   assert.equal(finished.pluginId, 'demo.plugin')
-  assert.equal(finished.result.output, 'second')
+  assert.equal(finished.id, 't2')
+  assert.equal(finished.summary, 'second')
+  assert.equal('result' in finished, false)
   assert.equal(calls.t1, 0, 'terminal recovered task must not be polled')
 
   await recoverTasks(['demo.plugin'], { fetchImpl, overview })

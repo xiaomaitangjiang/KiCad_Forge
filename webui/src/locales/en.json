@@ -681,12 +681,17 @@
   },
   "workbench": {
     "tasks": "Tasks",
-    "output": "Output",
     "problems": "Problems",
     "emptyPanel": "Nothing here yet",
-    "emptyOutput": "This task produced no output.",
     "noTasks": "No tasks",
     "noProblems": "No problems",
+    "copyDiagnostics": "Copy diagnostics",
+    "diagnosticsCopied": "Diagnostics copied",
+    "diagnosticsCopyFailed": "Copy failed; select the error text manually",
+    "showError": "Show error",
+    "hideError": "Hide error",
+    "taskUncertain": "Result needs verification",
+    "taskUncertainHint": "The task result is uncertain; verify it manually. No automatic retry is performed.",
     "closePanel": "Close Panel",
     "closeSidebar": "Close Sidebar",
     "bottomPanel": "Bottom Panel",
@@ -700,6 +705,7 @@
     "splitDown": "Split down",
     "moveToNextGroup": "Move current page to next group",
     "emptyGroup": "Empty group",
-    "emptyGroupHint": "Open a page from the toolbar or sidebar, or drag a tab here."
+    "emptyGroupHint": "Open a page from the toolbar or sidebar, or drag a tab here.",
+    "openHome": "Open all symbols"
   }
 }
