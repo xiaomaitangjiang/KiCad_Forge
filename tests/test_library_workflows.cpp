@@ -395,6 +395,21 @@ TEST_CASE_FIXTURE(LibraryFixture, "footprint reimport preserves path and reloads
 
 TEST_CASE_FIXTURE(LibraryFixture, "binding failure preserves old link and source")
 {
+#ifdef _WIN32
+    const auto permission_path = file;
+#else
+    const auto permission_path = file.parent_path();
+#endif
+    struct RestorePermissions
+    {
+        fs::path path;
+        fs::perms original;
+        ~RestorePermissions()
+        {
+            std::error_code error;
+            fs::permissions(path, original, fs::perm_options::replace, error);
+        }
+    } restore_permissions{permission_path, fs::status(permission_path).permissions()};
     auto sym = symbol();
     auto old = footprint("Old");
     auto next = footprint("New", "new.step");
@@ -407,8 +422,14 @@ TEST_CASE_FIXTURE(LibraryFixture, "binding failure preserves old link and source
     SUBCASE("unknown footprint") { next.set_id("missing"); }
     SUBCASE("missing source") { fs::remove(file); missing = true; }
     SUBCASE("write failure") {
-        // 目标只读：替换阶段失败（临时文件按操作 ID 命名，没法预先占位）
-        fs::permissions(file, fs::perms::owner_read, fs::perm_options::replace);
+        // Windows 的只读目标阻止替换；POSIX 要阻止父目录写入，
+        // 单独把目标文件设为只读仍可能允许原子替换目录项。
+#ifdef _WIN32
+        fs::permissions(permission_path, fs::perms::owner_read, fs::perm_options::replace);
+#else
+        fs::permissions(permission_path, fs::perms::owner_read | fs::perms::owner_exec,
+                        fs::perm_options::replace);
+#endif
     }
     SUBCASE("DB failure") {
         REQUIRE(db->execute("CREATE TRIGGER reject_link BEFORE INSERT ON symbol_footprint_links BEGIN SELECT RAISE(ABORT,'test failure'); END").has_value());
