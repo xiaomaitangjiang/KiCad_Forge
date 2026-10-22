@@ -2,7 +2,7 @@ name: Cross-platform build and test
 
 on:
   push:
-    branches: [master]
+    branches: [master, 'codex/**']
   pull_request:
   workflow_dispatch:
     inputs:
@@ -216,6 +216,12 @@ jobs:
       - name: Test Python plugins and build helpers
         run: python -B -m unittest tests.test_plugins tests.test_lcsc_staging tests.test_lcsc_workflow tests.test_installer tests.test_runtime_assets -v
 
+      - name: Test Git history, repository identity and write outcomes
+        run: |
+          set -euo pipefail
+          mkdir -p test-results
+          python -B -m unittest discover -s plugins/git_version/tests -v 2>&1 | tee test-results/git-python-tests.log
+
       - name: Run every registered C++ regression executable
         run: xmake test -v
 
@@ -225,9 +231,9 @@ jobs:
       - name: Run the relocated bundle and test API startup and shutdown
         run: python scripts/smoke_test.py --binary "dist/$PACKAGE_NAME/KiCad_Forge${{ matrix.platform.exe }}"
 
-      - name: Test real WebView2 loading, restart persistence and Git actions
+      - name: Test real WebView2 editing, workbench recovery and plugin actions
         if: runner.os == 'Windows' && matrix.mode == 'debug'
-        timeout-minutes: 8
+        timeout-minutes: 15
         env:
           KFORGE_STATE_E2E: "1"
           KFORGE_GIT_WRITE_E2E: "1"
@@ -238,6 +244,10 @@ jobs:
           export KFORGE_BUILD_ROOT="$(cygpath -m "$PWD/dist/$PACKAGE_NAME")"
           export KFORGE_TEST_RESULTS="$(cygpath -m "$PWD/test-results/webview2")"
           node webui/tests/run-plugin-webview2.mjs 2>&1 | tee test-results/webview2/prototype.log
+          node webui/tests/run-editing-e2e.mjs 2>&1 | tee test-results/webview2/editing.log
+          node webui/tests/run-workbench-e2e.mjs 2>&1 | tee test-results/webview2/workbench.log
+          node webui/tests/run-home-tab-e2e.mjs 2>&1 | tee test-results/webview2/home-tab.log
+          node webui/tests/run-delivery-review-e2e.mjs 2>&1 | tee test-results/webview2/delivery-review.log
           node webui/tests/run-plugin-state-e2e.mjs 2>&1 | tee test-results/webview2/restart.log
           node webui/tests/run-git-write-e2e.mjs 2>&1 | tee test-results/webview2/git-actions.log
           node webui/tests/run-import-contract-e2e.mjs 2>&1 | tee test-results/webview2/import-contract.log
