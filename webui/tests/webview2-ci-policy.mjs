@@ -7,6 +7,7 @@ function machineRegistry() {
     const payload = JSON.stringify({ action, key, entry }).replaceAll("'", "''")
     const script = `
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 $inputData = '${payload}' | ConvertFrom-Json
 $root = [Microsoft.Win32.RegistryKey]::OpenBaseKey('LocalMachine', 'Registry64')

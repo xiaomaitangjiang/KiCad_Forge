@@ -23,6 +23,18 @@ export function check(value, message) {
   if (!value) throw new Error(message)
 }
 
+export async function seedFixtureLanguage(cdp) {
+  // These native scenarios assert Chinese labels. Fresh profiles must not
+  // depend on the runner's display language; an explicit saved choice wins.
+  const reload = await cdp.eval(`(() => {
+    if (localStorage.getItem('kf-lang')) return false
+    localStorage.setItem('kf-lang', 'zh')
+    return document.documentElement.lang !== 'zh-CN'
+  })()`)
+  if (reload) await cdp.send('Page.reload')
+  return reload
+}
+
 export function copyRuntime(source, target) {
   const data = path.join(source, 'data')
   // Inspect directory entries only; never read or copy database/config/user files.
@@ -185,6 +197,9 @@ export async function runAppFixture(name, scenario) {
         cdp.__origin = origin
         await cdp.send('Runtime.enable')
         await cdp.send('Page.enable')
+        if (await seedFixtureLanguage(cdp)) {
+          await waitFor(() => cdp.eval(`document.documentElement.lang === 'zh-CN' && Boolean(document.querySelector('.workbench'))`), 10000, 'fixture language after navigation')
+        }
       }
       return { app, origin, cdp, errors }
     }

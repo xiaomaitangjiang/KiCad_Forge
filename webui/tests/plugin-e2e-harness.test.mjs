@@ -3,7 +3,31 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmdirSyn
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
-import { copyRuntime } from './plugin-e2e-harness.mjs'
+import vm from 'node:vm'
+import { copyRuntime, seedFixtureLanguage } from './plugin-e2e-harness.mjs'
+
+test('app fixture seeds its Chinese scenario language and preserves an explicit preference', async () => {
+  for (const saved of [null, 'en', 'zh']) {
+    const storage = new Map(saved ? [['kf-lang', saved]] : [])
+    const document = { documentElement: { lang: saved === 'zh' ? 'zh-CN' : 'en' } }
+    let reloads = 0
+    const cdp = {
+      async eval(source) {
+        return vm.runInNewContext(source, { document, localStorage: { getItem: (key) => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) } })
+      },
+      async send(method) {
+        assert.equal(method, 'Page.reload')
+        reloads++
+        document.documentElement.lang = storage.get('kf-lang') === 'zh' ? 'zh-CN' : 'en'
+      },
+    }
+    await seedFixtureLanguage(cdp)
+    assert.equal(storage.get('kf-lang'), saved ?? 'zh')
+    assert.equal(reloads, saved === null ? 1 : 0)
+    await seedFixtureLanguage(cdp)
+    assert.equal(reloads, saved === null ? 1 : 0, 'the same document must not reload twice')
+  }
+})
 
 function fixture(t) {
   const root = mkdtempSync(path.join(os.tmpdir(), 'kf-e2e-copy-test-'))
