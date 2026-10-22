@@ -14,7 +14,7 @@ function registry(initial = {}) {
 const options = { platform: 'win32', githubActions: 'true', enabled: '1', port: 50123, profile: 'C:\\fixture space\\profile' }
 
 test('WebView2 machine policy requires Windows and explicit GitHub CI opt-in', () => {
-  for (const override of [{ platform: 'linux' }, { githubActions: undefined }, { enabled: undefined }]) {
+  for (const override of [{ platform: 'linux' }, { githubActions: '' }, { githubActions: 'false' }, { enabled: '' }, { enabled: '0' }]) {
     const backend = registry()
     const restore = installWebView2CiPolicy({ ...options, ...override, registry: backend })
     assert.equal(backend.values.size, 0)
