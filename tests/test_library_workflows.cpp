@@ -7744,6 +7744,23 @@ TEST_CASE_FIXTURE(LibraryFixture, "LCSC01 expected_missing refuses a dangling sy
         return;
     }
 
+    const auto check_link_entry = [&] {
+#ifdef _WIN32
+        // 部分 MinGW 标准库不能正确报告悬空链接类型，使用不跟随目标的
+        // Win32 目录项信息验证 reparse tag；不能把链接检查降级为 exists。
+        WIN32_FIND_DATAW entry{};
+        const HANDLE found = ::FindFirstFileW(target.c_str(), &entry);
+        REQUIRE(found != INVALID_HANDLE_VALUE);
+        ::FindClose(found);
+        REQUIRE((entry.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0);
+        CHECK(entry.dwReserved0 == IO_REPARSE_TAG_SYMLINK);
+#else
+        CHECK(fs::is_symlink(target));
+#endif
+        CHECK_FALSE(fs::exists(link_target));
+    };
+    check_link_entry();  // 先证明夹具确实是悬空链接，再执行被测操作。
+
     auto result = mutations.apply({io::FileChange{.path = target,
                                                   .content = "(kicad_symbol_lib (version 20231120))",
                                                   .allow_missing = true,
@@ -7754,7 +7771,7 @@ TEST_CASE_FIXTURE(LibraryFixture, "LCSC01 expected_missing refuses a dangling sy
         MESSAGE("dangling symlink was treated as a missing file");
     REQUIRE_FALSE(result.has_value());
     CHECK(result.error().kind() == util::Error::Kind::ValidationError);
-    CHECK(fs::is_symlink(target));  // 链接本身原样保留
+    check_link_entry();  // 链接本身保留，悬空目标没有被创建。
     CHECK(count_rows(*db, "file_mutations") == 0);
 }
 
