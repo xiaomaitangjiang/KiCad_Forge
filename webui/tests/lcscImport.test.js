@@ -541,12 +541,16 @@ test('runner：taskkill 之后进程树仍不退 → 有界等待后用 child.ki
 
 test('runner：taskkill 期间子进程自己退出 → 不误报清理失败', async () => {
   const child = fakeProc({ pid: 4244 })
+  // 退出由子进程自身触发；非 Windows 不调用 spawnKill，同样必须发出退出事件。
+  // Windows 下该事件先于 taskkill 回执，保留“检查后、回执前退出”的竞态。
+  setImmediate(() => {
+    child.exitCode = 0
+    child.emit('exit')
+  })
   await runner.withTimeout(runner.stopEdge(child, {
     spawnKill: () => {
       const killer = fakeProc()
       setImmediate(() => {
-        child.exitCode = 0
-        child.emit('exit')            // 检查之后、taskkill 返回之前自己退出了
         killer.emit('exit', 128)      // taskkill 此时只会报“找不到进程”
       })
       return killer
