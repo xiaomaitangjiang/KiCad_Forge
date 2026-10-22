@@ -185,6 +185,14 @@ jobs:
       - name: Build the plugin SDK and example/first-party plugin bundles
         run: node scripts/build_plugins.mjs
 
+      - name: Install locked plugin dependencies before source-level tests
+        if: matrix.mode == 'debug'
+        run: |
+          set -euo pipefail
+          for plugin_dir in examples/plugins/demo_* plugins/git_version/frontend plugins/lcsc_import/frontend; do
+            npm ci --prefix "$plugin_dir" --no-audit --no-fund
+          done
+
       - name: Test frontend helpers on the native platform
         if: matrix.mode == 'debug'
         run: node --test webui/tests/*.test.js webui/tests/*.test.mjs
