@@ -13,10 +13,14 @@ class TempDirectory
 public:
     TempDirectory()
     {
+        // macOS temp_directory_path() may contain /var -> /private/var.
+        // Fixtures use the physical root so path checks and SQL fault-injection
+        // predicates refer to the same source as the production canonicalizer.
+        const auto root = std::filesystem::canonical(std::filesystem::temp_directory_path());
         std::random_device random;
         for (int attempt = 0; attempt < 32; ++attempt)
         {
-            auto candidate = std::filesystem::temp_directory_path() /
+            auto candidate = root /
                 ("kforge-test-" + std::to_string(random()) + "-" + std::to_string(random()));
             if (std::filesystem::create_directory(candidate))
             {

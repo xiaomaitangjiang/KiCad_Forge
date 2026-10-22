@@ -17,6 +17,25 @@ struct ConfigFixture
 };
 }
 
+TEST_CASE("isolated test directories use a physical root and clean up")
+{
+    std::filesystem::path first_path;
+    std::filesystem::path second_path;
+    {
+        test_support::TempDirectory first;
+        test_support::TempDirectory second;
+        first_path = first.path();
+        second_path = second.path();
+        CHECK(first_path.parent_path() ==
+              std::filesystem::canonical(std::filesystem::temp_directory_path()));
+        CHECK(std::filesystem::is_directory(first_path));
+        CHECK(std::filesystem::is_directory(second_path));
+        CHECK(first_path != second_path);
+    }
+    CHECK_FALSE(std::filesystem::exists(first_path));
+    CHECK_FALSE(std::filesystem::exists(second_path));
+}
+
 TEST_CASE_FIXTURE(ConfigFixture, "config missing file uses defaults without creating a file")
 {
     kforge::util::ConfigStore config(path);
