@@ -4,7 +4,8 @@
 #include "util/config_store.h"
 #include <fstream>
 #include <atomic>
-#include <thread>
+#include <future>
+#include <vector>
 
 namespace
 {
@@ -95,14 +96,15 @@ TEST_CASE_FIXTURE(ConfigFixture, "config concurrent writes preserve all keys aft
     kforge::util::ConfigStore config(path);
     std::atomic<bool> failed = false;
     {
-        std::vector<std::jthread> writers;
+        std::vector<std::future<void>> writers;
         for (int id = 0; id < 4; ++id)
-            writers.emplace_back([&, id] {
+            writers.emplace_back(std::async(std::launch::async, [&, id] {
                 try {
                     for (int value = 0; value < 5; ++value)
                         config.set(std::to_string(id), std::to_string(value));
                 } catch (...) { failed = true; }
-            });
+            }));
+        for (auto& writer : writers) writer.get();
     }
     REQUIRE_FALSE(failed.load());
     kforge::util::ConfigStore reloaded(path);
