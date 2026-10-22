@@ -6,6 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Cdp } from './run-lcsc-browser.mjs'
+import { installWebView2CiPolicy } from './webview2-ci-policy.mjs'
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -136,31 +137,36 @@ export async function runAppFixture(name, scenario) {
     const launch = async ({ connect = true, env = {} } = {}) => {
       checkActive()
       const port = await freePort()
-      const log = openSync(logPath, 'a')
       const inherited = { ...process.env }
       // Git commands must never inherit a developer's GIT_DIR/WORK_TREE/index
       // override or injected config; scenarios supply their own test identity.
       for (const key of Object.keys(inherited)) if (key.startsWith('GIT_')) delete inherited[key]
       let app
+      let target
+      const profile = path.join(temp, 'data', 'webview-profile')
+      const restorePolicy = installWebView2CiPolicy({ port, profile })
       try {
-        app = spawn(path.join(temp, 'KiCad_Forge.exe'), ['--no-auto-import'], {
-          cwd: temp, stdio: ['ignore', log, log], windowsHide: true,
-          env: {
-            ...inherited, ...env,
-            WEBVIEW2_USER_DATA_FOLDER: path.join(temp, 'data', 'webview-profile'),
-            WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}`,
-          },
-        })
-      } finally { closeSync(log) }
-      apps.add(app)
-      let launchError
-      app.once('error', (error) => { launchError = error })
-      const target = await waitFor(async () => {
-        if (launchError) throw launchError
-        if (exited(app)) throw new Error(`app exited (${app.exitCode ?? app.signalCode}); see ${logPath}`)
-        const list = await json(`http://127.0.0.1:${port}/json/list`)
-        return list.find((item) => item.type === 'page' && /^http:\/\/127\.0\.0\.1:\d+/.test(item.url || ''))
-      }, 40000, 'WebView2 target')
+        const log = openSync(logPath, 'a')
+        try {
+          app = spawn(path.join(temp, 'KiCad_Forge.exe'), ['--no-auto-import'], {
+            cwd: temp, stdio: ['ignore', log, log], windowsHide: true,
+            env: {
+              ...inherited, ...env,
+              WEBVIEW2_USER_DATA_FOLDER: profile,
+              WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}`,
+            },
+          })
+        } finally { closeSync(log) }
+        apps.add(app)
+        let launchError
+        app.once('error', (error) => { launchError = error })
+        target = await waitFor(async () => {
+          if (launchError) throw launchError
+          if (exited(app)) throw new Error(`app exited (${app.exitCode ?? app.signalCode}); see ${logPath}`)
+          const list = await json(`http://127.0.0.1:${port}/json/list`)
+          return list.find((item) => item.type === 'page' && /^http:\/\/127\.0\.0\.1:\d+/.test(item.url || ''))
+        }, 40000, 'WebView2 target')
+      } finally { restorePolicy() }
       const origin = new URL(target.url).origin
       const errors = []
       let cdp

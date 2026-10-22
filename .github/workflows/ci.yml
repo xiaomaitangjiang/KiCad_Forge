@@ -143,9 +143,15 @@ jobs:
 
       - name: Install the Linux C++23 compiler
         if: runner.os == 'Linux'
+        timeout-minutes: 5
         run: |
-          sudo apt-get update
-          sudo apt-get install -y g++-14 cmake
+          if command -v g++-14 >/dev/null && command -v cmake >/dev/null; then
+            g++-14 --version
+            cmake --version
+          else
+            sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+            sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y g++-14 cmake
+          fi
 
       - uses: msys2/setup-msys2@v2
         if: runner.os == 'Windows'
@@ -246,6 +252,9 @@ jobs:
           KFORGE_STATE_E2E: "1"
           KFORGE_GIT_WRITE_E2E: "1"
           KFORGE_IMPORTS_E2E: "1"
+          # WebView2 150+ ignores WEBVIEW2_* overrides on elevated runners.
+          # The harness restores only this app's HKLM values after each launch.
+          KFORGE_WEBVIEW2_MACHINE_POLICY: "1"
         run: |
           set -euo pipefail
           mkdir -p test-results/webview2
