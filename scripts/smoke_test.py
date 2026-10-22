@@ -26,7 +26,7 @@ def smoke_failed_startup(binary, log_dir):
     binary = binary.resolve(strict=True)
     log_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="KiCad Forge failed startup ") as temp:
-        bundle = Path(temp) / "relocated application"
+        bundle = Path(temp).resolve(strict=True) / "relocated application"
         shutil.copytree(binary.parent, bundle)
         # SQLite cannot open a directory as its database. Only this disposable
         # bundle is changed; the user's database and library paths are untouched.
@@ -229,7 +229,10 @@ def smoke_test(binary, log_dir):
     log_dir.mkdir(parents=True, exist_ok=True)
     log_dir = log_dir.resolve()
     with tempfile.TemporaryDirectory(prefix="KiCad Forge smoke ") as temp:
-        bundle = Path(temp) / "relocated application"
+        # macOS /var is a system alias for /private/var. Use the physical
+        # fixture root so the app's intentional no-redirection checks exercise
+        # the package paths rather than rejecting the test runner's temp alias.
+        bundle = Path(temp).resolve(strict=True) / "relocated application"
         shutil.copytree(binary.parent, bundle)
         application = bundle / binary.name
         for name in ("pcre2-LICENCE.md", "sljit-LICENSE.txt"):
