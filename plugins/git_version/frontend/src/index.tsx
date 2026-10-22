@@ -6,7 +6,9 @@ import type {
   GitCommitFile, GitFileSelection, GitModel, GitResource, GitSnapshot, GitStatusResult,
 } from './model'
 import { GRAPH_RAIL_WIDTH, groupRefs, laneCenter, layoutGraph, localBranches, matchCommits } from './graph'
-import { useT } from './i18n'
+import { useLanguage, useT } from './i18n'
+import { describeTaskOutcome } from './task-outcome'
+import type { TaskVerificationActionId } from './task-outcome'
 import type { GraphRow } from './graph'
 import './style.css'
 
@@ -29,14 +31,6 @@ function statusToken(status?: string): string {
 }
 const statusGlyph = (status?: string) => (status || '?').trim().slice(0, 2) || '?'
 
-function taskText(task: TaskSnapshot | null): string {
-  if (!task) return ''
-  if (task.error) return task.error
-  if (task.state !== 'succeeded' || !task.result || typeof task.result !== 'object') return ''
-  const output = (task.result as Record<string, unknown>).output
-  return typeof output === 'string' ? output : ''
-}
-
 const useGitSnapshot = (model: GitModel) =>
   React.useSyncExternalStore(model.subscribe, model.getSnapshot, model.getSnapshot)
 
@@ -50,6 +44,21 @@ function ErrorBar({ message, onRetry, testid }: {
     <div className="gf-git-error" data-testid={testid} role="alert">
       <span className="gf-git-error-text">{message}</span>
       {onRetry && <button type="button" className="gf-git-retry" onClick={onRetry}>{t('重试', 'Retry')}</button>}
+    </div>
+  )
+}
+
+/** Local cancellation stays distinct from an error and offers an in-place retry. */
+function CancelledBar({ message, onRetry, testid }: {
+  message: string
+  onRetry: () => void
+  testid?: string
+}) {
+  const t = useT()
+  return (
+    <div className="gf-git-cancelled" data-testid={testid} role="status">
+      <span className="gf-git-cancelled-text">{message}</span>
+      <button type="button" className="gf-git-retry" onClick={onRetry}>{t('重新读取', 'Reload')}</button>
     </div>
   )
 }
@@ -146,6 +155,9 @@ function RepoHeader({ model, snapshot }: { model: GitModel; snapshot: GitSnapsho
         {repo?.ahead && <span className="gf-git-ahead" title={t('领先上游提交', 'Ahead of upstream')}>{repo.ahead}</span>}
         {snapshot.status.phase === 'loading' && <span className="gf-git-muted">{t('读取中…', 'Loading…')}</span>}
       </div>
+      {snapshot.status.phase === 'cancelled' && (
+        <CancelledBar message={t('状态读取已取消', 'Repository status read was cancelled')} onRetry={model.runStatus} testid="git-status-cancelled" />
+      )}
       {snapshot.status.phase === 'error' && (
         <ErrorBar message={snapshot.status.error || t('读取仓库状态失败', 'Failed to read repository status')} onRetry={model.runStatus} testid="git-status-error" />
       )}
@@ -187,7 +199,7 @@ function ChangesPane({ model, snapshot }: { model: GitModel; snapshot: GitSnapsh
       )}
       {!repo && snapshot.status.phase === 'loading' && <div className="gf-git-empty">{t('正在读取仓库…', 'Reading repository…')}</div>}
       {!repo && snapshot.status.phase === 'idle' && (
-        <div className="gf-git-empty">{snapshot.target ? t('正在读取仓库…', 'Reading repository…') : t('请选择元件库', 'Select a library')}</div>
+        <div className="gf-git-empty">{snapshot.target ? t('尚未读取仓库', 'Repository not read yet') : t('请选择元件库', 'Select a library')}</div>
       )}
     </div>
   )
@@ -203,12 +215,31 @@ function FilePatch({ model, snapshot }: { model: GitModel; snapshot: GitSnapshot
       </div>
     )
   }
-  if (!resource.data) {
-    return <div className="gf-git-file-patch"><div className="gf-git-empty">{t('正在读取文件差异…', 'Reading file diff…')}</div></div>
-  }
   const data = resource.data
+  const selection = snapshot.file
+  const matches = !!data && !!selection
+    && data.target === snapshot.target
+    && data.oid === selection.oid
+    && data.parentIndex === selection.parentIndex
+    && data.path === selection.path
+  if (!matches) {
+    if (resource.phase === 'cancelled') {
+      return (
+        <div className="gf-git-file-patch">
+          <CancelledBar message={t('已取消读取文件差异', 'File diff read was cancelled')} onRetry={model.retryFile} testid="git-file-cancelled" />
+        </div>
+      )
+    }
+    if (resource.phase === 'loading') {
+      return <div className="gf-git-file-patch"><div className="gf-git-empty">{t('正在读取文件差异…', 'Reading file diff…')}</div></div>
+    }
+    return <div className="gf-git-file-patch"><div className="gf-git-empty">{t('尚未读取文件差异', 'File diff not read yet')}</div></div>
+  }
   return (
     <div className="gf-git-file-patch" data-testid="git-file-patch">
+      {resource.phase === 'cancelled' && (
+        <CancelledBar message={t('文件差异刷新已取消，显示上次结果', 'File diff refresh was cancelled; showing the previous result')} onRetry={model.retryFile} testid="git-file-cancelled" />
+      )}
       {data.diffBase && <div className="gf-git-muted">{t('比较基准 {oid}', 'Compared with {oid}', { oid: shortOid(data.diffBase) })}</div>}
       {data.oldPath && <div className="gf-git-muted">{t('重命名自 {path}', 'Renamed from {path}', { path: data.oldPath })}</div>}
       {data.binary
@@ -233,23 +264,45 @@ function CommitDetail({ model, snapshot }: { model: GitModel; snapshot: GitSnaps
       </section>
     )
   }
-  if (!detail.data) {
+  const data = detail.data
+  const matches = !!data
+    && data.target === snapshot.target
+    && data.oid === oid
+    && data.parentIndex === snapshot.parentIndex
+  if (!matches) {
+    if (detail.phase === 'cancelled') {
+      return (
+        <section className="gf-git-detail" data-testid="git-commit-detail">
+          <CancelledBar message={t('已取消读取提交详情', 'Commit details read was cancelled')} onRetry={model.retryDetail} testid="git-detail-cancelled" />
+        </section>
+      )
+    }
+    if (detail.phase === 'loading') {
+      return (
+        <section className="gf-git-detail" data-testid="git-commit-detail">
+          <div className="gf-git-empty">{t('正在读取提交详情…', 'Reading commit details…')}</div>
+        </section>
+      )
+    }
     return (
       <section className="gf-git-detail" data-testid="git-commit-detail">
-        <div className="gf-git-empty">{t('正在读取提交详情…', 'Reading commit details…')}</div>
+        <div className="gf-git-empty">{t('尚未读取提交详情', 'Commit details not read yet')}</div>
       </section>
     )
   }
-  const commit = detail.data.commit
-  const files = detail.data.files ?? []
+  const commit = data.commit
+  const files = data.files ?? []
   const file: GitFileSelection | null = snapshot.file
-  const comparison = detail.data.diffBase
-    ? t('比较基准 {oid}', 'Compared with {oid}', { oid: shortOid(detail.data.diffBase) })
+  const comparison = data.diffBase
+    ? t('比较基准 {oid}', 'Compared with {oid}', { oid: shortOid(data.diffBase) })
     : commit.parents.length > 1
       ? t('与父级 {n} 比较', 'Compared with parent {n}', { n: snapshot.parentIndex + 1 })
       : commit.parents.length === 1 ? t('与父提交比较', 'Compared with parent') : t('根提交', 'Root commit')
   return (
     <section className="gf-git-detail" data-testid="git-commit-detail" aria-label={t('提交详情', 'Commit details')}>
+      {detail.phase === 'cancelled' && (
+        <CancelledBar message={t('提交详情刷新已取消，显示上次结果', 'Commit details refresh was cancelled; showing the previous result')} onRetry={model.retryDetail} testid="git-detail-cancelled" />
+      )}
       <div className="gf-git-detail-heading">
         <strong>{t('提交详情', 'Commit details')}</strong>
         <span className="gf-git-oid" data-testid="git-commit-oid" title={commit.oid}>{commit.oid}</span>
@@ -275,7 +328,7 @@ function CommitDetail({ model, snapshot }: { model: GitModel; snapshot: GitSnaps
           <pre className="gf-git-message-body">{commit.body}</pre>
         </details>
       )}
-      {detail.data.bodyTruncated && <div className="gf-git-muted">{t('提交消息过长，已截断', 'Commit message is too long and was truncated')}</div>}
+      {data.bodyTruncated && <div className="gf-git-muted">{t('提交消息过长，已截断', 'Commit message is too long and was truncated')}</div>}
       {commit.parents.length > 1 && (
         <div className="gf-git-parent-picker">
           <span className="gf-git-muted">{t('比较父级', 'Compare parent')}</span>
@@ -300,11 +353,16 @@ function CommitDetail({ model, snapshot }: { model: GitModel; snapshot: GitSnaps
           : (
             <ul className="gf-git-detail-file-list">
               {files.map((entry: GitCommitFile) => {
-                const open = file?.oid === commit.oid && file.path === entry.path
+                const open = file?.oid === commit.oid
+                  && file.path === entry.path
+                  && file.parentIndex === snapshot.parentIndex
                 return (
                   <li key={`${entry.status ?? ''}:${entry.path}`} className={`gf-git-detail-file${open ? ' open' : ''}`}>
                     <button type="button" className="gf-git-detail-file-row" aria-expanded={open}
-                      onClick={() => { if (open) model.closeFile(); else model.openFile(entry.path) }}>
+                      onClick={() => {
+                        if (open) model.closeFile()
+                        else model.openFile({ oid: commit.oid, path: entry.path, parentIndex: snapshot.parentIndex })
+                      }}>
                       <span className={`gf-git-file-status status-${statusToken(entry.status)}`}>
                         {statusGlyph(entry.status)}
                       </span>
@@ -325,7 +383,7 @@ function CommitDetail({ model, snapshot }: { model: GitModel; snapshot: GitSnaps
               })}
             </ul>
           )}
-        {detail.data.filesTruncated && (
+        {data.filesTruncated && (
           <div className="gf-git-muted">{t('文件列表过长，已截断；请缩小提交或刷新范围', 'File list is too long and was truncated; narrow the commit or refresh')}</div>
         )}
       </div>
@@ -428,9 +486,11 @@ function HistoryPane({ model, snapshot }: { model: GitModel; snapshot: GitSnapsh
       : data?.state === 'unborn' ? t('仓库还没有提交', 'No commits yet') : t('暂无提交', 'No commits to show')
   const stateCaption = history.phase === 'stale'
     ? t('快照已变化，需刷新', 'Snapshot changed; refresh')
-    : history.phase === 'loading'
-      ? t('刷新中…', 'Refreshing…')
-      : data?.truncated ? t('结果已截断', 'Results truncated') : data?.page?.has_more ? t('可继续加载', 'More available') : t('已全部加载', 'All loaded')
+    : history.phase === 'cancelled'
+      ? data ? t('已取消，显示上次结果', 'Cancelled; showing the previous result') : t('已取消', 'Cancelled')
+      : history.phase === 'loading'
+        ? t('刷新中…', 'Refreshing…')
+        : data?.truncated ? t('结果已截断', 'Results truncated') : data?.page?.has_more ? t('可继续加载', 'More available') : t('已全部加载', 'All loaded')
 
   return (
     <div className="gf-git-history">
@@ -454,6 +514,12 @@ function HistoryPane({ model, snapshot }: { model: GitModel; snapshot: GitSnapsh
           disabled={history.phase === 'loading'} onClick={model.refreshHistory}>
           {t('刷新', 'Refresh')}
         </button>
+        {history.phase === 'loading' && (
+          <button type="button" data-testid="git-history-cancel" title={t('停止读取历史', 'Stop reading history')}
+            onClick={() => { void model.cancelChannel('history') }}>
+            {t('停止', 'Stop')}
+          </button>
+        )}
       </div>
       <input
         className="gf-git-history-find"
@@ -464,6 +530,13 @@ function HistoryPane({ model, snapshot }: { model: GitModel; snapshot: GitSnapsh
         aria-label={t('查找已加载提交', 'Filter loaded commits')}
         onChange={(event) => model.setFind(event.target.value)}
       />
+      {history.phase === 'cancelled' && (
+        <CancelledBar
+          message={data ? t('历史刷新已取消，显示上次结果', 'History refresh was cancelled; showing the previous result') : t('已取消读取历史', 'History read was cancelled')}
+          onRetry={model.refreshHistory}
+          testid="git-history-cancelled"
+        />
+      )}
       {(history.phase === 'error' || history.phase === 'stale') && (
         <ErrorBar message={history.error || t('读取历史失败', 'Failed to read history')} onRetry={model.refreshHistory} testid="git-history-error" />
       )}
@@ -587,6 +660,13 @@ function DiffPane({ model, snapshot }: { model: GitModel; snapshot: GitSnapshot 
           {t('刷新', 'Refresh')}
         </button>
       </div>
+      {diff.phase === 'cancelled' && (
+        <CancelledBar
+          message={diff.data ? t('差异刷新已取消，显示上次结果', 'Diff refresh was cancelled; showing the previous result') : t('已取消读取差异', 'Diff read was cancelled')}
+          onRetry={model.refreshDiff}
+          testid="git-diff-cancelled"
+        />
+      )}
       {diff.phase === 'error' && (
         <ErrorBar message={diff.error || t('读取差异失败', 'Failed to read diff')} onRetry={model.refreshDiff} testid="git-diff-error" />
       )}
@@ -602,6 +682,7 @@ function DiffPane({ model, snapshot }: { model: GitModel; snapshot: GitSnapshot 
 /** The whole Git flow lives in the primary sidebar (WP-001/002/005). */
 function GitSidebarPanel({ model }: { model: GitModel }) {
   const t = useT()
+  const language = useLanguage()
   const snapshot = useGitSnapshot(model)
   React.useEffect(() => { void model.start() }, [model])
   const files = snapshot.status.data?.files ?? []
@@ -611,7 +692,17 @@ function GitSidebarPanel({ model }: { model: GitModel }) {
     || snapshot.diff.phase !== 'idle'
     || snapshot.detail.phase !== 'idle'
     || snapshot.fileDiff.phase !== 'idle'
-  const output = taskText(snapshot.task)
+  const outcome = describeTaskOutcome(snapshot.task, language)
+
+  const verifyTask = (action: TaskVerificationActionId) => {
+    if (action === 'status') {
+      model.selectTab('changes')
+      model.runStatus()
+    } else {
+      model.selectTab('history')
+      model.refreshHistory()
+    }
+  }
 
   return (
     <section className={`gf-git-panel gf-git-details gf-git-sidebar`}
@@ -680,7 +771,30 @@ function GitSidebarPanel({ model }: { model: GitModel }) {
       </div>
       {snapshot.running && <div className="gf-git-running" data-testid="git-running" role="status">{t('任务进行中…', 'Task running…')}</div>}
       {artifact && (
-        <div className="gf-git-task-result" data-testid="git-task-result" hidden={!output}>{output}</div>
+        <div className="gf-git-task-outcome" data-testid="git-task-result"
+          data-uncertain={outcome.uncertain ? 'true' : 'false'}>
+          {outcome.uncertain && (
+            <div className="gf-git-task-uncertain" data-testid="git-task-uncertain"
+              data-state={outcome.state || undefined} role="note">
+              <div className="gf-git-task-uncertain-title">{outcome.title}</div>
+              <div className="gf-git-task-uncertain-state" data-testid="git-task-uncertain-state">{outcome.stateLabel}</div>
+              <div className="gf-git-task-uncertain-detail">{outcome.detail}</div>
+              <div className="gf-git-task-uncertain-actions">
+                {outcome.verifyActions.map((action) => (
+                  <button key={action.id} type="button" className="gf-git-task-verify"
+                    data-testid={`git-task-verify-${action.id}`}
+                    disabled={snapshot.busy || snapshot.running || !snapshot.target}
+                    onClick={() => verifyTask(action.id)}>
+                    {action.label}
+                  </button>
+                ))}
+                <span className="gf-git-task-readonly">{outcome.readOnlyNote}</span>
+              </div>
+            </div>
+          )}
+          <div className="gf-git-task-result" data-testid="git-task-result-text"
+            hidden={!outcome.resultText}>{outcome.resultText}</div>
+        </div>
       )}
     </section>
   )

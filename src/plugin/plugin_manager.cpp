@@ -68,6 +68,47 @@ util::Error cancelled_error()
         "Plugin execution cancelled: the plugin manager was stopped");
 }
 
+/// Bounded failure context for a plugin that exited non-zero. A plugin's own
+/// timeout often aborts inside its script (Python raises TimeoutExpired), so the
+/// action route can only classify the failure from the captured output tail.
+/// Keep the tail compact and free of control bytes; drop a leading partial UTF-8
+/// sequence so an appended message never becomes invalid UTF-8.
+std::string plugin_failure_detail(const std::string& output, std::size_t limit = 1200)
+{
+    if (output.empty())
+    {
+        return {};
+    }
+    std::size_t begin = output.size() > limit ? output.size() - limit : 0;
+    while (begin < output.size() &&
+           (static_cast<unsigned char>(output[begin]) & 0xC0) == 0x80)
+    {
+        ++begin;
+    }
+    std::string detail;
+    bool pending_space = false;
+    for (std::size_t i = begin; i < output.size(); ++i)
+    {
+        const auto byte = static_cast<unsigned char>(output[i]);
+        if (byte < 0x20 || byte == 0x7f)
+        {
+            pending_space = !detail.empty();
+            continue;
+        }
+        if (pending_space)
+        {
+            detail.push_back(' ');
+            pending_space = false;
+        }
+        detail.push_back(output[i]);
+    }
+    while (!detail.empty() && detail.back() == ' ')
+    {
+        detail.pop_back();
+    }
+    return detail;
+}
+
 /// Manifest strings (entry point, icon, …) are UTF-8 by contract. Constructing a
 /// path from a narrow std::string would reinterpret those bytes through the
 /// active ANSI code page on Windows, so non-ASCII entry file names must go
@@ -942,8 +983,10 @@ util::Result<std::string> run_plugin_process(const std::filesystem::path& script
 #ifdef _WIN32
     if (!exited || exit_code != 0)
     {
+        const std::string detail = plugin_failure_detail(output);
         return std::unexpected(util::Error::make<Kind::IoError>(
-            "Plugin exited with code " + std::to_string(exit_code)));
+            "Plugin exited with code " + std::to_string(exit_code) +
+            (detail.empty() ? std::string() : ": " + detail)));
     }
 #else
     if (!status_known)
@@ -955,8 +998,10 @@ util::Result<std::string> run_plugin_process(const std::filesystem::path& script
     }
     if (!exited_zero)
     {
+        const std::string detail = plugin_failure_detail(output);
         return std::unexpected(util::Error::make<Kind::IoError>(
-            "Plugin exited with code " + std::to_string(rc)));
+            "Plugin exited with code " + std::to_string(rc) +
+            (detail.empty() ? std::string() : ": " + detail)));
     }
 #endif
     return output;

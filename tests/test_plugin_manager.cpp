@@ -135,6 +135,23 @@ sys.stdout.flush()
 sys.exit(3)
 )PY";
 
+// 非零退出且把原因写在 stderr：失败信息必须带上这段输出，调用层才能区分
+// “脚本自身超时”与普通非零退出。
+const char* PY_FAIL_DETAIL = R"PY(
+import sys
+sys.stderr.write("subprocess.TimeoutExpired: git commit timed out after 30 seconds\n")
+sys.stderr.flush()
+sys.exit(1)
+)PY";
+
+// 超长失败输出只保留尾部：错误信息有界，但末尾原因不能丢。
+const char* PY_FAIL_LONG = R"PY(
+import sys
+sys.stderr.write("x" * 5000 + " TAIL-MARKER\n")
+sys.stderr.flush()
+sys.exit(1)
+)PY";
+
 // 慢执行：1.5 秒后输出 JSON（自限 2 秒）
 const char* PY_SLOW_JSON = R"PY(
 import json, time
@@ -588,6 +605,47 @@ TEST_CASE_FIXTURE(Fixture, "FIX05 non-zero exit is an error even with valid JSON
     auto res = pm.execute("nonzero", "ping", "{}");
     CHECK_FALSE(res.has_value());
     CHECK(res.error().message().find("exited with code 3") != std::string::npos);
+}
+
+// 失败原因通常来自 stderr（Python 超时 traceback 就是如此）：必须进入错误
+// 信息，否则上层只能看到 “exited with code 1”，无法识别不确定写入。
+TEST_CASE_FIXTURE(Fixture, "FIX05 non-zero exit keeps the plugin failure detail")
+{
+    if (!python_available())
+    {
+        WARN("python not available — execute tests skipped");
+        return;
+    }
+    auto scan = g_tmp / "exec_fail_detail";
+    write_exec_plugin(scan, "faildetail", "FailDetail", PY_FAIL_DETAIL);
+    kforge::plugin::PluginManager pm(std::vector<fs::path>{scan}, exec_options(10000, 1u << 20));
+    pm.discover();
+
+    auto res = pm.execute("faildetail", "ping", "{}");
+    CHECK_FALSE(res.has_value());
+    const auto message = res.error().message();
+    CHECK(message.find("Plugin exited with code 1: ") != std::string::npos);
+    CHECK(message.find("timed out after 30 seconds") != std::string::npos);
+}
+
+TEST_CASE_FIXTURE(Fixture, "FIX05 plugin failure detail is bounded and keeps the tail")
+{
+    if (!python_available())
+    {
+        WARN("python not available — execute tests skipped");
+        return;
+    }
+    auto scan = g_tmp / "exec_fail_long";
+    write_exec_plugin(scan, "faillong", "FailLong", PY_FAIL_LONG);
+    kforge::plugin::PluginManager pm(std::vector<fs::path>{scan}, exec_options(10000, 1u << 20));
+    pm.discover();
+
+    auto res = pm.execute("faillong", "ping", "{}");
+    CHECK_FALSE(res.has_value());
+    const auto message = res.error().message();
+    CHECK(message.size() < 1600);
+    CHECK(message.find("Plugin exited with code 1: ") == 0);
+    CHECK(message.find("TAIL-MARKER") != std::string::npos);
 }
 
 // 父进程正常 exit 0 也不能留下持管道/仍在工作的后代

@@ -50,7 +50,7 @@ function detailResult(oid, parents = [], files = []) {
   return { ok: true, schema_version: 'commit_detail_v1', commit: commit(oid, parents), files }
 }
 
-function fixture() {
+function fixture({ failHistory = () => false } = {}) {
   const calls = [], handles = []
   let libraryReads = 0
   const model = createGitModel({
@@ -67,6 +67,7 @@ function fixture() {
     tasks: {
       async run(action, args) {
         calls.push({ action, args })
+        if (action === 'history' && failHistory()) throw new Error('HISTORY_DOWN')
         const h = handle(action, !['init', 'commit'].includes(action))
         handles.push(h)
         return h
@@ -439,7 +440,11 @@ test('Git commit detail and merge-parent file diffs follow the active selection'
   let snap = f.model.getSnapshot()
   assert.equal(snap.detail.phase, 'ready')
   assert.equal(snap.detail.data.files.length, 2)
+  assert.equal(snap.detail.data.target, 'C:/One')
+  assert.equal(snap.detail.data.oid, 'merge')
+  assert.equal(snap.detail.data.parentIndex, 0)
 
+  // The legacy string call is accepted only because the selected detail agrees.
   f.model.openFile('Power.kicad_sym')
   await tick()
   assert.equal(f.calls[3].action, 'commit_file')
@@ -452,23 +457,55 @@ test('Git commit detail and merge-parent file diffs follow the active selection'
   await tick()
   snap = f.model.getSnapshot()
   assert.equal(snap.fileDiff.phase, 'ready')
+  assert.equal(snap.fileDiff.data.target, 'C:/One')
+  assert.equal(snap.fileDiff.data.parentIndex, 0)
   assert.match(snap.fileDiff.data.patch, /\+ new/)
 
+  // Switching the comparison parent closes the old expansion; it must not
+  // re-dispatch the same path under the new parent.
+  const fileCalls = f.calls.filter((call) => call.action === 'commit_file').length
   f.model.setParentIndex(1)
   await tick()
-  const parentCall = [...f.calls].reverse().find((call) => call.action === 'commit_file')
-  assert.equal(parentCall.args.parent_index, 1)
-  assert.equal(parentCall.args.parent, 'p2')
+  snap = f.model.getSnapshot()
+  assert.equal(snap.parentIndex, 1)
+  assert.equal(snap.file, null)
+  assert.equal(snap.fileDiff.phase, 'idle')
+  assert.equal(snap.fileDiff.data, null)
+  assert.equal(snap.detail.phase, 'loading')
+  assert.equal(snap.detail.data, null)
+  assert.equal(f.calls.filter((call) => call.action === 'commit_file').length, fileCalls)
   const parentDetail = f.calls[f.calls.length - 1]
   assert.equal(parentDetail.action, 'commit_detail')
   assert.equal(parentDetail.args.parent_index, 1)
-  f.handles[4].finish({
-    ok: true, schema_version: 'commit_file_v1', oid: 'merge', path: 'Power.kicad_sym',
-    patch: '', truncated: false, binary: true,
-  })
-  f.handles[5].finish(detailResult('merge', ['p1', 'p2'], []))
+  assert.equal(parentDetail.args.parent, 'p2')
+  f.handles[f.handles.length - 1].finish(detailResult('merge', ['p1', 'p2'], [
+    { path: 'Power.kicad_sym', status: 'M' },
+  ]))
   await tick()
-  assert.equal(f.model.getSnapshot().fileDiff.phase, 'empty')
+  snap = f.model.getSnapshot()
+  assert.equal(snap.detail.phase, 'ready')
+  assert.equal(snap.detail.data.parentIndex, 1)
+
+  f.model.openFile({ oid: 'merge', path: 'Power.kicad_sym', parentIndex: 1 })
+  await tick()
+  const parentFile = f.calls[f.calls.length - 1]
+  assert.equal(parentFile.action, 'commit_file')
+  assert.equal(parentFile.args.parent_index, 1)
+  assert.equal(parentFile.args.parent, 'p2')
+  f.handles[f.handles.length - 1].finish({
+    ok: true, schema_version: 'commit_file_v1', oid: 'merge', path: 'Power.kicad_sym',
+    patch: '- p1\n+ p2\n', truncated: false, binary: false,
+  })
+  await tick()
+  snap = f.model.getSnapshot()
+  assert.equal(snap.fileDiff.phase, 'ready')
+  assert.equal(snap.fileDiff.data.parentIndex, 1)
+  assert.match(snap.fileDiff.data.patch, /\+ p2/)
+
+  // A file that is not in the current detail must not become clickable state.
+  const beforeMissing = f.calls.length
+  f.model.openFile({ oid: 'merge', path: 'Missing.kicad_sym', parentIndex: 1 })
+  assert.equal(f.calls.length, beforeMissing)
 
   f.model.closeFile()
   assert.equal(f.model.getSnapshot().file, null)
@@ -483,10 +520,15 @@ test('Git commit detail and merge-parent file diffs follow the active selection'
   assert.equal(rootDetail.args.parent, undefined)
   f.handles[f.handles.length - 1].finish(detailResult('p1'))
   await tick()
+  // A -> B -> A is served from the identity-keyed detail cache.
+  const beforeCached = f.calls.length
   f.model.selectCommit('merge')
   await tick()
-  assert.equal(f.calls.length, calls + 1)
-  assert.equal(f.model.getSnapshot().detail.data.commit.oid, 'merge')
+  assert.equal(f.calls.length, beforeCached)
+  snap = f.model.getSnapshot()
+  assert.equal(snap.detail.phase, 'ready')
+  assert.equal(snap.detail.data.oid, 'merge')
+  assert.equal(snap.detail.data.parentIndex, 0)
   f.model.dispose()
 })
 
@@ -575,11 +617,37 @@ test('Git cancels only in-flight reads and never leaves fake loading', async () 
   const snap = f.model.getSnapshot()
   assert.equal(snap.running, false)
   assert.equal(snap.canCancel, false)
-  assert.equal(snap.history.phase, 'idle')
+  assert.equal(snap.history.phase, 'cancelled')
   assert.equal(f.handles[1].cancellations, 1)
   f.handles[1].finish(historyResult([commit('late')]))
   await tick()
   assert.equal(f.model.getSnapshot().history.data, null)
+  f.model.dispose()
+})
+
+test('Git stops only the history read without cancelling unrelated status work', async () => {
+  const f = fixture()
+  await ready(f)
+  f.model.runStatus()
+  f.model.selectTab('history')
+  await tick()
+  const statusRead = f.handles[1]
+  const historyRead = f.handles[2]
+  assert.equal(f.model.getSnapshot().status.phase, 'loading')
+  assert.equal(f.model.getSnapshot().history.phase, 'loading')
+  await f.model.cancelChannel('history')
+  let snap = f.model.getSnapshot()
+  assert.equal(historyRead.cancellations, 1)
+  assert.equal(statusRead.cancellations, 0)
+  assert.equal(snap.history.phase, 'cancelled')
+  assert.equal(snap.status.phase, 'loading')
+  assert.equal(snap.running, true)
+  statusRead.finish({ ok: true, initialized: true, branch: 'main', files: [] })
+  await tick()
+  snap = f.model.getSnapshot()
+  assert.equal(snap.status.phase, 'ready')
+  assert.equal(snap.status.data.branch, 'main')
+  assert.equal(snap.history.phase, 'cancelled')
   f.model.dispose()
 })
 
@@ -598,5 +666,581 @@ test('Git late history from an abandoned repository cannot overwrite the new one
   assert.equal(snap.history.data, null)
   assert.equal(snap.target, 'C:/Two')
   assert.equal(f.calls[f.calls.length - 1].args.target_library, 'C:/Two')
+  f.model.dispose()
+})
+
+test('Git switching commits drops the old detail before old file buttons dispatch (N2)', async () => {
+  const f = fixture()
+  await ready(f)
+  f.model.selectCommit('commit-A')
+  await tick()
+  f.handles.at(-1).finish(detailResult('commit-A', [], [{ path: 'only-A.kicad_sym', status: 'M' }]))
+  await tick()
+  f.model.selectCommit('commit-B')
+  await tick()
+  const snap = f.model.getSnapshot()
+  assert.equal(snap.selectedOid, 'commit-B')
+  assert.equal(snap.detail.data, null)
+  assert.equal(snap.detail.phase, 'loading')
+  const before = f.calls.filter((call) => call.action === 'commit_file').length
+  // A stale component could still invoke either the legacy string form or an
+  // explicit A identity; both must be rejected by the model.
+  f.model.openFile('only-A.kicad_sym')
+  f.model.openFile({ oid: 'commit-A', path: 'only-A.kicad_sym', parentIndex: 0 })
+  await tick()
+  assert.equal(f.calls.filter((call) => call.action === 'commit_file').length, before)
+  assert.equal(f.model.getSnapshot().file, null)
+  f.handles.at(-1).finish(detailResult('commit-B', [], []))
+  await tick()
+  assert.equal(f.model.getSnapshot().detail.data.oid, 'commit-B')
+  f.model.dispose()
+})
+
+test('Git file patches are keyed by commit identity and late old patches are ignored (N2)', async () => {
+  const f = fixture()
+  await ready(f)
+  f.model.selectCommit('commit-A')
+  await tick()
+  f.handles.at(-1).finish(detailResult('commit-A', [], [{ path: 'same.kicad_sym', status: 'M' }]))
+  await tick()
+  f.model.openFile({ oid: 'commit-A', path: 'same.kicad_sym', parentIndex: 0 })
+  await tick()
+  const oldFile = f.handles.at(-1)
+  assert.equal(f.calls.at(-1).action, 'commit_file')
+  assert.equal(f.calls.at(-1).args.oid, 'commit-A')
+
+  f.model.selectCommit('commit-B')
+  await tick()
+  let snap = f.model.getSnapshot()
+  assert.equal(snap.detail.data, null)
+  assert.equal(snap.file, null)
+  assert.equal(snap.fileDiff.phase, 'idle')
+  oldFile.finish({
+    ok: true, schema_version: 'commit_file_v1', oid: 'commit-A', path: 'same.kicad_sym',
+    patch: '- base\n+A\n', truncated: false, binary: false,
+  })
+  await tick()
+  assert.equal(f.model.getSnapshot().fileDiff.data, null)
+
+  f.handles.at(-1).finish(detailResult('commit-B', [], [{ path: 'same.kicad_sym', status: 'M' }]))
+  await tick()
+  f.model.openFile({ oid: 'commit-B', path: 'same.kicad_sym', parentIndex: 0 })
+  await tick()
+  const call = f.calls.at(-1)
+  assert.equal(call.action, 'commit_file')
+  assert.equal(call.args.oid, 'commit-B')
+  f.handles.at(-1).finish({
+    ok: true, schema_version: 'commit_file_v1', oid: 'commit-B', path: 'same.kicad_sym',
+    patch: '- base\n+B\n', truncated: false, binary: false,
+  })
+  await tick()
+  snap = f.model.getSnapshot()
+  assert.equal(snap.fileDiff.phase, 'ready')
+  assert.equal(snap.fileDiff.data.oid, 'commit-B')
+  assert.equal(snap.fileDiff.data.target, 'C:/One')
+  assert.match(snap.fileDiff.data.patch, /\+B/)
+  f.model.dispose()
+})
+
+test('Git detail and file failures stay bound to their identity and can be retried (N2)', async () => {
+  const calls = [], handles = []
+  let failDetail = true, failFile = true
+  const model = createGitModel({
+    createStore: createSnapshotStore,
+    librariesApi: {
+      async componentLibraries() {
+        return [{ id: 'one', name: 'One', symbolPath: 'C:/One/symbols', footprintPath: 'C:/One/footprints' }]
+      },
+    },
+    tasks: {
+      async run(action, args) {
+        calls.push({ action, args })
+        if (action === 'commit_detail' && failDetail) {
+          failDetail = false
+          throw new Error('DETAIL_DOWN')
+        }
+        if (action === 'commit_file' && failFile) {
+          failFile = false
+          throw new Error('FILE_DOWN')
+        }
+        const h = handle(action)
+        handles.push(h)
+        return h
+      },
+    },
+  })
+  await model.start()
+  await tick()
+  handles[0].finish()
+  await tick()
+  model.selectCommit('commit-A')
+  await tick()
+  let snap = model.getSnapshot()
+  assert.equal(snap.detail.phase, 'error')
+  assert.match(snap.detail.error, /DETAIL_DOWN/)
+  assert.equal(snap.detail.data, null)
+
+  model.retryDetail()
+  await tick()
+  handles.at(-1).finish(detailResult('commit-A', [], [{ path: 'A.kicad_sym', status: 'M' }]))
+  await tick()
+  snap = model.getSnapshot()
+  assert.equal(snap.detail.phase, 'ready')
+
+  model.openFile({ oid: 'commit-A', path: 'A.kicad_sym', parentIndex: 0 })
+  await tick()
+  snap = model.getSnapshot()
+  assert.equal(snap.fileDiff.phase, 'error')
+  assert.match(snap.fileDiff.error, /FILE_DOWN/)
+  assert.equal(snap.fileDiff.data, null)
+
+  model.retryFile()
+  await tick()
+  handles.at(-1).finish({
+    ok: true, schema_version: 'commit_file_v1', oid: 'commit-A', path: 'A.kicad_sym',
+    patch: '+ retry\n', truncated: false, binary: false,
+  })
+  await tick()
+  snap = model.getSnapshot()
+  assert.equal(snap.fileDiff.phase, 'ready')
+  assert.equal(snap.fileDiff.data.oid, 'commit-A')
+  model.dispose()
+})
+
+test('Git retires implicit current-branch history when status reports a new HEAD (N3)', async () => {
+  const f = fixture()
+  await ready(f)
+  f.model.selectTab('history')
+  await tick()
+  f.handles.at(-1).finish(historyResult([commit('main-tip')]))
+  await tick()
+  f.model.setHistoryRange('branch')
+  await tick()
+  const pending = f.handles.at(-1)
+  const before = f.calls.filter((call) => call.action === 'history').length
+
+  f.model.runStatus()
+  await tick()
+  f.handles.at(-1).finish({ ok: true, initialized: true, branch: 'feature', files: [] })
+  await tick()
+  const historyCalls = f.calls.filter((call) => call.action === 'history')
+  assert.equal(historyCalls.length, before + 1)
+  assert.equal(historyCalls.at(-1).args.range, 'branch')
+  assert.equal(historyCalls.at(-1).args.branch_ref, undefined)
+  let snap = f.model.getSnapshot()
+  assert.equal(snap.history.phase, 'loading')
+  assert.equal(snap.history.data, null)
+  assert.equal(snap.running, true)
+
+  // The old read is no longer subscribed and must not settle the new channel.
+  pending.finish(historyResult([commit('main-tip')]))
+  await tick()
+  snap = f.model.getSnapshot()
+  assert.equal(snap.history.phase, 'loading')
+  assert.equal(snap.history.data, null)
+
+  f.handles.at(-1).finish(historyResult([commit('feature-tip')]))
+  await tick()
+  snap = f.model.getSnapshot()
+  assert.equal(snap.history.phase, 'ready')
+  assert.equal(snap.history.data.commits[0].oid, 'feature-tip')
+  f.model.dispose()
+})
+
+test('Git explicit branch history is not retired by a current-HEAD change (N3)', async () => {
+  const f = fixture()
+  await ready(f)
+  f.model.selectTab('history')
+  await tick()
+  f.handles.at(-1).finish(historyResult([commit('main-tip')]))
+  await tick()
+  f.model.setHistoryRange('branch', 'release')
+  await tick()
+  const pending = f.handles.at(-1)
+  const calls = f.calls.filter((call) => call.action === 'history').length
+
+  f.model.runStatus()
+  await tick()
+  f.handles.at(-1).finish({ ok: true, initialized: true, branch: 'feature', last_commit: 'new-head', files: [] })
+  await tick()
+  assert.equal(f.calls.filter((call) => call.action === 'history').length, calls)
+  assert.equal(pending.cancellations, 0)
+  assert.equal(f.model.getSnapshot().history.phase, 'loading')
+
+  pending.finish(historyResult([commit('release-tip')]))
+  await tick()
+  assert.equal(f.model.getSnapshot().history.phase, 'ready')
+  assert.equal(f.model.getSnapshot().history.data.commits[0].oid, 'release-tip')
+  f.model.dispose()
+})
+
+test('Git current-branch history survives unborn, detached and A -> B -> A HEAD changes (N3)', async () => {
+  const f = fixture()
+  await ready(f)
+  f.model.selectTab('history')
+  await tick()
+  f.handles.at(-1).finish(historyResult([commit('all-tip')]))
+  await tick()
+  f.model.setHistoryRange('branch')
+  await tick()
+  const first = f.handles.at(-1)
+
+  // unborn (no last_commit) -> first commit, same branch name
+  f.model.runStatus()
+  await tick()
+  f.handles.at(-1).finish({ ok: true, initialized: true, branch: 'main', last_commit: 'c1', files: [] })
+  await tick()
+  const second = f.handles.at(-1)
+
+  // feature -> detached -> main, each with a new HEAD identity
+  f.model.runStatus()
+  await tick()
+  f.handles.at(-1).finish({ ok: true, initialized: true, branch: 'feature', last_commit: 'c2', files: [] })
+  await tick()
+  const third = f.handles.at(-1)
+  f.model.runStatus()
+  await tick()
+  f.handles.at(-1).finish({ ok: true, initialized: true, branch: '', last_commit: 'c3', detached: true, files: [] })
+  await tick()
+  const fourth = f.handles.at(-1)
+  f.model.runStatus()
+  await tick()
+  f.handles.at(-1).finish({ ok: true, initialized: true, branch: 'main', last_commit: 'c4', files: [] })
+  await tick()
+  const fifth = f.handles.at(-1)
+
+  assert.equal(f.calls.filter((call) => call.action === 'history').length, 6)
+  for (const stale of [first, second, third, fourth]) {
+    stale.finish(historyResult([commit('stale')]))
+  }
+  await tick()
+  let snap = f.model.getSnapshot()
+  assert.equal(snap.history.phase, 'loading')
+  assert.equal(snap.history.data, null)
+
+  fifth.finish(historyResult([commit('main-again')]))
+  await tick()
+  snap = f.model.getSnapshot()
+  assert.equal(snap.history.phase, 'ready')
+  assert.equal(snap.history.data.commits[0].oid, 'main-again')
+  assert.equal(snap.status.data.branch, 'main')
+  f.model.dispose()
+})
+
+test('Git cancelling detail and file reads cannot publish their late identities (N2)', async () => {
+  const f = fixture()
+  await ready(f)
+  f.model.selectCommit('commit-A')
+  await tick()
+  const detail = f.handles.at(-1)
+  await f.model.cancel()
+  assert.equal(detail.cancellations, 1)
+  assert.equal(f.model.getSnapshot().detail.phase, 'cancelled')
+  assert.equal(f.model.getSnapshot().detail.data, null)
+  assert.equal(f.model.getSnapshot().selectedOid, 'commit-A')
+  detail.finish(detailResult('commit-A', [], [{ path: 'A.kicad_sym', status: 'M' }]))
+  await tick()
+  assert.equal(f.model.getSnapshot().detail.data, null)
+
+  f.model.selectCommit('commit-A')
+  await tick()
+  f.handles.at(-1).finish(detailResult('commit-A', [], [{ path: 'A.kicad_sym', status: 'M' }]))
+  await tick()
+  f.model.openFile({ oid: 'commit-A', path: 'A.kicad_sym', parentIndex: 0 })
+  await tick()
+  const file = f.handles.at(-1)
+  await f.model.cancel()
+  assert.equal(file.cancellations, 1)
+  assert.equal(f.model.getSnapshot().fileDiff.phase, 'cancelled')
+  assert.equal(f.model.getSnapshot().fileDiff.data, null)
+  assert.equal(f.model.getSnapshot().file.path, 'A.kicad_sym')
+  assert.equal(f.model.getSnapshot().file.parentIndex, 0)
+  file.finish({
+    ok: true, schema_version: 'commit_file_v1', oid: 'commit-A', path: 'A.kicad_sym',
+    patch: '+ cancelled\n', truncated: false, binary: false,
+  })
+  await tick()
+  assert.equal(f.model.getSnapshot().fileDiff.data, null)
+
+  f.model.retryFile()
+  await tick()
+  f.handles.at(-1).finish({
+    ok: true, schema_version: 'commit_file_v1', oid: 'commit-A', path: 'A.kicad_sym',
+    patch: '+ retried\n', truncated: false, binary: false,
+  })
+  await tick()
+  assert.equal(f.model.getSnapshot().fileDiff.phase, 'ready')
+  f.model.dispose()
+})
+
+test('Git cancellation arriving after a successful read leaves the result published', async () => {
+  const f = fixture()
+  await ready(f)
+  f.model.selectTab('history')
+  await tick()
+  const read = f.handles.at(-1)
+  read.finish(historyResult([commit('settled')]))
+  await f.model.cancel()
+  await tick()
+  const snap = f.model.getSnapshot()
+  assert.equal(snap.history.phase, 'ready')
+  assert.equal(snap.history.data.commits[0].oid, 'settled')
+  assert.equal(snap.running, false)
+  assert.equal(read.cancellations, 0)
+  f.model.dispose()
+})
+
+test('Git cancelled file refreshes keep the previous result and retry in place', async () => {
+  const f = fixture()
+  await ready(f)
+  f.model.selectCommit('commit-A')
+  await tick()
+  f.handles.at(-1).finish(detailResult('commit-A', [], [{ path: 'A.kicad_sym', status: 'M' }]))
+  await tick()
+  assert.equal(f.model.getSnapshot().detail.phase, 'ready')
+  f.model.openFile({ oid: 'commit-A', path: 'A.kicad_sym', parentIndex: 0 })
+  await tick()
+  f.handles.at(-1).finish({
+    ok: true, schema_version: 'commit_file_v1', oid: 'commit-A', path: 'A.kicad_sym',
+    patch: '+ old file\n', truncated: false, binary: false,
+  })
+  await tick()
+  assert.equal(f.model.getSnapshot().fileDiff.data.patch, '+ old file\n')
+
+  f.model.retryFile()
+  await tick()
+  const fileRefresh = f.handles.at(-1)
+  await f.model.cancel()
+  let snap = f.model.getSnapshot()
+  assert.equal(fileRefresh.cancellations, 1)
+  assert.equal(snap.fileDiff.phase, 'cancelled')
+  assert.equal(snap.fileDiff.data.patch, '+ old file\n')
+  assert.equal(snap.file.path, 'A.kicad_sym')
+
+  fileRefresh.finish({
+    ok: true, schema_version: 'commit_file_v1', oid: 'commit-A', path: 'A.kicad_sym',
+    patch: '+ late file\n', truncated: false, binary: false,
+  })
+  await tick()
+  snap = f.model.getSnapshot()
+  assert.equal(snap.fileDiff.phase, 'cancelled')
+  assert.equal(snap.fileDiff.data.patch, '+ old file\n')
+
+  f.model.retryFile()
+  await tick()
+  f.handles.at(-1).finish({
+    ok: true, schema_version: 'commit_file_v1', oid: 'commit-A', path: 'A.kicad_sym',
+    patch: '+ retried file\n', truncated: false, binary: false,
+  })
+  await tick()
+  assert.equal(f.model.getSnapshot().fileDiff.phase, 'ready')
+  assert.equal(f.model.getSnapshot().fileDiff.data.patch, '+ retried file\n')
+  f.model.dispose()
+})
+
+test('Git cancelled history refreshes keep the previous page and expose retry', async () => {
+  const f = fixture()
+  await ready(f)
+  f.model.selectTab('history')
+  await tick()
+  f.handles.at(-1).finish(historyResult([commit('first')]))
+  await tick()
+  f.model.refreshHistory()
+  await tick()
+  const refresh = f.handles.at(-1)
+  await f.model.cancel()
+  let snap = f.model.getSnapshot()
+  assert.equal(refresh.cancellations, 1)
+  assert.equal(snap.history.phase, 'cancelled')
+  assert.equal(snap.history.data.commits[0].oid, 'first')
+
+  refresh.finish(historyResult([commit('late')]))
+  await tick()
+  snap = f.model.getSnapshot()
+  assert.equal(snap.history.phase, 'cancelled')
+  assert.equal(snap.history.data.commits[0].oid, 'first')
+
+  f.model.refreshHistory()
+  await tick()
+  f.handles.at(-1).finish(historyResult([commit('retried')]))
+  await tick()
+  snap = f.model.getSnapshot()
+  assert.equal(snap.history.phase, 'ready')
+  assert.equal(snap.history.data.commits[0].oid, 'retried')
+  f.model.dispose()
+})
+
+test('Git switching repositories during a pending cancel receipt keeps the new repository read', async () => {
+  const f = fixture()
+  await ready(f)
+  f.model.selectTab('history')
+  await tick()
+  f.handles.at(-1).finish(historyResult([commit('first')]))
+  await tick()
+  f.model.refreshHistory()
+  await tick()
+  const oldRead = f.handles.at(-1)
+  let releaseCancel
+  const receipt = new Promise((resolve) => { releaseCancel = resolve })
+  oldRead.cancel = () => receipt
+  const cancellation = f.model.cancel()
+  assert.equal(f.model.getSnapshot().history.phase, 'cancelled')
+
+  f.model.setTarget('C:/Two')
+  await tick()
+  assert.equal(f.model.getSnapshot().target, 'C:/Two')
+  f.handles.at(-1).finish({ ok: true, initialized: true, branch: 'two', files: [] })
+  await tick()
+  const newHistory = f.handles.at(-1)
+  assert.equal(f.calls.at(-1).action, 'history')
+  newHistory.finish(historyResult([commit('two')]))
+  await tick()
+
+  releaseCancel({ status: 'cancel_requested' })
+  await cancellation
+  oldRead.finish(historyResult([commit('old-late')]))
+  await tick()
+  const snap = f.model.getSnapshot()
+  assert.equal(snap.target, 'C:/Two')
+  assert.equal(snap.status.data.branch, 'two')
+  assert.equal(snap.history.phase, 'ready')
+  assert.equal(snap.history.data.commits[0].oid, 'two')
+  f.model.dispose()
+})
+
+test('Git cancel receipts cannot overwrite reads started while cancellation is in flight', async () => {
+  const f = fixture()
+  await ready(f)
+  f.model.selectTab('history')
+  await tick()
+  f.handles.at(-1).finish(historyResult([commit('first')]))
+  await tick()
+
+  f.model.refreshHistory()
+  await tick()
+  const oldHistory = f.handles.at(-1)
+  let releaseHistory
+  const receipt = new Promise((resolve) => { releaseHistory = resolve })
+  oldHistory.cancel = () => receipt
+  const cancellation = f.model.cancel()
+  assert.equal(f.model.getSnapshot().history.phase, 'cancelled')
+
+  f.model.refreshHistory()
+  await tick()
+  const freshHistory = f.handles.at(-1)
+  freshHistory.finish(historyResult([commit('fresh')]))
+  await tick()
+  assert.equal(f.model.getSnapshot().history.phase, 'ready')
+  assert.equal(f.model.getSnapshot().history.data.commits[0].oid, 'fresh')
+
+  releaseHistory({ status: 'cancel_requested' })
+  await cancellation
+  await tick()
+  const snap = f.model.getSnapshot()
+  assert.equal(snap.history.phase, 'ready')
+  assert.equal(snap.history.data.commits[0].oid, 'fresh')
+  assert.equal(snap.selectedOid, null)
+  f.model.dispose()
+})
+
+test('Git cancel receipts do not overwrite a commit selected during cancellation', async () => {
+  const f = fixture()
+  await ready(f)
+  f.model.selectCommit('commit-A')
+  await tick()
+  const oldDetail = f.handles.at(-1)
+  let releaseDetail
+  const receipt = new Promise((resolve) => { releaseDetail = resolve })
+  oldDetail.cancel = () => receipt
+  const cancellation = f.model.cancel()
+  assert.equal(f.model.getSnapshot().detail.phase, 'cancelled')
+
+  f.model.selectCommit('commit-B')
+  await tick()
+  assert.equal(f.model.getSnapshot().detail.phase, 'loading')
+  f.handles.at(-1).finish(detailResult('commit-B', [], []))
+  await tick()
+  assert.equal(f.model.getSnapshot().detail.data.oid, 'commit-B')
+
+  releaseDetail({ status: 'cancel_requested' })
+  await cancellation
+  await tick()
+  const snap = f.model.getSnapshot()
+  assert.equal(snap.selectedOid, 'commit-B')
+  assert.equal(snap.detail.phase, 'ready')
+  assert.equal(snap.detail.data.oid, 'commit-B')
+  f.model.dispose()
+})
+
+test('Git cancelling a head-changed history read settles as cancelled without late data (N3)', async () => {
+  const f = fixture()
+  await ready(f)
+  f.model.selectTab('history')
+  await tick()
+  f.handles.at(-1).finish(historyResult([commit('all-tip')]))
+  await tick()
+  f.model.setHistoryRange('branch')
+  await tick()
+  const oldRead = f.handles.at(-1)
+
+  f.model.runStatus()
+  await tick()
+  f.handles.at(-1).finish({ ok: true, initialized: true, branch: 'feature', files: [] })
+  await tick()
+  const newRead = f.handles.at(-1)
+  await f.model.cancel()
+  let snap = f.model.getSnapshot()
+  assert.equal(snap.history.phase, 'cancelled')
+  assert.equal(snap.history.data, null)
+  assert.equal(snap.running, false)
+  assert.equal(snap.canCancel, false)
+  assert.equal(newRead.cancellations, 1)
+
+  oldRead.finish(historyResult([commit('stale')]))
+  newRead.finish(historyResult([commit('stale-new')]))
+  await tick()
+  snap = f.model.getSnapshot()
+  assert.equal(snap.history.phase, 'cancelled')
+  assert.equal(snap.history.data, null)
+  f.model.dispose()
+})
+
+test('Git history creation failure after a HEAD change settles in error without loading (N3)', async () => {
+  let failNext = false
+  const f = fixture({ failHistory: () => failNext })
+  await ready(f)
+  f.model.selectTab('history')
+  await tick()
+  f.handles.at(-1).finish(historyResult([commit('all-tip')]))
+  await tick()
+  f.model.setHistoryRange('branch')
+  await tick()
+  const oldRead = f.handles.at(-1)
+
+  f.model.runStatus()
+  await tick()
+  failNext = true
+  f.handles.at(-1).finish({ ok: true, initialized: true, branch: 'feature', files: [] })
+  await tick()
+  let snap = f.model.getSnapshot()
+  assert.equal(snap.history.phase, 'error')
+  assert.match(snap.history.error, /HISTORY_DOWN/)
+  assert.equal(snap.history.data, null)
+  assert.equal(snap.running, false)
+
+  oldRead.finish(historyResult([commit('stale')]))
+  await tick()
+  snap = f.model.getSnapshot()
+  assert.equal(snap.history.phase, 'error')
+  assert.equal(snap.history.data, null)
+
+  failNext = false
+  f.model.refreshHistory()
+  await tick()
+  f.handles.at(-1).finish(historyResult([commit('recovered')]))
+  await tick()
+  snap = f.model.getSnapshot()
+  assert.equal(snap.history.phase, 'ready')
+  assert.equal(snap.history.data.commits[0].oid, 'recovered')
   f.model.dispose()
 })

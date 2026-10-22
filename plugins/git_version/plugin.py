@@ -1012,4 +1012,12 @@ if __name__ == "__main__":
         result = fn(args)
     except KeyboardInterrupt:
         result = {"ok": False, "code": "cancelled", "error": "任务已取消"}
+    except subprocess.TimeoutExpired:
+        # A killed git command may already have changed the repository; a clean
+        # failure reason lets the host mark the write as uncertain instead of
+        # leaving only an unreadable Python traceback.
+        print(json.dumps({"ok": False, "code": "timeout",
+                          "error": f"git command timed out after {TIMEOUT} seconds"}),
+              file=sys.stderr)
+        sys.exit(2)
     print(json.dumps(result))

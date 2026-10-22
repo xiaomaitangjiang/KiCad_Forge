@@ -15,7 +15,7 @@ export interface GitStatusResult {
 
 export type GitTab = 'changes' | 'history' | 'diff'
 export type GitRange = 'all' | 'branch'
-export type LoadPhase = 'idle' | 'loading' | 'ready' | 'empty' | 'error' | 'stale'
+export type LoadPhase = 'idle' | 'loading' | 'ready' | 'empty' | 'error' | 'stale' | 'cancelled'
 export type GitRefKind = 'local' | 'remote' | 'tag'
 
 export interface GitRef {
@@ -61,6 +61,8 @@ export interface GitHistoryResult {
 }
 
 export interface GitHistoryData {
+  /** Frozen identity of the query that produced this page (range, branch, HEAD). */
+  query: string
   repositoryIdentity: string
   headOid: string
   headRef: string
@@ -98,6 +100,11 @@ export interface GitCommitDetailResult {
 /** Validated, complete commit detail held by the model. */
 export interface GitCommitDetail {
   ok: true
+  /** Repository that produced this detail. */
+  target: string
+  /** Commit and parent identity, frozen when the read starts. */
+  oid: string
+  parentIndex: number
   schema_version: string
   commit: GitCommitSummary
   files: GitCommitFile[]
@@ -123,7 +130,10 @@ export interface GitCommitFileResult {
 
 /** Validated file diff held by the model. */
 export interface GitCommitFileView {
+  /** Identity of the commit, parent and file this patch belongs to. */
+  target: string
   oid: string
+  parentIndex: number
   path: string
   oldPath: string | null
   status: string
@@ -301,6 +311,8 @@ interface ChannelRequest {
   generation: number
   target: string
   query: string
+  /** History reads carry a frozen epoch; status changes can retire them in place. */
+  epoch?: number
   handle: TaskHandle<unknown> | null
   off: (() => void) | null
   cancelRequested: boolean
@@ -347,6 +359,7 @@ export function createGitModel({ createStore, librariesApi, tasks }: {
   let actionHandle: TaskHandle<unknown> | null = null
   let actionOff: (() => void) | null = null
   let submittedMessage: string | null = null
+  let historyEpoch = 0
   const channels = new Map<GitChannel, ChannelRequest>()
   const detailCache = new Map<string, GitCommitDetail>()
 
@@ -366,18 +379,42 @@ export function createGitModel({ createStore, librariesApi, tasks }: {
     patch({ running: actionBusy || channels.size > 0, canCancel })
   }
 
+  function historyHeadKey(status: GitStatusResult | null | undefined): string {
+    if (!status) return ''
+    return `${status.initialized === false ? 'unborn' : 'repo'}|${status.branch ?? ''}|${status.last_commit ?? ''}`
+  }
+
+  function historyQuery(range: GitRange, branchRef: string, status: GitStatusResult | null | undefined): string {
+    const branch = range === 'branch' ? (branchRef || status?.branch || '') : branchRef
+    // Only the implicit "current branch" query follows HEAD. An explicit branch
+    // keeps its identity when status reports a different checked-out branch.
+    const head = range === 'branch' && !branchRef ? historyHeadKey(status) : ''
+    return `${range}|${branch}|${head}`
+  }
+
+  function invalidateCurrentBranchHistory() {
+    historyEpoch++
+    dropChannel('history', true)
+    const current = snapshot()
+    patch({
+      history: current.history.data
+        ? { ...current.history, phase: 'stale', error: '' }
+        : emptyResource<GitHistoryData>(),
+    })
+    if (current.tab === 'history') loadHistory()
+    touch()
+  }
+
   function queryFor(channel: GitChannel): string {
     const current = snapshot()
     switch (channel) {
-      case 'history': {
-        const branch = current.branchRef || current.status.data?.branch || ''
-        return `${current.range}|${current.range === 'branch' ? branch : current.branchRef}`
-      }
+      case 'history':
+        return historyQuery(current.range, current.branchRef, current.status.data)
       case 'detail':
-        return `${current.selectedOid ?? ''}|${current.parentIndex}`
+        return `${current.target}|${current.selectedOid ?? ''}|${current.parentIndex}`
       case 'file':
         return current.file
-          ? `${current.file.oid}|${current.file.path}|${current.file.parentIndex}`
+          ? `${current.target}|${current.file.oid}|${current.file.path}|${current.file.parentIndex}`
           : ''
       default:
         return current.target
@@ -392,6 +429,17 @@ export function createGitModel({ createStore, librariesApi, tasks }: {
       case 'diff': patch({ diff: { ...current.diff, phase: 'loading', error: '' } }); break
       case 'detail': patch({ detail: { ...current.detail, phase: 'loading', error: '' } }); break
       case 'file': patch({ fileDiff: { ...current.fileDiff, phase: 'loading', error: '' } }); break
+    }
+  }
+
+  function markCancelled(channel: GitChannel) {
+    const current = snapshot()
+    switch (channel) {
+      case 'status': patch({ status: { ...current.status, phase: 'cancelled', error: '' } }); break
+      case 'history': patch({ history: { ...current.history, phase: 'cancelled', error: '' } }); break
+      case 'diff': patch({ diff: { ...current.diff, phase: 'cancelled', error: '' } }); break
+      case 'detail': patch({ detail: { ...current.detail, phase: 'cancelled', error: '' } }); break
+      case 'file': patch({ fileDiff: { ...current.fileDiff, phase: 'cancelled', error: '' } }); break
     }
   }
 
@@ -429,11 +477,18 @@ export function createGitModel({ createStore, librariesApi, tasks }: {
   function finishRequest(request: ChannelRequest, result: unknown) {
     request.off?.()
     request.off = null
+    // A late reply for a replaced channel must not delete its successor.
+    if (channels.get(request.channel) !== request) return
     channels.delete(request.channel)
     const current = snapshot()
+    // History identity is frozen at start; re-deriving it from the live branch
+    // would silently drop a completed read and leave loading behind.
+    const identityMatches = request.channel === 'history'
+      ? request.epoch === historyEpoch
+      : request.query === queryFor(request.channel)
     const applies = request.generation === generation
       && request.target === current.target
-      && request.query === queryFor(request.channel)
+      && identityMatches
     if (applies && request.apply(result)) request.onSuccess?.()
     touch()
   }
@@ -441,10 +496,13 @@ export function createGitModel({ createStore, librariesApi, tasks }: {
   function failRequest(request: ChannelRequest, message: string) {
     request.off?.()
     request.off = null
+    if (channels.get(request.channel) !== request) return
     channels.delete(request.channel)
     const current = snapshot()
-    if (request.generation === generation && request.target === current.target
-      && request.query === queryFor(request.channel)) {
+    const identityMatches = request.channel === 'history'
+      ? request.epoch === historyEpoch
+      : request.query === queryFor(request.channel)
+    if (request.generation === generation && request.target === current.target && identityMatches) {
       markError(request.channel, message)
     }
     touch()
@@ -456,6 +514,7 @@ export function createGitModel({ createStore, librariesApi, tasks }: {
     dropChannel(channel, true)
     const request: ChannelRequest = {
       channel, generation, target: current.target, query: options.query ?? queryFor(channel),
+      epoch: channel === 'history' ? historyEpoch : undefined,
       handle: null, off: null, cancelRequested: false,
       apply: options.apply, onSuccess: options.onSuccess,
     }
@@ -512,7 +571,16 @@ export function createGitModel({ createStore, librariesApi, tasks }: {
       markError('status', isStatusResult(result) && result.error ? result.error : 'Invalid Git status result')
       return false
     }
+    const previous = snapshot()
+    const previousHead = historyHeadKey(previous.status.data)
+    const nextHead = historyHeadKey(result)
     patch({ status: { phase: 'ready', data: result, error: '' } })
+    // The implicit "current branch" history is a query over HEAD. When status
+    // proves HEAD moved (branch switch, detached, unborn -> first commit), the
+    // in-flight read was for a different identity and must be retired.
+    if (previous.range === 'branch' && !previous.branchRef && previousHead !== nextHead) {
+      invalidateCurrentBranchHistory()
+    }
     return true
   }
 
@@ -545,24 +613,29 @@ export function createGitModel({ createStore, librariesApi, tasks }: {
       if (!data.page?.has_more || !data.page.next_cursor) return
     }
     const range = current.range
-    const branch = current.branchRef || current.status.data?.branch || ''
-    const query = `${range}|${range === 'branch' ? branch : current.branchRef}`
+    const query = historyQuery(range, current.branchRef, current.status.data)
+    if (append && current.history.data && current.history.data.query !== query) return
     const args: Record<string, unknown> = {
       target_library: current.target,
       format: 'graph_v1',
       range,
       limit: HISTORY_PAGE_SIZE,
     }
-    if (range === 'branch' && branch) args.branch_ref = branch
+    // Only an explicit branch selection is pinned in the request. The implicit
+    // "current branch" read omits branch_ref so it follows HEAD at execution.
+    if (range === 'branch' && current.branchRef) args.branch_ref = current.branchRef
     const cursor = append ? current.history.data?.page?.next_cursor : null
     if (cursor) args.cursor = cursor
+    // Each dispatch is a new epoch. A reply from an earlier query identity can
+    // never apply, even if it arrives after the new channel was installed.
+    historyEpoch++
     startChannel('history', 'history', args, {
       query,
-      apply: (result) => applyHistory(result, append),
+      apply: (result) => applyHistory(result, append, query),
     })
   }
 
-  function applyHistory(result: unknown, append: boolean): boolean {
+  function applyHistory(result: unknown, append: boolean, query: string): boolean {
     if (!isHistory(result)) {
       markError('history', 'Invalid Git history result')
       return false
@@ -599,6 +672,7 @@ export function createGitModel({ createStore, librariesApi, tasks }: {
         phase: merged.length ? 'ready' : 'empty',
         error: '',
         data: {
+          query,
           repositoryIdentity: result.repository_identity ?? '',
           headOid: result.head_oid ?? '',
           headRef: result.head_ref ?? '',
@@ -637,7 +711,10 @@ export function createGitModel({ createStore, librariesApi, tasks }: {
     })
   }
 
-  function cacheDetail(key: string, detail: GitCommitDetail) {
+  function cacheDetail(target: string, key: string, detail: GitCommitDetail) {
+    // Keep the map keyed by the full identity; the target segment prevents a
+    // detail from another repository ever satisfying this lookup.
+    if (!key.startsWith(`${target}|`)) return
     detailCache.delete(key)
     detailCache.set(key, detail)
     while (detailCache.size > DETAIL_CACHE_LIMIT) {
@@ -647,21 +724,27 @@ export function createGitModel({ createStore, librariesApi, tasks }: {
     }
   }
 
-  function loadDetail(oid: string, parentIndex = 0) {
-    if (!oid) return
-    const key = `${oid}|${parentIndex}`
+  function loadDetail(oid: string, parentIndex = 0, parentsHint?: string[]) {
+    const current = snapshot()
+    const target = current.target
+    if (!target || !oid) return
+    const key = `${target}|${oid}|${parentIndex}`
     const cached = detailCache.get(key)
     dropChannel('detail', true)
     if (cached) {
-      patch({ detail: { phase: 'ready', data: cached, error: '' } })
-      touch()
+      const live = snapshot()
+      if (live.target === target && live.selectedOid === oid && live.parentIndex === parentIndex) {
+        patch({ detail: { phase: 'ready', data: cached, error: '' } })
+        touch()
+      }
       return
     }
-    const current = snapshot()
-    if (!current.target) return
     const known = current.history.data?.commits.find((entry) => entry.oid === oid)
-    const parents = known?.parents
-      ?? (current.detail.data?.commit.oid === oid ? current.detail.data.commit.parents : [])
+    const detailParents = current.detail.data?.target === target
+      && current.detail.data.oid === oid && current.detail.data.parentIndex === parentIndex
+      ? current.detail.data.commit.parents
+      : []
+    const parents = parentsHint ?? known?.parents ?? detailParents
     const parent = parents[parentIndex]
     const args: Record<string, unknown> = { target_library: current.target, oid }
     // Root commits have no parent: the backend must compare against the empty
@@ -688,6 +771,9 @@ export function createGitModel({ createStore, librariesApi, tasks }: {
         }
         const detail: GitCommitDetail = {
           ok: true,
+          target,
+          oid,
+          parentIndex,
           schema_version: result.schema_version ?? 'commit_detail_v1',
           commit,
           files: result.files ?? [],
@@ -695,7 +781,7 @@ export function createGitModel({ createStore, librariesApi, tasks }: {
           bodyTruncated: result.body_truncated === true,
           diffBase: result.diff_base ?? null,
         }
-        cacheDetail(key, detail)
+        cacheDetail(target, key, detail)
         patch({ detail: { phase: 'ready', data: detail, error: '' } })
         return true
       },
@@ -704,15 +790,23 @@ export function createGitModel({ createStore, librariesApi, tasks }: {
 
   function loadFile(oid: string, path: string, parentIndex: number) {
     const current = snapshot()
-    if (!current.target || !oid) return
-    const parent = current.detail.data?.commit.parents[parentIndex]
-    const args: Record<string, unknown> = { target_library: current.target, oid, path }
+    const target = current.target
+    if (!target || !oid || !path) return
+    const detail = current.detail.data
+    // The parent is only known from a detail that already belongs to this exact
+    // target/commit/parent. Without it a request could combine a new parent
+    // index with an old file list.
+    if (!detail || detail.target !== target || detail.oid !== oid
+      || detail.parentIndex !== parentIndex || detail.commit.oid !== oid) return
+    const parent = detail.commit.parents[parentIndex]
+    const args: Record<string, unknown> = { target_library: target, oid, path }
     if (parent) {
       args.parent = parent
       args.parent_index = parentIndex
     }
+    const key = `${target}|${oid}|${path}|${parentIndex}`
     startChannel('file', 'commit_file', args, {
-      query: `${oid}|${path}|${parentIndex}`,
+      query: key,
       apply: (result) => {
         if (!isFilePatch(result)) {
           markError('file', 'Invalid Git file diff result')
@@ -728,7 +822,9 @@ export function createGitModel({ createStore, librariesApi, tasks }: {
         }
         const patchText = result.patch ?? ''
         const view: GitCommitFileView = {
+          target,
           oid,
+          parentIndex,
           path,
           oldPath: result.old_path ?? null,
           status: result.status ?? '',
@@ -752,6 +848,7 @@ export function createGitModel({ createStore, librariesApi, tasks }: {
   // -- writes --------------------------------------------------------------
 
   function invalidateAfterWrite() {
+    historyEpoch++
     for (const channel of [...channels.keys()]) dropChannel(channel, true)
     detailCache.clear()
     const current = snapshot()
@@ -843,6 +940,7 @@ export function createGitModel({ createStore, librariesApi, tasks }: {
   function setTarget(target: string) {
     if (disposed || target === snapshot().target) return
     generation++
+    historyEpoch++
     for (const channel of [...channels.keys()]) dropChannel(channel, true)
     detailCache.clear()
     patch({
@@ -892,6 +990,7 @@ export function createGitModel({ createStore, librariesApi, tasks }: {
     if (disposed) return
     const current = snapshot()
     if (range === current.range && branchRef === current.branchRef) return
+    historyEpoch++
     dropChannel('history', true)
     patch({
       range,
@@ -921,18 +1020,45 @@ export function createGitModel({ createStore, librariesApi, tasks }: {
   function selectCommit(oid: string) {
     if (disposed) return
     const current = snapshot()
-    if (current.selectedOid === oid && current.detail.data?.commit.oid === oid) return
-    patch({ selectedOid: oid, file: null, fileDiff: emptyResource<GitCommitFileView>(), parentIndex: 0 })
+    const detail = current.detail.data
+    const sameIdentity = !!detail
+      && detail.target === current.target
+      && detail.oid === oid
+      && detail.parentIndex === 0
+      && current.selectedOid === oid
+      && current.parentIndex === 0
+    if (sameIdentity) return
+    // The previous detail and any expanded file belong to another identity.
+    // Clear them before loading, so no old file button can survive under the
+    // new selected OID.
+    dropChannel('detail', true)
     dropChannel('file', true)
+    patch({
+      selectedOid: oid,
+      parentIndex: 0,
+      detail: emptyResource<GitCommitDetail>(),
+      file: null,
+      fileDiff: emptyResource<GitCommitFileView>(),
+    })
     if (oid) loadDetail(oid, 0)
   }
 
-  function openFile(path: string, parentIndex?: number) {
+  function openFile(selection: GitFileSelection | string, parentIndex?: number) {
     if (disposed) return
     const current = snapshot()
-    const oid = current.selectedOid
-    if (!oid) return
-    const index = typeof parentIndex === 'number' ? parentIndex : current.parentIndex
+    const target = current.target
+    const oid = typeof selection === 'string' ? current.selectedOid ?? '' : selection.oid
+    const path = typeof selection === 'string' ? selection : selection.path
+    const index = typeof selection === 'string'
+      ? (typeof parentIndex === 'number' ? Math.max(0, Math.round(parentIndex)) : current.parentIndex)
+      : Math.max(0, Math.round(selection.parentIndex))
+    if (!target || !oid || !path || current.selectedOid !== oid) return
+    const detail = current.detail.data
+    // Explicitly require the rendered detail and the clicked row to describe
+    // the current target/commit/parent. This rejects late or stale buttons.
+    if (!detail || detail.target !== target || detail.oid !== oid
+      || detail.parentIndex !== index || detail.commit.oid !== oid) return
+    if (!detail.files.some((file) => file.path === path || file.old_path === path)) return
     if (current.file?.oid === oid && current.file.path === path && current.file.parentIndex === index
       && current.fileDiff.data && current.fileDiff.phase !== 'error') return
     patch({
@@ -953,12 +1079,22 @@ export function createGitModel({ createStore, librariesApi, tasks }: {
     if (disposed) return
     const current = snapshot()
     const index = Math.max(0, Math.round(parentIndex))
+    if (index === current.parentIndex) return
+    const parents = current.detail.data?.target === current.target
+      && current.detail.data.oid === current.selectedOid
+      ? current.detail.data.commit.parents
+      : undefined
+    dropChannel('detail', true)
+    dropChannel('file', true)
+    // A file expanded under the previous parent cannot be re-used under the
+    // new one. Close it and let the user pick from the new parent's file list.
     patch({
       parentIndex: index,
-      file: current.file ? { ...current.file, parentIndex: index } : null,
+      detail: emptyResource<GitCommitDetail>(),
+      file: null,
+      fileDiff: emptyResource<GitCommitFileView>(),
     })
-    if (current.file) loadFile(current.file.oid, current.file.path, index)
-    if (current.selectedOid) loadDetail(current.selectedOid, index)
+    if (current.selectedOid) loadDetail(current.selectedOid, index, parents)
   }
 
   function refresh() {
@@ -991,31 +1127,40 @@ export function createGitModel({ createStore, librariesApi, tasks }: {
     if (file) loadFile(file.oid, file.path, file.parentIndex)
   }
 
+  function detachChannel(channel: GitChannel): ChannelRequest | null {
+    const request = channels.get(channel)
+    // Only the request that still owns the channel may settle it. New reads
+    // started while cancellations are in flight keep their own loading state.
+    if (!request) return null
+    channels.delete(channel)
+    request.off?.()
+    request.off = null
+    markCancelled(channel)
+    return request
+  }
+
+  async function cancelChannel(channel: GitChannel) {
+    if (disposed) return
+    const request = detachChannel(channel)
+    if (!request) return
+    // A cancel receipt is not the terminal state. The resource is already
+    // detached from the old channel, so the backend may finish on its own
+    // without publishing or overwriting a newer read.
+    touch()
+    await cancelRequest(request)
+    if (!disposed) touch()
+  }
+
   async function cancel() {
-    const entries = [...channels.entries()]
-    if (!entries.length) {
+    if (disposed) return
+    if (!channels.size) {
       if (snapshot().running) touch()
       return
     }
-    for (const [channel, request] of entries) {
-      channels.delete(channel)
-      request.off?.()
-      request.off = null
-      await cancelRequest(request)
-    }
-    const current = snapshot()
-    const relaxed = <T>(resource: GitResource<T>): GitResource<T> =>
-      ({ ...resource, phase: resource.data ? 'ready' : 'idle', error: '' })
-    patch({
-      status: relaxed(current.status),
-      history: relaxed(current.history),
-      diff: relaxed(current.diff),
-      detail: relaxed(current.detail),
-      fileDiff: relaxed(current.fileDiff),
-      running: actionBusy,
-      canCancel: false,
-    })
+    const cancelled = [...channels.keys()].map(detachChannel).filter((request): request is ChannelRequest => request !== null)
     touch()
+    await Promise.all(cancelled.map((request) => cancelRequest(request)))
+    if (!disposed) touch()
   }
 
   function dispose() {
@@ -1057,6 +1202,7 @@ export function createGitModel({ createStore, librariesApi, tasks }: {
     retryDetail,
     retryFile,
     cancel,
+    cancelChannel,
     dispose,
   }
 }

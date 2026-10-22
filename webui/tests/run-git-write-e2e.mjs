@@ -1,6 +1,6 @@
 // Exercises the migrated Git panel against a fresh synthetic repository only.
 // KFORGE_GIT_WRITE_E2E=1 KFORGE_BUILD_ROOT=<empty-data package> node <this file>
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { check, requireOptIn, runAppFixture } from './plugin-e2e-harness.mjs'
 
@@ -26,17 +26,36 @@ async function main() {
       '  rm -f ".git/kf-slow-once"',
       '  sleep 6',
       'fi',
+      'if [ -f ".git/kf-timeout-once" ]; then',
+      '  rm -f ".git/kf-timeout-once"',
+      '  sleep 31',
+      'fi',
       'exit 0',
       '',
     ].join('\n'))
     try { chmodSync(hook, 0o755) } catch { /* Windows Git for Windows runs via sh */ }
     const gitConfig = path.join(root, 'git-fixture.config')
     writeFileSync(gitConfig, '[commit]\n\tgpgsign = false\n[core]\n\thooksPath = ' + hooksDir.replace(/\\/g, '/') + '\n')
+    // M2: delay only Git read actions, and only while the flag file exists. The
+    // injected sitecustomize is the real plugin process, so cancellation exercises
+    // the actual backend read rather than a mocked frontend promise.
+    const pyInject = path.join(root, 'py-inject')
+    mkdirSync(pyInject)
+    writeFileSync(path.join(pyInject, 'sitecustomize.py'), [
+      'import os, sys, time',
+      'flag = os.environ.get("KF_E2E_SLOW_READ_FILE")',
+      'read = len(sys.argv) > 1 and sys.argv[1] in ("history", "commit_detail", "commit_file")',
+      'if read and flag and os.path.exists(flag):',
+      '    time.sleep(8)',
+      '',
+    ].join('\n'))
+    const slowReadFlag = path.join(root, 'slow-read.flag')
     const session = await launch({ env: {
       GIT_AUTHOR_NAME: 'KF E2E', GIT_AUTHOR_EMAIL: 'e2e@example.invalid',
       GIT_COMMITTER_NAME: 'KF E2E', GIT_COMMITTER_EMAIL: 'e2e@example.invalid',
       GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: gitConfig,
       GIT_TERMINAL_PROMPT: '0', GIT_CEILING_DIRECTORIES: root,
+      PYTHONPATH: pyInject, KF_E2E_SLOW_READ_FILE: slowReadFlag,
     } })
     const { cdp, origin } = session
     const records = []
@@ -105,8 +124,13 @@ async function main() {
       await cdp.eval('document.querySelector("[data-testid=status-tasks]")?.click()')
       await waitFor(() => cdp.eval('document.querySelectorAll("[data-testid=bottom-task-list] .bottom-panel-task").length >= 2'), 10000, 'bottom task overview')
       check(await cdp.eval('document.querySelector("[data-testid=bottom-task-list]").innerText.includes("init") && document.querySelector("[data-testid=bottom-task-list]").innerText.includes("status")'), 'task overview did not show both Git tasks')
-      await cdp.eval('[...document.querySelectorAll(".bottom-panel-tab")].find((tab) => tab.textContent.includes("输出"))?.click()')
-      await waitFor(() => cdp.eval('Boolean(document.querySelector("[data-testid=bottom-task-output]"))'), 5000, 'bottom output tab')
+      const bottomTabs = await cdp.eval('[...document.querySelectorAll(".bottom-panel-tab")].map((tab) => tab.dataset.view)')
+      check(Array.isArray(bottomTabs) && bottomTabs.length === 2 && bottomTabs.includes('tasks') && bottomTabs.includes('problems'),
+        'bottom panel must only expose tasks and problems: ' + JSON.stringify(bottomTabs))
+      check(await cdp.eval('document.querySelectorAll("[data-testid=bottom-task-list] .bottom-panel-task-copy").length >= 2'),
+        'task rows must expose per-task diagnostics copy')
+      check(await cdp.eval('document.querySelector("[data-testid=bottom-task-output]") === null'),
+        'legacy output view must not exist')
       await cdp.eval('document.querySelector(".bottom-panel-close")?.click()')
       const initialHistory = await run('history', '历史')
       check(initialHistory.result.commits?.some((commit) => commit.subject.includes('KF: initial commit')) === true,
@@ -143,6 +167,22 @@ async function main() {
       })()`)
       check(await switchCenterTab('全部元件'), 'commit: home center tab missing')
       await waitFor(() => cdp.eval('Boolean(document.querySelector(".center-stack-layer:not([hidden]) .toolbar"))'), 10000, 'home center page while commit runs')
+      // H1: closing the center home view must not cancel or duplicate a running
+      // Git write task; reopening from the sidebar must show the same task.
+      await cdp.eval('document.querySelector(".center-tab.active .center-tab-close")?.click()')
+      await waitFor(() => cdp.eval('document.querySelectorAll(".center-tab-label").length === 0'), 5000, 'home closes while commit runs')
+      await waitFor(() => cdp.eval('Boolean(document.querySelector("[data-testid=center-empty-open-home]"))'), 5000, 'empty center while commit runs')
+      const whileHomeClosed = (await tasks()).find((item) => item.task_id === runningCommit.task_id)
+      check(whileHomeClosed && ['queued', 'running', 'succeeded'].includes(whileHomeClosed.state),
+        'commit was cancelled while the home view was closed: ' + JSON.stringify(whileHomeClosed))
+      // The Git view replaces the workspace sidebar, so reopen the home view from
+      // the workspace activity and then return to Git.
+      await cdp.eval(`[...document.querySelectorAll('.activitybar .nav-item')].find(node => node.title === '工作空间')?.click()`)
+      await waitFor(() => cdp.eval('!document.querySelector("[data-testid=git-panel]")'), 10000, 'workspace activity after home close')
+      await cdp.eval(`[...document.querySelectorAll('.sidebar-navigation .nav-item')].find(node => node.textContent.includes('全部元件'))?.click()`)
+      await waitFor(() => cdp.eval('Boolean(document.querySelector(".center-stack-layer:not([hidden]) .toolbar"))'), 10000, 'home reopened while commit runs')
+      await cdp.eval(`[...document.querySelectorAll('.activitybar .nav-item')].find(node => node.title === 'Git')?.click()`)
+      await waitFor(() => cdp.eval('Boolean(document.querySelector(".gf-git-panel [data-testid=git-message]"))'), 10000, 'Git activity restored while commit runs')
       await sleep(400)
       const duringCommit = (await tasks()).find((item) => item.task_id === runningCommit.task_id)
       check(duringCommit && ['queued', 'running'].includes(duringCommit.state),
@@ -232,6 +272,98 @@ async function main() {
         'recovered commit is absent from history: ' + JSON.stringify(recoveredHistory.result))
       const clean = await run('status', '状态')
       check(clean.result.changes === 'clean', `working tree not clean after commit: ${JSON.stringify(clean)}`)
+
+      // M2: a real read cancellation keeps the previous result, reports the
+      // cancelled phase, and retries in place. The injected sitecustomize delays
+      // the actual plugin history read, so this is not a mocked frontend promise.
+      const historyForCancel = await run('history', '历史')
+      const expectedRows = historyForCancel.result.commits?.length || 0
+      check(expectedRows > 0, 'history has no rows for the cancellation check')
+      await waitFor(() => cdp.eval(`document.querySelectorAll(".gf-git-history-row").length === ${expectedRows}`), 10000, 'history rows before cancellation')
+      const readTasksBefore = new Set((await tasks()).map((task) => task.task_id))
+      await waitFor(() => cdp.eval('(() => { const button = document.querySelector("[data-testid=git-history-refresh]"); return Boolean(button) && !button.disabled })()'), 15000, 'history refresh idle')
+      writeFileSync(slowReadFlag, '1\n')
+      check(await cdp.eval('(() => { const button = document.querySelector("[data-testid=git-history-refresh]"); if (!button || button.disabled) return false; button.click(); return true })()'), 'history refresh button missing or disabled')
+      await waitFor(() => cdp.eval('Boolean(document.querySelector("[data-testid=git-history-cancel]"))'), 5000, 'history cancel affordance')
+      await waitFor(() => cdp.eval('document.querySelector(".gf-git-history-caption")?.innerText.includes("刷新中") === true'), 5000, 'history loading caption')
+      const runningRead = await waitFor(async () => {
+        const task = (await tasks()).find((item) => !readTasksBefore.has(item.task_id) && item.action === 'history')
+        return task && ['queued', 'running'].includes(task.state) ? task : null
+      }, 10000, 'history read task running')
+      check(await cdp.eval('(() => { const button = document.querySelector("[data-testid=git-history-cancel]"); if (!button) return false; button.click(); return true })()'), 'history cancel button missing')
+      await waitFor(() => cdp.eval('Boolean(document.querySelector("[data-testid=git-history-cancelled]"))'), 15000, 'history cancelled bar')
+      const cancelledRead = await waitFor(async () => {
+        const task = (await tasks()).find((item) => item.task_id === runningRead.task_id)
+        return task && task.state === 'cancelled' ? task : null
+      }, 15000, 'history read task cancelled')
+      const m2Cancelled = await cdp.eval('(() => ({ rows: document.querySelectorAll(".gf-git-history-row").length, text: document.querySelector("[data-testid=git-history-cancelled]").innerText, caption: document.querySelector(".gf-git-history-caption")?.innerText || "", reading: document.body.innerText.includes("正在读取历史") }))()')
+      check(m2Cancelled.rows === expectedRows, `history cancellation lost the previous rows: ${JSON.stringify(m2Cancelled)}`)
+      check(m2Cancelled.reading === false, `history cancellation left a fake loading state: ${JSON.stringify(m2Cancelled)}`)
+      check(m2Cancelled.text.includes('已取消') && m2Cancelled.text.includes('上次结果'), `history cancellation text is missing: ${JSON.stringify(m2Cancelled)}`)
+      const m2Shot = await cdp.send('Page.captureScreenshot', { format: 'png' })
+      writeFileSync(path.join(results, 'git-write-m2-cancelled.png'), Buffer.from(m2Shot.data, 'base64'))
+      rmSync(slowReadFlag, { force: true })
+      check(await cdp.eval('(() => { const button = document.querySelector("[data-testid=git-history-cancelled] .gf-git-retry"); if (!button) return false; button.click(); return true })()'), 'cancelled history has no in-place retry')
+      await waitFor(() => cdp.eval('Boolean(document.querySelector("[data-testid=git-history-cancelled]")) === false'), 20000, 'history retry clears cancellation')
+      await waitFor(() => cdp.eval(`document.querySelectorAll(".gf-git-history-row").length === ${expectedRows} && document.querySelector(".gf-git-history-caption")?.innerText.includes("已全部加载")`), 20000, 'history retry completes with rows')
+      const m2Recovered = await cdp.eval('(() => ({ rows: document.querySelectorAll(".gf-git-history-row").length, caption: document.querySelector(".gf-git-history-caption")?.innerText || "", reading: document.body.innerText.includes("正在读取历史") }))()')
+      check(m2Recovered.reading === false, `history retry left a fake loading state: ${JSON.stringify(m2Recovered)}`)
+      writeFileSync(path.join(results, 'git-write.m2.json'), `${JSON.stringify({ expectedRows, cancelled: m2Cancelled, cancelledTask: cancelledRead, recovered: m2Recovered }, null, 2)}\n`)
+      console.log('history cancellation: passed')
+
+      // M3: the Git plugin's own 30s git timeout becomes a failed, uncertain
+      // task. The UI must show a separate "result to verify" state, keep the
+      // original failed state, and only offer read-only status/history checks.
+      writeFileSync(library, `${original.trimEnd()}\n; changed by isolated CI fixture\n; reload recovery edit\n; timeout edit\n`)
+      await cdp.eval(`(() => {
+        const input = document.querySelector('[data-testid=git-message]')
+        const proto = input.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype
+        const setter = Object.getOwnPropertyDescriptor(proto, 'value').set
+        setter.call(input, 'KF e2e timeout commit')
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+      })()`)
+      await waitFor(() => cdp.eval('[...document.querySelectorAll(".gf-git-actions button")].every((button) => !button.disabled)'), 15000, 'timeout commit idle')
+      const beforeTimeout = new Set((await tasks()).map((task) => task.task_id))
+      const commitCountBeforeTimeout = (await tasks()).filter((item) => item.action === 'commit').length
+      const initCountBeforeTimeout = (await tasks()).filter((item) => item.action === 'init').length
+      writeFileSync(path.join(libraryDir, '.git', 'kf-timeout-once'), '1\n')
+      check(await click('提交'), 'timeout commit: button missing or disabled')
+      const timeoutCommit = await waitFor(async () => {
+        const task = (await tasks()).find((item) => !beforeTimeout.has(item.task_id) && item.action === 'commit')
+        return task && ['succeeded', 'failed', 'cancelled'].includes(task.state) ? task : null
+      }, 70000, 'timeout commit terminal')
+      records.push(timeoutCommit)
+      writeFileSync(path.join(results, 'git-write.tasks.json'), `${JSON.stringify(records, null, 2)}\n`)
+      check(timeoutCommit.state === 'failed', `timeout commit must fail: ${JSON.stringify(timeoutCommit)}`)
+      check(timeoutCommit.uncertain === true, `timeout commit must be marked uncertain: ${JSON.stringify(timeoutCommit)}`)
+      check(String(timeoutCommit.error || '').toLowerCase().includes('timed out'), `timeout commit error lacks the timeout cause: ${JSON.stringify(timeoutCommit)}`)
+      await waitFor(() => cdp.eval('Boolean(document.querySelector("[data-testid=git-task-uncertain]"))'), 15000, 'Git uncertain result panel')
+      const uncertainUi = await cdp.eval('(() => ({ text: document.querySelector("[data-testid=git-task-uncertain]").innerText, state: document.querySelector("[data-testid=git-task-uncertain-state]")?.innerText || "", verify: [...document.querySelectorAll("[data-testid=git-task-verify-status], [data-testid=git-task-verify-history]")].map((node) => node.innerText) }))()')
+      check(uncertainUi.text.includes('待核对'), `Git uncertain panel lacks its label: ${JSON.stringify(uncertainUi)}`)
+      check(uncertainUi.text.includes('failed') || uncertainUi.state.includes('failed'), `Git uncertain panel lost the failed state: ${JSON.stringify(uncertainUi)}`)
+      check(uncertainUi.verify.length === 2, `Git uncertain panel must offer exactly two read-only checks: ${JSON.stringify(uncertainUi)}`)
+      if (!(await cdp.eval('Boolean(document.querySelector("[data-testid=bottom-task-list]"))'))) {
+        await cdp.eval('document.querySelector("[data-testid=status-tasks]")?.click()')
+      }
+      await waitFor(() => cdp.eval(`Boolean(document.querySelector('[data-testid=bottom-task-list] [title="${timeoutCommit.task_id}"]'))`), 15000, 'uncertain task in bottom overview')
+      const bottomUncertain = await waitFor(() => cdp.eval(`(() => {
+        const row = document.querySelector('[data-testid=bottom-task-list] [title="${timeoutCommit.task_id}"]')?.parentElement
+        const badge = row?.querySelector('.bottom-panel-task-uncertain')
+        return row && row.dataset.state === 'failed' && badge ? { state: row.dataset.state, badge: badge.innerText } : null
+      })()`), 15000, 'uncertain badge in bottom overview')
+      check(bottomUncertain.badge.trim().length > 0, `bottom uncertain badge is empty: ${JSON.stringify(bottomUncertain)}`)
+      const m3Shot = await cdp.send('Page.captureScreenshot', { format: 'png' })
+      writeFileSync(path.join(results, 'git-write-m3-uncertain.png'), Buffer.from(m3Shot.data, 'base64'))
+      await sleep(1500)
+      const afterTimeout = await tasks()
+      check(afterTimeout.filter((item) => item.action === 'commit').length === commitCountBeforeTimeout + 1,
+        'timeout commit triggered an extra commit')
+      check(afterTimeout.filter((item) => item.action === 'init').length === initCountBeforeTimeout,
+        'timeout commit triggered an automatic init')
+      check(afterTimeout.filter((item) => item.task_id === timeoutCommit.task_id).length === 1,
+        'timeout commit was duplicated')
+      writeFileSync(path.join(results, 'git-write.m3.json'), `${JSON.stringify({ task: timeoutCommit, ui: uncertainUi, bottom: bottomUncertain }, null, 2)}\n`)
+      console.log('uncertain timeout: passed')
       check(session.errors.length === 0, `Git panel console errors: ${session.errors.join(' | ')}`)
     } finally { await stop(session) }
   })

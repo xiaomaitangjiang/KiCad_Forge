@@ -18,6 +18,7 @@
   --gf-remote: #3f6aa3;
   --gf-local: var(--green, #347559);
   --gf-tag: var(--orange, #956b21);
+  --gf-git-warn: #7a5518;
   container-type: inline-size;
   min-width: 0;
   padding: 0 0 8px;
@@ -39,6 +40,7 @@
   --gf-remote: #93b4e0;
   --gf-local: var(--green, #8bc9a4);
   --gf-tag: var(--orange, #e1bb73);
+  --gf-git-warn: #e1bb73;
 }
 
 .gf-git-visually-hidden {
@@ -229,6 +231,19 @@
   min-width: 0;
 }
 .gf-git-error-text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+/* Cancellation is a settled local state, not an error: keep data visible and mark the delay. */
+.gf-git-cancelled {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px 6px;
+  border-radius: 4px;
+  background: var(--hover, rgba(128, 128, 128, 0.12));
+  color: var(--text2, #687176);
+  font-size: 11px;
+}
+.gf-git-cancelled-text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 .gf-git-panel .gf-git-retry {
   flex: 0 0 auto;
   min-height: 22px;
@@ -550,6 +565,61 @@
   max-height: min(24vh, 180px);
   color: var(--red, #b23b2e);
   border: 1px solid var(--sep, #e2e5e1);
+}
+/* Uncertain writes keep the original failed result and add a read-only review
+   affordance. The emphasis is amber, not an error red, because the outcome is
+   unknown rather than known to have failed. */
+.gf-git-task-outcome {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  flex: 0 0 auto;
+}
+.gf-git-task-uncertain {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  padding: 6px 7px 7px;
+  border: 1px solid var(--gf-git-warn, #7a5518);
+  border-left-width: 3px;
+  border-radius: 5px;
+  background: transparent;
+  font-size: 11px;
+}
+.gf-git-task-uncertain-title {
+  color: var(--gf-git-warn, #7a5518);
+  font-weight: 600;
+}
+.gf-git-task-uncertain-state {
+  color: var(--text2, #687176);
+  font-family: var(--mono, monospace);
+  font-size: 10.5px;
+  overflow-wrap: anywhere;
+}
+.gf-git-task-uncertain-detail {
+  color: var(--text2, #687176);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.gf-git-task-uncertain-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  margin-top: 2px;
+}
+.gf-git-panel .gf-git-task-verify {
+  min-height: 24px;
+  padding: 2px 8px;
+  font-size: 10.5px;
+}
+.gf-git-task-readonly {
+  flex: 1 0 100%;
+  color: var(--text2, #687176);
+  font-size: 10px;
+  line-height: 1.4;
 }
 
 /* Commit box and actions */
