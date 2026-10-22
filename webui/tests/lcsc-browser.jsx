@@ -15,6 +15,7 @@ import i18n from '../src/i18n'
 import '../src/App.css'
 import { useRequest } from '../src/hooks/useData'
 import { api } from '../src/api'
+import { isProblemSymbol } from '../src/lib/footprintStatus'
 
 // ============================================================
 // 可控 fetch
@@ -1782,7 +1783,7 @@ async function newScenarios() {
       { id: 'sym-ghost', name: 'SS-0323PG', footprint: ghostRef, footprint_status: 'not_found', footprint_reason: 'no_match', has_footprint: true, has_3d_model: true },
       { id: 'sym-stale', name: 'STALE', footprint: 'main:OLD', footprint_status: 'stale', footprint_reason: 'missing_file', model_status: 'stale', model_reason: 'footprint_unavailable', has_footprint: true, has_3d_model: true },
     ]
-    mountElement(<SymbolTable symbols={symbols} filter={null} issueFilter={false} selected={null} setSelected={() => {}} />)
+    mountElement(<SymbolTable symbols={symbols} filter={null} issueFilter={false} />)
     await settle()
     assertEq(tid('symbol-status-sym-good').getAttribute('data-status'), 'available')
     assert(tid('symbol-status-sym-good').classList.contains('ok'), '正常项是绿色')
@@ -1793,8 +1794,9 @@ async function newScenarios() {
     assert(!tid('symbol-status-sym-stale').classList.contains('ok'), '失效不能显示绿色')
     assert(($('#root').textContent || '').includes(ghostRef), '原始引用照样显示')
 
-    // 问题筛选包含「有引用但库里没有」的这一项
-    mountElement(<SymbolTable symbols={symbols} filter={null} issueFilter selected={null} setSelected={() => {}} />)
+    // App 已在父层按相同结果集筛选并维护选择；SymbolTable 渲染传入结果。
+    // 此组件场景复用生产状态判定，不把筛选职责移回列表组件。
+    mountElement(<SymbolTable symbols={symbols.filter(isProblemSymbol)} filter={null} issueFilter />)
     await settle()
     assert(tid('symbol-status-sym-ghost'), '问题筛选包含未找到的元件')
     assert(tid('symbol-status-sym-stale'), '问题筛选包含失效的元件')

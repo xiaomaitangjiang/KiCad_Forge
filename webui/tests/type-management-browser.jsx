@@ -196,6 +196,7 @@ function payloadFor(method, path, call) {
     '/api/libraries': [LIBRARY],
     '/api/component-libraries': [],           // 不切具体工作库，避免按归属过滤掉符号
     '/api/config': { active_component_library: '' },
+    '/api/editing/history': { ok: true, can_undo: false, can_redo: false, undo: null, redo: null, entries: [] },
     '/api/plugins': [],
     '/api/rules': [],
     '/api/check': [],

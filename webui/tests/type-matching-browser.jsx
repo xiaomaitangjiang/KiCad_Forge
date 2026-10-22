@@ -98,6 +98,7 @@ function route(call) {
     '/api/component-libraries': [], '/api/config': { active_component_library: '' },
     '/api/component-types': TYPES, '/api/package-types': [], '/api/plugins': [],
     '/api/rules': [], '/api/check': [], '/api/automatch': [],
+    '/api/editing/history': { ok: true, can_undo: false, can_redo: false, undo: null, redo: null, entries: [] },
     '/api/import-status': { importing: false, symbols: 1, footprints: 0 },
   }
   if (Object.hasOwn(reads, path)) return reads[path]
@@ -869,9 +870,9 @@ window.__harness = {
           assert(rect.width > 0 && rect.width <= 24, `checkbox 宽度 ${rect.width}px`)
         }
         const style = getComputedStyle(node)
-        equal(style.getPropertyValue('--card').trim(), dark ? '#2c2c2e' : '#ffffff', '真实主题变量生效')
-        equal(style.getPropertyValue('--text').trim(), dark ? '#f5f5f7' : '#1d1d1f', '真实文字主题变量生效')
-        equal(style.color, dark ? 'rgb(245, 245, 247)' : 'rgb(29, 29, 31)', '正文实际颜色使用主题')
+        equal(style.getPropertyValue('--card').trim(), dark ? '#242a2e' : '#ffffff', 'FW 亮暗主题变量生效')
+        equal(style.getPropertyValue('--text').trim(), dark ? '#e5e9e9' : '#252a2d', 'FW 文字主题变量生效')
+        equal(style.color, dark ? 'rgb(229, 233, 233)' : 'rgb(37, 42, 45)', '正文实际颜色使用主题')
         assert(style.color !== style.backgroundColor, `文字与背景不可相同：${style.color}`)
         const grids = $$('.matching-entry-grid, .matching-sample-grid')
         assert(grids.every(grid => grid.scrollWidth <= grid.clientWidth + 1), '来源/类型/样本网格不得横向溢出')
