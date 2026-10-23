@@ -456,7 +456,9 @@ export function createGitModel({ createStore, librariesApi, tasks }: {
 
   async function cancelRequest(request: ChannelRequest) {
     const task = request.handle?.getSnapshot()
-    if (!request.handle || !task || terminal(task) || !task.cancelable || request.cancelRequested) return
+    if (!request.handle || !task || terminal(task) || request.cancelRequested) return
+    // Read channels are cancellable, but the submit reply has no capability
+    // fields until the first poll. Let the host arbitrate an early cancellation.
     request.cancelRequested = true
     try {
       await request.handle.cancel()

@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createSnapshotStore } from '@kiforge/plugin-sdk'
+import { createTasksApi } from '../../src/plugin-host/tasks-api.js'
 import { createGitModel, componentBase, HISTORY_MAX_COMMITS } from '../../../plugins/git_version/frontend/src/model.ts'
 
 const tick = () => new Promise((resolve) => setImmediate(resolve))
@@ -1069,6 +1070,47 @@ test('Git cancelled history refreshes keep the previous page and expose retry', 
   assert.equal(snap.history.data.commits[0].oid, 'retried')
   f.model.dispose()
 })
+
+for (const method of ['cancelChannel', 'cancel']) {
+  test(`Git ${method} sends cancellation before the first authoritative task snapshot`, async (t) => {
+    const requests = []
+    const pendingReads = []
+    const tasks = createTasksApi('com.kicad_forge.git_version', async (url, options = {}) => {
+      requests.push({ url, method: options.method })
+      const cancelled = { task_id: 'history-1', action: 'history', state: 'cancelled', cancelable: false }
+      let body
+      if (url === '/api/tasks') {
+        const { action } = JSON.parse(options.body)
+        // Native submit only returns identity and state, without cancelable.
+        body = action === 'history'
+          ? { ok: true, task_id: 'history-1', state: 'queued' }
+          : { task_id: 'status-1', action, state: 'succeeded', result: { ok: true, initialized: true, branch: 'main', files: [] } }
+      } else if (url.endsWith('/cancel')) {
+        body = { ...cancelled, status: 'cancel_requested' }
+        for (const resolve of pendingReads) resolve(cancelled)
+      } else {
+        // Hold the first poll so cancellation always precedes capability discovery.
+        body = await new Promise((resolve) => pendingReads.push(resolve))
+      }
+      return { ok: true, status: 200, json: async () => body }
+    })
+    const model = createGitModel({
+      createStore: createSnapshotStore,
+      librariesApi: { async componentLibraries() { return [{ id: 'one', name: 'One', symbolPath: 'C:/One/symbols' }] } },
+      tasks,
+    })
+    t.after(() => { model.dispose(); tasks.dispose() })
+    await model.start()
+    await tick()
+    model.selectTab('history')
+    await tick()
+    assert.equal(model.getSnapshot().history.phase, 'loading')
+    if (method === 'cancelChannel') await model.cancelChannel('history')
+    else await model.cancel()
+    assert.equal(model.getSnapshot().history.phase, 'cancelled')
+    assert.equal(requests.filter(({ url, method }) => url === '/api/tasks/history-1/cancel' && method === 'POST').length, 1)
+  })
+}
 
 test('Git switching repositories during a pending cancel receipt keeps the new repository read', async () => {
   const f = fixture()
