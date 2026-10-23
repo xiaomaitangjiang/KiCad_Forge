@@ -16,6 +16,20 @@ SPEC.loader.exec_module(layout)
 
 
 class RepositoryLayoutCheckTests(unittest.TestCase):
+    def test_published_docs_navigation_does_not_require_local_agent_docs(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for name in layout.tracked_files(ROOT):
+                if name.startswith("docs/"):
+                    target = root / name
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.touch()
+            navigation = root / "docs/README.md"
+            navigation.write_bytes((ROOT / "docs/README.md").read_bytes())
+            self.assertFalse((root / "docs/AgentDocs").exists())
+            errors = layout.find_broken_links(root, ["docs/README.md"])
+        self.assertEqual([], errors)
+
     def test_case_collisions_detect_case_only_duplicates(self):
         groups = layout.case_collisions(["docs/README.md", "DOCS/readme.md", "docs/other.md"])
         self.assertEqual([["docs/README.md", "DOCS/readme.md"]], groups)
