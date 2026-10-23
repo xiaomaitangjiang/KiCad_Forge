@@ -11,7 +11,7 @@ function waitForExit(child, timeoutMs) {
     const finish = (value) => { if (!done) { done = true; clearTimeout(timer); resolve(value) } }
     const timer = setTimeout(() => finish(false), timeoutMs)
     child.once('exit', () => finish(true))
-    child.once('error', () => finish(true))
+    child.once('error', () => finish(child.exitCode !== null || child.signalCode !== null))
   })
 }
 
@@ -23,20 +23,30 @@ function killProcessTree(pid) {
 /// 只停自己启动的那个 Edge：Windows 先 taskkill 自己的 PID（/T /F）并等它退出，
 /// 之后才用 child.kill 兜底。绝不按镜像名杀别的 Edge 进程。
 /// 可选参数只是测试注入点（默认就是真实 taskkill 与既定的等待上限）。
-export async function stopEdge(child, { spawnKill = killProcessTree, exitTimeoutMs = EDGE_EXIT_TIMEOUT_MS } = {}) {
+export async function stopEdge(child, {
+  spawnKill = killProcessTree, exitTimeoutMs = EDGE_EXIT_TIMEOUT_MS, platform = process.platform,
+} = {}) {
   if (!child || typeof child.pid !== 'number') return
   // 本次子进程已经退出（exitCode / signalCode 任一非 null）：直接返回，绝不再拿旧 PID
   // 发 taskkill —— PID 可能已被系统复用给无关进程，那会杀掉别人的进程树。
   if (child.exitCode !== null || child.signalCode !== null) return
-  if (process.platform === 'win32') {
-    await new Promise((resolve, reject) => {
-      const t = spawnKill(child.pid)
-      t.on('exit', (code) => (code === 0 || child.exitCode !== null
-        ? resolve() : reject(new Error(`taskkill exited ${code} for pid ${child.pid}`))))
-      t.on('error', reject)
-    })
+  let killFailure
+  if (platform === 'win32') {
+    try {
+      await new Promise((resolve, reject) => {
+        const t = spawnKill(child.pid)
+        t.on('exit', (code) => (code === 0
+          ? resolve() : reject(new Error(`taskkill exited ${code} for pid ${child.pid}`))))
+        t.on('error', reject)
+      })
+    } catch (cause) {
+      killFailure = cause
+    }
   }
+  // taskkill may report a missing PID before Node receives the child's exit
+  // notification. Only a confirmed exit makes that race a successful cleanup.
   if (await waitForExit(child, exitTimeoutMs)) return
+  if (killFailure) throw killFailure
   // 兜底：进程树没退干净时只对自己的子进程补一刀
   try { child.kill() } catch { /* 已经退出 */ }
   if (!await waitForExit(child, exitTimeoutMs))
