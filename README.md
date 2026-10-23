@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="resources/app.ico" width="112" height="112" alt="Kicad_Forge 图标">
+<img src="resources/icons/app.ico" width="112" height="112" alt="Kicad_Forge 图标">
 
 # KiCad Forge
 
@@ -10,15 +10,15 @@ KiCad 元件库（符号、封装库）管理器
 
 Kicad_Forge 是一个现代化的元件库图形管理工具，旨在为 KiCad 多库文件、多元器件管理提供一种更加方便、迅捷、直观的管理工具。
 
-简体中文 ~ [English](docs/README_en.md)
+简体中文 ~ [English](docs/README.en.md)
 
 
 
 
 
-![screenshot](resources/main_view.png)
+![screenshot](docs/assets/screenshots/main.png)
 
-[功能](#功能) **·** [快速开始](#快速开始) **·** [下载](#下载) **·** [贡献](CONTRIBUTING.md) **·** [注意事项](docs/Attention.md)
+[功能](#功能) **·** [快速开始](#快速开始) **·** [下载](#下载) **·** [贡献](CONTRIBUTING.md) **·** [注意事项](docs/user/usage-notes.zh-CN.md)
 </div>
 
 ---
@@ -75,7 +75,7 @@ EXT_Internal_kicad_Lib
 - Python 3.12
 - Node.js 24（前端 React 19 + Vite）
 
-首次构建前按 [docs/CI.md](docs/CI.md#本地构建) 准备 PCRE2 和其他锁定依赖。常规构建直接使用仓库中的 `resources/app.ico`；只有修改图标素材时才需安装 CairoSVG、Pillow，并手动运行 `scripts/svg2ico.py`。
+首次构建前按 [docs/development/ci.md](docs/development/ci.md#本地构建) 准备 PCRE2 和其他锁定依赖。常规构建直接使用仓库中的 `resources/icons/app.ico`；只有修改图标素材时才需安装 CairoSVG、Pillow，并手动运行 `scripts/svg2ico.py`。
 
 > 默认使用 `D:/msys64/mingw64`，可通过环境变量 `MSYS2_DIR` 指定其他 MSYS2 安装路径。
 
@@ -282,17 +282,17 @@ KiCad_Forge
 | `footprint_choice` | `lcsc_import` 专用：从自动候选或搜索结果中按 UUID 复用封装，或显式选择新建 |
 
 **style：icon**
-![icon](resources/with_icon.png)
+![icon](docs/assets/screenshots/plugin-style/with-icon.png)
 
 **style：both**
-![both](resources/icon_and_text.png)
+![both](docs/assets/screenshots/plugin-style/icon-and-text.png)
 
 **style：text**
-![text](resources/without_icon.png)
+![text](docs/assets/screenshots/plugin-style/without-text.png)
 
 ## API
 
-内置 HTTP 服务提供 REST API，完整文档见 [docs/API.md](docs/API.md)。
+内置 HTTP 服务提供 REST API，完整文档见 [docs/api/http-api.md](docs/api/http-api.md)。
 
 导入、LCSC 工作流和编辑命令的行为约束与验收场景见 [功能规格](docs/specs/README.md)。规格分别标注当前实现、拟定规则和未覆盖项。
 
@@ -343,4 +343,4 @@ KiCad_Forge
 
 ## 贡献
 
-欢迎提交 Issue 与 PR，流程与代码规范见 [CONTRIBUTING.md](CONTRIBUTING.md)。提交 BUG 时请附上详细描述与软件 Log 文件；谢绝"许愿式 Issue"，详见[注意事项](docs/Attention.md)。
+欢迎提交 Issue 与 PR，流程与代码规范见 [CONTRIBUTING.md](CONTRIBUTING.md)。提交 BUG 时请附上详细描述与软件 Log 文件；谢绝"许愿式 Issue"，详见[注意事项](docs/user/usage-notes.zh-CN.md)。

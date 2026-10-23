@@ -14,7 +14,7 @@
 | [前端风格与工作台交互](FRONTEND_WORKBENCH.md) | 暖白/石墨与赤铜主题、区域职责、首页关闭、计数口径、输出移除、插件与任务反馈怎样保持一致 | 2026-10-22 按用户要求整理既定设计；实现差距和本轮验收见 AgentDocs |
 | [Git 提交规范](COMMIT_CONVENTIONS.md) | 中文叙述与技术原名、Conventional Commits、独立分点，以及问题、关键实现和功能效果怎样表达 | 用户于 2026-10-21 明确决定的提交约定；可理解性优先于压缩字数 |
 
-接口字段全表仍见 [API 文档](../API.md)；SDK 类型见 [plugin-sdk](../../webui/packages/plugin-sdk/src/index.ts)。历史测试结果仅保存在本地 `docs/AgentDocs/PLUGIN_SYSTEM_CONTINUATION_2026-10-18.md`，不随仓库提交。历史测试通过只对应当时快照，不能证明此后工作区的修改已经通过。
+接口字段全表仍见 [API 文档](../api/http-api.md)；SDK 类型见 [plugin-sdk](../../webui/packages/plugin-sdk/src/index.ts)。历史测试结果仅保存在本地 `docs/AgentDocs/PLUGIN_SYSTEM_CONTINUATION_2026-10-18.md`，不随仓库提交。历史测试通过只对应当时快照，不能证明此后工作区的修改已经通过。
 
 界面容器与深层导航的历史实施记录位于本地 `docs/AgentDocs/WORKBENCH_LAYOUT_PLAN_2026-10-19.md`，不随仓库提交。其中借鉴 VS Code 的区域职责、分栏与恢复机制按阶段迁移；P0–P4 的历史验收只对应当时快照，P5 不启动。
 

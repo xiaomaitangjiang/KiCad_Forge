@@ -93,7 +93,7 @@ jobs:
           done 2>&1 | tee test-results/plugin-types.log
 
       - name: Test helpers and the public plugin runtime contracts
-        run: node --test webui/tests/*.test.js webui/tests/*.test.mjs 2>&1 | tee test-results/frontend-tests.log
+        run: node --test webui/tests/unit/*.test.js webui/tests/unit/*.test.mjs 2>&1 | tee test-results/frontend-tests.log
 
       - name: Upload frontend diagnostics
         if: always()
@@ -201,15 +201,15 @@ jobs:
 
       - name: Test frontend helpers on the native platform
         if: matrix.mode == 'debug'
-        run: node --test webui/tests/*.test.js webui/tests/*.test.mjs
+        run: node --test webui/tests/unit/*.test.js webui/tests/unit/*.test.mjs
 
       - name: Test the actual LCSC and component type browser interactions
         if: runner.os == 'Windows' && matrix.mode == 'debug'
         run: |
-          node webui/tests/run-lcsc-browser.mjs
-          node webui/tests/run-lcsc-browser.mjs --types
-          node webui/tests/run-lcsc-browser.mjs --type-matching
-          node webui/tests/run-plugin-browser.mjs
+          node webui/tests/browser/run-lcsc-browser.mjs
+          node webui/tests/browser/run-lcsc-browser.mjs --types
+          node webui/tests/browser/run-lcsc-browser.mjs --type-matching
+          node webui/tests/browser/run-plugin-browser.mjs
 
       - name: Prepare the remaining locked dependencies and configure the native build
         run: |
@@ -228,7 +228,7 @@ jobs:
         run: python -m compileall -q plugins
 
       - name: Test Python plugins and build helpers
-        run: python -B -m unittest tests.test_plugins tests.test_lcsc_staging tests.test_lcsc_workflow tests.test_installer tests.test_runtime_assets -v
+        run: python -B -m unittest tests.python.test_plugins tests.python.test_lcsc_staging tests.python.test_lcsc_workflow tests.python.test_installer tests.python.test_runtime_assets -v
 
       - name: Test Git history, repository identity and write outcomes
         run: |
@@ -260,14 +260,14 @@ jobs:
           mkdir -p test-results/webview2
           export KFORGE_BUILD_ROOT="$(cygpath -m "$PWD/dist/$PACKAGE_NAME")"
           export KFORGE_TEST_RESULTS="$(cygpath -m "$PWD/test-results/webview2")"
-          node webui/tests/run-plugin-webview2.mjs 2>&1 | tee test-results/webview2/prototype.log
-          node webui/tests/run-editing-e2e.mjs 2>&1 | tee test-results/webview2/editing.log
-          node webui/tests/run-workbench-e2e.mjs 2>&1 | tee test-results/webview2/workbench.log
-          node webui/tests/run-home-tab-e2e.mjs 2>&1 | tee test-results/webview2/home-tab.log
-          node webui/tests/run-delivery-review-e2e.mjs 2>&1 | tee test-results/webview2/delivery-review.log
-          node webui/tests/run-plugin-state-e2e.mjs 2>&1 | tee test-results/webview2/restart.log
-          node webui/tests/run-git-write-e2e.mjs 2>&1 | tee test-results/webview2/git-actions.log
-          node webui/tests/run-import-contract-e2e.mjs 2>&1 | tee test-results/webview2/import-contract.log
+          node webui/tests/e2e/run-plugin-webview2.mjs 2>&1 | tee test-results/webview2/prototype.log
+          node webui/tests/e2e/run-editing-e2e.mjs 2>&1 | tee test-results/webview2/editing.log
+          node webui/tests/e2e/run-workbench-e2e.mjs 2>&1 | tee test-results/webview2/workbench.log
+          node webui/tests/e2e/run-home-tab-e2e.mjs 2>&1 | tee test-results/webview2/home-tab.log
+          node webui/tests/e2e/run-delivery-review-e2e.mjs 2>&1 | tee test-results/webview2/delivery-review.log
+          node webui/tests/e2e/run-plugin-state-e2e.mjs 2>&1 | tee test-results/webview2/restart.log
+          node webui/tests/e2e/run-git-write-e2e.mjs 2>&1 | tee test-results/webview2/git-actions.log
+          node webui/tests/e2e/run-import-contract-e2e.mjs 2>&1 | tee test-results/webview2/import-contract.log
 
       - name: Upload test diagnostics
         if: always()

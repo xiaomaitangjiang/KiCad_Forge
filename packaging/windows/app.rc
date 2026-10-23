@@ -1,0 +1,3 @@
+// Application icon — embedded by windres
+#include "resource.h"
+IDI_ICON1 ICON "../../resources/icons/app.ico"

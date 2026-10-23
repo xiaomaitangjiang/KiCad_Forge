@@ -153,4 +153,4 @@
 
 文本编辑与浏览器菜单需真实 WebView2 验证，模型测试不能替代选区、焦点、系统剪贴板和权限验收。对象写入先用临时库、合成 KiCad 文件和故障注入验证，禁止拿日用库试验。
 
-现有可复用测试基础为 [test_library_workflows.cpp](../../tests/test_library_workflows.cpp) 中 source mutation 回滚、外部修改保护、启动恢复、FIX03 owner/lock，以及 [symbolRefresh.test.js](../../webui/tests/symbolRefresh.test.js) 的查询语义。它们**尚未覆盖**本规格的对象剪贴板和用户历史。
+现有可复用测试基础为 [test_library_workflows.cpp](../../tests/cpp/test_library_workflows.cpp) 中 source mutation 回滚、外部修改保护、启动恢复、FIX03 owner/lock，以及 [symbolRefresh.test.js](../../webui/tests/unit/symbolRefresh.test.js) 的查询语义。它们**尚未覆盖**本规格的对象剪贴板和用户历史。

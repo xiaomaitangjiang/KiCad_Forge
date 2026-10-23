@@ -32,7 +32,7 @@
 模型订阅任务的 `getSnapshot/subscribe` 显示 `state/phase/cancelable`，staging 期间
 可请求取消，进入 committing 后取消由后端拒绝。普通面板切换只退订视图，不撤销已提交导入；
 插件停用时释放模型和适配器。刷新失败保留已提交意图，只允许重试刷新。
-`analyze` 的组件行为由 `webui/tests/lcsc-browser.jsx` 直接挂载插件 modal 验证。
+`analyze` 的组件行为由 `webui/tests/browser/lcsc-browser.jsx` 直接挂载插件 modal 验证。
 `analyze` 是内部步骤，不会作为可点动作出现在插件面板里。
 
 1. **只输编号并查找**：目标元件库、候选、导入在此之前都不出现，也不能操作。
@@ -107,7 +107,7 @@ UI 操作不再由插件直接改用户库文件。缺 `staging_dir` 或协议�
 ## 测试
 
 ```
-python -B -m unittest tests.test_lcsc_staging tests.test_lcsc_workflow
+python -B -m unittest tests.python.test_lcsc_staging tests.python.test_lcsc_workflow
 ```
 
 不联网：测试用桩替换 `prepare` 与宿主搜索 API。

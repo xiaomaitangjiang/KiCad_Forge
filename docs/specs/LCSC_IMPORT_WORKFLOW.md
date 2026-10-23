@@ -68,14 +68,14 @@ flowchart LR
 
 | 场景 | 规则 | 已有用例或检查入口 |
 | --- | --- | --- |
-| 编号规范化、双击、A/B 逆序、同 ID 重试 | LW-001、002 | [lcscImport.test.js](../../webui/tests/lcscImport.test.js)、[lcsc-model.test.mjs](../../webui/tests/lcsc-model.test.mjs) |
+| 编号规范化、双击、A/B 逆序、同 ID 重试 | LW-001、002 | [lcscImport.test.js](../../webui/tests/unit/lcscImport.test.js)、[lcsc-model.test.mjs](../../webui/tests/unit/lcsc-model.test.mjs) |
 | 目标锁定/删除/改路径，刷新包列表失败 | LW-004、005、011 | 同上；断言不创建提交任务并要求重新确认 |
-| 空 UUID、空库、嵌套同名、新建名称冲突 | LW-006–008 | 同上、[test_library_workflows.cpp](../../tests/test_library_workflows.cpp) LCSCSUB |
-| 同名不同 UUID、损坏候选、旧搜索结果 | LW-003、009 | [test_lcsc_workflow.py](../../tests/test_lcsc_workflow.py)、前端纯函数与模型测试 |
-| 提交成功但刷新失败，重复点刷新 | LW-015、016 | [lcsc-model.test.mjs](../../webui/tests/lcsc-model.test.mjs)；一次 import，后续只重新读取 |
-| 面板卸载时导入仍执行，重开后第二次意图 | LW-017、020 | [run-lcsc-browser.mjs](../../webui/tests/run-lcsc-browser.mjs) inline 场景 |
-| 迟到 handle、同步终态、销毁后不读取 | LW-021、022、024 | [lcsc-model.test.mjs](../../webui/tests/lcsc-model.test.mjs) |
-| 暂存编号文件名、恶意名称、reuse 不产封装 | IP-021、LW-014 | [test_lcsc_staging.py](../../tests/test_lcsc_staging.py) |
+| 空 UUID、空库、嵌套同名、新建名称冲突 | LW-006–008 | 同上、[test_library_workflows.cpp](../../tests/cpp/test_library_workflows.cpp) LCSCSUB |
+| 同名不同 UUID、损坏候选、旧搜索结果 | LW-003、009 | [test_lcsc_workflow.py](../../tests/python/test_lcsc_workflow.py)、前端纯函数与模型测试 |
+| 提交成功但刷新失败，重复点刷新 | LW-015、016 | [lcsc-model.test.mjs](../../webui/tests/unit/lcsc-model.test.mjs)；一次 import，后续只重新读取 |
+| 面板卸载时导入仍执行，重开后第二次意图 | LW-017、020 | [run-lcsc-browser.mjs](../../webui/tests/browser/run-lcsc-browser.mjs) inline 场景 |
+| 迟到 handle、同步终态、销毁后不读取 | LW-021、022、024 | [lcsc-model.test.mjs](../../webui/tests/unit/lcsc-model.test.mjs) |
+| 暂存编号文件名、恶意名称、reuse 不产封装 | IP-021、LW-014 | [test_lcsc_staging.py](../../tests/python/test_lcsc_staging.py) |
 
 ## 限制
 

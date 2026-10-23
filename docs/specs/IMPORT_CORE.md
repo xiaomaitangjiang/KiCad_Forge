@@ -67,18 +67,18 @@
 
 | 场景 | 对应规则 | 用例位置 / 检查点 |
 | --- | --- | --- |
-| 单符号文件、大写后缀、Unicode 路径 | IC-002 | [test_import_contract.cpp](../../tests/test_import_contract.cpp)，`U08PATH`、`U08EDGE` |
+| 单符号文件、大写后缀、Unicode 路径 | IC-002 | [test_import_contract.cpp](../../tests/cpp/test_import_contract.cpp)，`U08PATH`、`U08EDGE` |
 | 封装路径误填符号文件，3D 来源为文件 | IC-003、010 | 同上；错误发生前文件与数据库均无新写入 |
 | 来源扫描消失、解析失败及同 mtime 修复重试 | IC-004、011 | 同上 `U08EDGE`；失败不消费成功快照 |
-| 同名不同来源、同来源多包归属冲突 | IC-005、006 | [test_library_workflows.cpp](../../tests/test_library_workflows.cpp)，`same-name`、`ownership conflict`、`FIX03` |
-| 前向/多级继承、显式空值、6种声明顺序、2048级链、无效父关系 | IC-007 | [test_symbol_inheritance.cpp](../../tests/test_symbol_inheritance.cpp)，`DERIVED` 解析用例 |
-| 父封装修改后子符号重导、独立身份、封装关联更新 | IC-008 | [test_library_workflows.cpp](../../tests/test_library_workflows.cpp)，`DERIVED import and reimport` |
+| 同名不同来源、同来源多包归属冲突 | IC-005、006 | [test_library_workflows.cpp](../../tests/cpp/test_library_workflows.cpp)，`same-name`、`ownership conflict`、`FIX03` |
+| 前向/多级继承、显式空值、6种声明顺序、2048级链、无效父关系 | IC-007 | [test_symbol_inheritance.cpp](../../tests/cpp/test_symbol_inheritance.cpp)，`DERIVED` 解析用例 |
+| 父封装修改后子符号重导、独立身份、封装关联更新 | IC-008 | [test_library_workflows.cpp](../../tests/cpp/test_library_workflows.cpp)，`DERIVED import and reimport` |
 | 更新或 snapshot 写入失败、COMMIT 失败 | IC-012、013 | 同上 `FIX01`；检查行、快照和已提交计数 |
 | 关联歧义与手工关系保留 | IC-015 | 同上 `FIX01 ambiguous duplicates`、`FIX03 legacy footprint references` |
 | 取消后重新启动、强制重导、KF ID 保护 | IC-011、014、017 | 同上 `manual force import`、`cancelled pipeline`、`KF ID opt-in` |
 | 数据库会话被占用时仍读取进度 | IC-020、021 | 同上 `import progress` 用例组 |
-| 并发手动导入拒绝 | IC-025 | [test_import_contract.cpp](../../tests/test_import_contract.cpp)，`U08ORCH concurrent manual import` |
-| 性能回归 | IC-026 | [bench_import.cpp](../../tests/bench_import.cpp)；同机器、同构建和同合成数据比较首次/未变化重导，不设未经测量的绝对毫秒门槛 |
+| 并发手动导入拒绝 | IC-025 | [test_import_contract.cpp](../../tests/cpp/test_import_contract.cpp)，`U08ORCH concurrent manual import` |
+| 性能回归 | IC-026 | [bench_import.cpp](../../tests/benchmarks/bench_import.cpp)；同机器、同构建和同合成数据比较首次/未变化重导，不设未经测量的绝对毫秒门槛 |
 
 ## 不作保证的范围
 

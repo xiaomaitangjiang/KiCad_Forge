@@ -15,7 +15,7 @@ import sys
 
 
 PROJECT = Path(__file__).resolve().parents[1]
-SCRIPT = PROJECT / "resources/Kicad_Forge_V0.1.1.iss"
+SCRIPT = PROJECT / "packaging/windows/kiforge.iss"
 APP_EXE = "KiCad_Forge.exe"
 
 
@@ -30,8 +30,8 @@ def parser():
     result.add_argument("--source", type=Path, default=PROJECT / "build/mingw/x86_64/release",
                         help="Completed Windows build/bundle directory (default: repository Release output)")
     result.add_argument("--license", type=Path, default=PROJECT / "LICENSE")
-    result.add_argument("--icon", type=Path, default=PROJECT / "resources/app.ico")
-    result.add_argument("--output", type=Path, default=PROJECT / "install_file")
+    result.add_argument("--icon", type=Path, default=PROJECT / "resources/icons/app.ico")
+    result.add_argument("--output", type=Path, default=PROJECT / "dist/installers")
     result.add_argument("--name", default="Kicad_Forge_Setup", help="Installer filename without .exe")
     result.add_argument("--iscc", type=Path, help="ISCC.exe (default: PATH, then standard Inno 7/6 locations)")
     result.add_argument("--dry-run", action="store_true", help="Validate and print the command without writing files")

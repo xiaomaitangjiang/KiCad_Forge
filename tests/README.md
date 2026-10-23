@@ -1,6 +1,6 @@
 # 测试
 
-使用 C++23 和 doctest。平台工具链及锁定依赖准备步骤见 [CI 构建说明](../docs/CI.md)。
+使用 C++23 和 doctest。C++ 用例在 `tests/cpp/`，Python 用例在 `tests/python/`，共享头文件在 `tests/support/`，性能基准在 `tests/benchmarks/`，SDK 类型夹具在 `tests/types/`。目标名保持不变。平台工具链及锁定依赖准备步骤见 [CI 构建说明](../docs/development/ci.md)。
 
 在仓库根目录用 PowerShell 执行：
 
@@ -35,15 +35,15 @@ if ($LASTEXITCODE -ne 0) { throw 'Tests failed' }
 
 P1 的文件与数据库一致性测试覆盖可捕获的 I/O、SQL 和提交失败。未覆盖进程断电恢复、外部程序同时修改源文件，也没有对文件系统和 SQLite 作跨系统原子提交保证。
 
-插件进程参数、超时、取消和输出边界由 `test_plugin_manager` 覆盖；Python 插件、打包和前端浏览器回归命令见 [CI 构建说明](../docs/CI.md)。浏览器测试使用本机 Edge 和隔离夹具，不代表应用内 WebView2 与原生文件选择器已通过桌面验收。
+插件进程参数、超时、取消和输出边界由 `test_plugin_manager` 覆盖；Python 插件、打包和前端浏览器回归命令见 [CI 构建说明](../docs/development/ci.md)。浏览器测试使用本机 Edge 和隔离夹具，不代表应用内 WebView2 与原生文件选择器已通过桌面验收。
 
 `scripts/smoke_test.py` 在临时复制的便携包中检查真实 HTTP 启停、匹配配置恢复和 SQLite 完整性，并将数据库路径设为目录，验证启动失败严格以退出码 1 结束。它使用 `--no-auto-import`，跳过本机元件库自动扫描。
 
-`python -B -m unittest tests.test_runtime_assets -v` 检查构建资源刷新：缺少源文件、复制失败或输出存在链接/目录联接时，在清理前拒绝操作，保留源码、旧输出和 `data/`。用例只在临时目录中创建资源与重定向。
+`python -B -m unittest tests.python.test_runtime_assets -v` 检查构建资源刷新：缺少源文件、复制失败或输出存在链接/目录联接时，在清理前拒绝操作，保留源码、旧输出和 `data/`。用例只在临时目录中创建资源与重定向。
 
-`test_data_integrity --test-case="import progress*"` 检查解析、写入、跳过、回滚和取消时的内存任务进度；持有数据库会话时仍能读到快照。`node webui/tests/run-lcsc-browser.mjs --import-progress` 定向运行真实导入弹窗，检查串行轮询、失败重试、阶段切换和卸载保护；这些场景也包含在完整 `--types` 检查中。
+`test_data_integrity --test-case="import progress*"` 检查解析、写入、跳过、回滚和取消时的内存任务进度；持有数据库会话时仍能读到快照。`node webui/tests/browser/run-lcsc-browser.mjs --import-progress` 定向运行真实导入弹窗，检查串行轮询、失败重试、阶段切换和卸载保护；这些场景也包含在完整 `--types` 检查中。
 
-`test_data_integrity --test-case="U08*"` 检查符号/封装路径类型、单符号文件、扫描错误、封装解析取消、轻量关联查询、正确自动关系不重写和并发手动导入拒绝。`node webui/tests/run-lcsc-browser.mjs --settings-import` 检查设置导入的忙态、防重复、错误恢复、路径说明以及关闭窗口后的回包；同样包含在 `--types` 中。
+`test_data_integrity --test-case="U08*"` 检查符号/封装路径类型、单符号文件、扫描错误、封装解析取消、轻量关联查询、正确自动关系不重写和并发手动导入拒绝。`node webui/tests/browser/run-lcsc-browser.mjs --settings-import` 检查设置导入的忙态、防重复、错误恢复、路径说明以及关闭窗口后的回包；同样包含在 `--types` 中。
 
 性能比较使用临时合成来源，不读取用户元件库：
 

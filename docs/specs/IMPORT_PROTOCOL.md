@@ -106,13 +106,13 @@ TaskService 默认上限为全局 16、单插件 4 个并发 worker（含收尾�
 
 | 场景 | 规则 | 既有用例 |
 | --- | --- | --- |
-| 取消先到 / 提交先到 | IP-022、023 | [test_task_service.cpp](../../tests/test_task_service.cpp) T4.8a / T4.8b |
+| 取消先到 / 提交先到 | IP-022、023 | [test_task_service.cpp](../../tests/cpp/test_task_service.cpp) T4.8a / T4.8b |
 | 停用、并发限制、终态保留、worker 回收 | IP-020、034 | 同上 T4.1–T4.6、completed workers 用例 |
 | 业务失败、超时不确定、进程树回收 | IP-024 | 同上 T4.5、T4.11、T4.4 |
-| 同意图重放、换目标拒绝、越暂存目录拒绝 | IP-021、030 | [test_library_workflows.cpp](../../tests/test_library_workflows.cpp) staged import、LOCAL_AUDIT、FIX03 用例 |
+| 同意图重放、换目标拒绝、越暂存目录拒绝 | IP-021、030 | [test_library_workflows.cpp](../../tests/cpp/test_library_workflows.cpp) staged import、LOCAL_AUDIT、FIX03 用例 |
 | 子库为空/未登记、新建冲突与失联重试 | IP-013、032 | 同上 LCSCSUB 用例组 |
-| DTO 映射、provider、operation 404、取消回执、释放 | IP-001–005、010 | [tasks-api.test.mjs](../../webui/tests/tasks-api.test.mjs) |
-| 真实离线宿主协议 | IP-021、025、030 | [run-import-contract-e2e.mjs](../../webui/tests/run-import-contract-e2e.mjs) |
+| DTO 映射、provider、operation 404、取消回执、释放 | IP-001–005、010 | [tasks-api.test.mjs](../../webui/tests/unit/tasks-api.test.mjs) |
+| 真实离线宿主协议 | IP-021、025、030 | [run-import-contract-e2e.mjs](../../webui/tests/e2e/run-import-contract-e2e.mjs) |
 
 本轮未重跑上述业务用例。并发相同 operation_id 的全部交错、真实进程中断各点、跨进程目标竞争仍需按当前实现独立验证，不从幂等串行回放或单个恢复用例推出“全场景恰好执行一次”。
 

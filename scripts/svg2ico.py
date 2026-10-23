@@ -8,7 +8,7 @@ from PIL import Image, ImageDraw
 import io
 
 svg_path = 'webui/public/favicon.svg'
-ico_path = 'resources/app.ico'
+ico_path = 'resources/icons/app.ico'
 sizes = [256, 128, 64, 48, 32, 16]
 corner_radius = 0.15  # 15% of the image size → subtle rounding
 

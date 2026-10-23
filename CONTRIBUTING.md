@@ -46,8 +46,8 @@
 
 - `xmake` 管理 C++ 编译
 - `npm`/Vite 管理前端
-- 常规构建使用已提交的 `resources/app.ico`；修改图标素材后手动运行 `scripts/svg2ico.py`
-- 使用 Python 3.12、Node.js 24、xmake 3.0.9+；前端依赖用 `npm ci` 安装，PCRE2 与锁定依赖准备见 [docs/CI.md](docs/CI.md#本地构建)
+- 常规构建使用已提交的 `resources/icons/app.ico`；修改图标素材后手动运行 `scripts/svg2ico.py`
+- 使用 Python 3.12、Node.js 24、xmake 3.0.9+；前端依赖用 `npm ci` 安装，PCRE2 与锁定依赖准备见 [docs/development/ci.md](docs/development/ci.md#本地构建)
 - `after_build` 复制 webui、plugins、DLL 到输出目录
 
 ### 提交规范
@@ -67,7 +67,8 @@
 KiCad_Forge
 ├── config
 ├── docs
-├── install_file
+├── dist/installers
+├── packaging/windows
 ├── plugins
 ├── resources
 ├── scripts
@@ -141,7 +142,7 @@ KiCad_Forge
 
 1. Fork & clone
 2. Branch: `git checkout -b feature/xxx`
-3. Install dependencies (see [README Quick Start](docs/README_en.md#quick-start))
+3. Install dependencies (see [README Quick Start](docs/README.en.md#quick-start))
 4. Follow conventions below
 5. Both debug & release build cleanly
 6. Submit a PR with a clear description
@@ -171,7 +172,7 @@ Use Conventional Commits with Chinese explanatory text while preserving actual f
 **Build**
 
 - `xmake` for C++, `npm`/Vite for frontend
-- Use Python 3.12, Node.js 24, and xmake 3.0.9+; install frontend dependencies with `npm ci`. See [docs/CI.md](docs/CI.md#本地构建) for PCRE2 and locked dependency preparation
+- Use Python 3.12, Node.js 24, and xmake 3.0.9+; install frontend dependencies with `npm ci`. See [docs/development/ci.md](docs/development/ci.md#本地构建) for PCRE2 and locked dependency preparation
 - Normal builds use the tracked `app.ico`; run `scripts/svg2ico.py` manually when changing the artwork
 - `after_build` copies webui + plugins + DLLs to output
 
@@ -210,7 +211,8 @@ src/
   util/                 Utilities
 plugins/                Plugin bundles
 webui/                  Frontend
-resources/              Windows .rc + app.ico
+resources/              icons, branding and licenses
+packaging/windows/      Windows .rc, resource.h and Inno Setup script
 scripts/                Build helpers
 ```
 
@@ -219,7 +221,7 @@ scripts/                Build helpers
 Reference: [plugins/lcsc_import/](plugins/lcsc_import/)
 
 1. Create `plugins/<name>/` with `manifest.json`, `icon.svg`, `plugin.py`
-2. Generic forms support `text` and `library_picker`. The dedicated LCSC `lcsc_import` template uses `component_library_picker` and `footprint_choice`; see the [README plugin example](docs/README_en.md#plugin-system)
+2. Generic forms support `text` and `library_picker`. The dedicated LCSC `lcsc_import` template uses `component_library_picker` and `footprint_choice`; see the [README plugin example](docs/README.en.md#plugin-system)
 3. Build — `after_build` copies `plugins/` automatically
 
 ### What Not to Commit
