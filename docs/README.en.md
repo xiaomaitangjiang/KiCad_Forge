@@ -2,7 +2,7 @@
 
 <img src="../resources/icons/app.ico" width="112" height="112" alt="KiCad Forge icon">
 
-# KiCad Forge
+# KIForge
 
 A library manager for KiCad (symbols & footprints)
 

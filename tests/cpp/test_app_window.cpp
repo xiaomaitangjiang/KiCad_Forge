@@ -30,6 +30,12 @@ static_assert(std::is_constructible_v<NativeWindow, WindowConfig>);
 
 }  // namespace
 
+TEST_CASE("window config keeps the KIForge taskbar name")
+{
+    const WindowConfig config{};
+    CHECK(config.title == "KIForge");
+}
+
 TEST_CASE("native window can be constructed and closed without opening a GUI")
 {
     NativeWindow window(WindowConfig{"http://127.0.0.1:1", "Unopened test window", 640, 480});

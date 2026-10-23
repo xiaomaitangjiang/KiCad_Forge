@@ -2,7 +2,7 @@
 
 <img src="resources/icons/app.ico" width="112" height="112" alt="Kicad_Forge 图标">
 
-# KiCad Forge
+# KIForge
 
 KiCad 元件库（符号、封装库）管理器
 

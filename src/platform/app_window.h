@@ -41,7 +41,7 @@ namespace kforge::platform
 struct WindowConfig
 {
     std::string url;
-    std::string title{"KiCad Forge"};
+    std::string title{"KIForge"};
     int width{1280};
     int height{800};
 };
@@ -241,8 +241,9 @@ public:
         }
         // The app draws its own KIFORGE top bar (including window controls), so
         // the native caption is removed entirely; the window keeps its resize
-        // border and taskbar/Alt-Tab icon.
-        webview_set_title(w_, "");
+        // border and taskbar/Alt-Tab icon. The native title stays "KIForge" so
+        // the taskbar button and Alt-Tab entry still show an application name.
+        webview_set_title(w_, cfg_.title.c_str());
         webview_bind(w_, "kforge_window", &WinWebView2Window::window_action_bridge, this);
         webview_set_size(w_, cfg_.width, cfg_.height, WEBVIEW_HINT_NONE);
         webview_navigate(w_, cfg_.url.c_str());
