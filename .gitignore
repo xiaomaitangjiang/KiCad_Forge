@@ -11,6 +11,7 @@ xmake-requires.lock
 .idea/
 *.user
 *.pro.user*
+compile_commands.json
 
 # C++ build artifacts
 *.dll
