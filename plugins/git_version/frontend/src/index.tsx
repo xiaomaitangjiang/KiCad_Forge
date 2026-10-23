@@ -127,6 +127,7 @@ function RepoHeader({ model, snapshot }: { model: GitModel; snapshot: GitSnapsho
       <label className="gf-git-repo-select">
         <span className="gf-git-visually-hidden">{t('元件库 / 仓库', 'Library / repository')}</span>
         <select
+          className="kf-select"
           data-testid="git-target"
           aria-label={t('元件库 / 仓库', 'Library / repository')}
           value={snapshot.target}
@@ -496,6 +497,7 @@ function HistoryPane({ model, snapshot }: { model: GitModel; snapshot: GitSnapsh
     <div className="gf-git-history">
       <div className="gf-git-history-tools">
         <select
+          className="kf-select"
           data-testid="git-history-range"
           aria-label={t('历史范围', 'History range')}
           value={rangeValue}

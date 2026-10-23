@@ -14,7 +14,7 @@ function TypeLabel({ id, typeMap }) {
 function TypeSelect({ value, types, onChange, label }) {
   const { t } = useTranslation()
   const found = types.some(item => item.id === value)
-  return <select aria-label={label} value={value} onChange={event => onChange(event.target.value)}>
+  return <select className="kf-select" aria-label={label} value={value} onChange={event => onChange(event.target.value)}>
     <option value="">{t('matching.selectType')}</option>
     {value && !found && <option value={value}>{t('matching.missingType', { id: value })}</option>}
     {types.map(item => <option key={item.id} value={item.id}>{item.icon || '○'} {item.name || item.id}</option>)}
@@ -42,7 +42,7 @@ function EntryList({ kind, entries, types, edit, disabled }) {
             onClick={() => edit(kind, list => list.filter(entry => entry.id !== row.id))}>{t('matching.delete')}</button>
         </div>
         <div className="matching-entry-grid">
-          <label>{t('matching.sourceField')}<select aria-label={t('matching.entryField', { entry: prefix })} value={row.field}
+          <label>{t('matching.sourceField')}<select className="kf-select" aria-label={t('matching.entryField', { entry: prefix })} value={row.field}
             onChange={event => change(row.id, { field: event.target.value })}>
             {MATCH_FIELDS.map(field => <option key={field} value={field}>{t(`matching.field.${field}`)}</option>)}
           </select></label>

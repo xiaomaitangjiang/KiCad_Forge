@@ -39,6 +39,7 @@ import { recoverTasks } from './plugin-host/task-recovery'
 import { usePluginEntries } from './components/PluginSlot'
 import { PluginEntry } from './plugin-host/slot-host'
 import './App.css'
+import './ui/controls.css'
 import './plugin-slots.css'
 
 const API = '/api'

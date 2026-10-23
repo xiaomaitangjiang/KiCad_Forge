@@ -9,7 +9,7 @@ export default function SidebarWorkspaceSelector({ items, selectedId, onSelect }
 
   return (
     <div className="sidebar-workspace">
-      <select value={selectedId || ''} onChange={e => onSelect(e.target.value)}
+      <select className="kf-select" value={selectedId || ''} onChange={e => onSelect(e.target.value)}
         title={t('sidebar.workspace')} aria-label={t('sidebar.workspace')}>
         <option value="">{t('sidebar.allWorkspaces')}</option>
         {items.map(c => (

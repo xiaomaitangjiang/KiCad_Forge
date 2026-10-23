@@ -370,7 +370,7 @@ export function SettingsModal({ settings, setSettings, compLibraries, loadCompLi
                 </label>
                 <div style={{display:'flex',alignItems:'center',gap:8,marginTop:10,fontSize:12}}>
                   <span>{t('settings.language')}</span>
-                  <select className="settings-select" value={i18n.language} onChange={e => i18n.changeLanguage(e.target.value)}>
+                  <select className="settings-select kf-select" value={i18n.language} onChange={e => i18n.changeLanguage(e.target.value)}>
                     <option value="en">English</option>
                     <option value="zh">中文</option>
                   </select>
@@ -707,8 +707,7 @@ export function TypeModal({
             <input placeholder={t('types.newTypePlaceholder')} value={newName}
               onChange={e=>setNewName(e.target.value)} onKeyDown={e=>e.key==='Enter'&&handleAdd()}
               style={{flex:1,padding:'6px 10px',border:'1px solid var(--sep)',borderRadius:6,fontSize:12,background:'var(--bg)',color:'var(--text)'}}/>
-            {showCategory&&<select value={newCat} onChange={e=>setNewCat(e.target.value)}
-              style={{padding:'6px 8px',border:'1px solid var(--sep)',borderRadius:6,fontSize:12,background:'var(--bg)',color:'var(--text)'}}>
+            {showCategory&&<select className="kf-select" value={newCat} onChange={e=>setNewCat(e.target.value)}>
               <option>Other</option><option>SMD Chip</option><option>SMD IC</option><option>Through-hole</option><option>Connector</option></select>}
             <button className="btn-primary" style={{padding:'6px 14px',fontSize:12}} onClick={handleAdd}>{t('types.add')}</button>
           </>

@@ -325,21 +325,9 @@
 .sidebar .type-dot { font-size: 14px; line-height: 1; opacity: 0.65; flex-shrink: 0; }
 .sidebar .nav-item.active .type-dot { opacity: 1; }
 
-/* Workspace selector */
+/* Workspace selector: layout only, shared chrome lives in ui/controls.css */
 .sidebar-workspace { padding: 0 12px 6px; }
-.sidebar-workspace select {
-  width: 100%;
-  height: 30px;
-  padding: 0 24px 0 8px;
-  font: 13px var(--font);
-  color: var(--panel-fg);
-  background-color: var(--panel-input-bg);
-  background-position: right 6px center;
-  border: 1px solid var(--panel-input-border);
-  border-radius: 6px;
-  outline: none;
-}
-.sidebar-workspace select:focus { border-color: var(--panel-active); }
+.sidebar-workspace select { width: 100%; }
 
 /* Library tree and fixed footer */
 .sidebar-libraries { display: flex; flex-direction: column; flex: 1; min-height: 0; }
@@ -748,8 +736,9 @@ tr.selected td { background: var(--accent-soft); }
 .btn:hover { border-color: var(--accent); color: var(--accent); }
 .btn:disabled { opacity: .5; cursor: default; }
 
-/* Form controls: one focus ring and a real read-only look (ED-013) */
-input:focus-visible, select:focus-visible, textarea:focus-visible {
+/* Form controls: one focus ring and a real read-only look (ED-013).
+   Selects own their ring in ui/controls.css so it stays inside clipped panes. */
+input:focus-visible, textarea:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
@@ -1206,14 +1195,15 @@ button:disabled { cursor: default; }
 .matching-entry legend { font-size: 12px; color: var(--text2); padding: 0 4px; }
 .matching-entry-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 8px 0; }
 .matching-entry-grid > label, .matching-text-label { display: block; font-size: 12px; line-height: 1.8; }
-.matching-modal select, .matching-modal textarea, .matching-modal input:not([type="checkbox"]) {
+.matching-modal textarea, .matching-modal input:not([type="checkbox"]) {
   box-sizing: border-box; width: 100%; min-width: 0; background: var(--bg); color: var(--text);
   border: 1px solid var(--sep); border-radius: 5px; padding: 7px 8px; font: inherit;
 }
+.matching-modal select { width: 100%; }
 .matching-modal textarea { resize: vertical; white-space: pre-wrap; font-family: monospace; }
 .matching-modal input[type="checkbox"] { width: 15px; height: 15px; flex: 0 0 15px; margin: 0; }
 .matching-check { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; line-height: 1.5; }
-.matching-modal button:disabled, .matching-modal input:disabled, .matching-modal select:disabled, .matching-modal textarea:disabled { opacity: .55; cursor: default; }
+.matching-modal button:disabled, .matching-modal input:disabled, .matching-modal textarea:disabled { opacity: .55; cursor: default; }
 .matching-sample-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 12px 0; }
 .matching-sample-grid input:not([type="checkbox"]) { margin-top: 5px; }
 .matching-alert, .matching-notice { border-radius: 6px; padding: 10px 12px; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
@@ -1266,25 +1256,9 @@ button:disabled { cursor: default; }
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 .form-group input:not([type="radio"]):not([type="checkbox"])::placeholder { color: var(--text3); }
-select {
-  appearance: none;
-  -webkit-appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238e8e93' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 8px center;
-  background-size: 10px 6px;
-  padding-right: 28px;
-}
-select::-ms-expand { display: none; }
-.settings-select {
-  height: 30px;
-  border: 1px solid var(--sep);
-  border-radius: 7px;
-  padding: 0 28px 0 10px;
-  background-color: var(--bg);
-  color: var(--text);
-  font: 12px var(--font);
-}
+/* Ordinary selects use the shared .kf-select control; keep no element-wide
+   reset here, otherwise unrelated/third-party selects lose their platform UI. */
+.settings-select.kf-select { min-width: 120px; }
 .form-hint {
   display: block;
   font-size: 11px;
@@ -1466,10 +1440,7 @@ select::-ms-expand { display: none; }
   background: var(--accent-soft); color: var(--accent); white-space: nowrap;
 }
 .paste-target-field { display: flex; flex-direction: column; gap: 4px; }
-.paste-target-field select {
-  padding: 6px 8px; border: 1px solid var(--sep); border-radius: 6px;
-  background: var(--bg); color: var(--text); font-size: 12px;
-}
+.paste-target-field select { width: 100%; }
 .paste-target-path { margin: 0; font-size: 11px; color: var(--text3); word-break: break-all; }
 .paste-conflicts { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid var(--red); border-radius: 8px; }
 .paste-conflicts p { margin: 0; font-size: 11px; color: var(--text2); }

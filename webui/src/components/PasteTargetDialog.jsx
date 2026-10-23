@@ -182,7 +182,7 @@ export default function PasteTargetDialog({ intent, libraries, initialTargetId, 
         ) : (
           <label className="paste-target-field">
             <span>{t('topbar.pasteTarget')}</span>
-            <select value={targetId} onChange={(event) => changeTarget(event.target.value)} disabled={busy}>
+            <select className="kf-select" value={targetId} onChange={(event) => changeTarget(event.target.value)} disabled={busy}>
               {candidates.map(lib => (
                 <option key={lib.id} value={lib.id}>{lib.name}</option>
               ))}

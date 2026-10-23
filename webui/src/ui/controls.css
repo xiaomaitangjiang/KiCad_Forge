@@ -1,0 +1,81 @@
+/* Shared single-select control.
+
+   Every ordinary <select> in the desktop UI uses this class. The control keeps
+   native <select> semantics (value/onChange/keyboard/popup); it only replaces
+   the platform chrome, so the popup falls back to the native list whenever
+   appearance: base-select is unavailable. */
+
+.kf-select {
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+  height: 30px;
+  padding: 0 28px 0 8px;
+  font: 13px var(--font);
+  /* 30px border-box minus 2px border; keeps the text vertically centered. */
+  line-height: 28px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+  background-color: var(--input);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238a9295' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 10px 6px;
+  border: 1px solid var(--sep);
+  border-radius: 6px;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+}
+
+.dark .kf-select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23a4afb2' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+.kf-select:hover:not(:disabled) { border-color: var(--text3); }
+
+/* Keep the ring inside the control: plugin sidebars and list panes clip their
+   children, so an outward ring would lose its edges. */
+.kf-select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.kf-select:disabled { opacity: 0.55; cursor: default; }
+.kf-select::-ms-expand { display: none; }
+
+/* Optional enhanced picker where WebView2 exposes the customizable select
+   primitives. The base rule above remains the fallback: no rule here is needed
+   for the control or its popup to stay usable. */
+@supports (appearance: base-select) {
+  .kf-select { appearance: base-select; }
+
+  .kf-select::picker(select) {
+    appearance: base-select;
+    margin-block: 4px;
+    padding: 4px;
+    border: 1px solid var(--sep);
+    border-radius: 6px;
+    background: var(--panel);
+    color: var(--text);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+    max-height: min(320px, 60vh);
+    overflow: auto;
+  }
+
+  /* The shared background arrow is the only arrow; hide the picker icon so
+     the enhanced popup does not display a second one. */
+  .kf-select::picker-icon { display: none; }
+
+  .kf-select option {
+    padding: 5px 8px;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text);
+  }
+  .kf-select option:hover,
+  .kf-select option:focus { background: var(--hover); }
+  .kf-select option:checked { background: var(--accent-soft); color: var(--text); }
+}
