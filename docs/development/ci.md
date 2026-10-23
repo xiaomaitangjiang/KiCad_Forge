@@ -26,7 +26,7 @@ xmake 安装步骤固定使用 3.1.1，关闭 setup-xmake 内置的包缓存。�
 
 - C++：`test_logger`、`test_plugin_manager`、`test_task_service`、`test_launcher`（含 lifecycle）、`test_symbol_hash`、`test_app_window`、`test_service_startup`、`test_data_integrity`。窗口回归实际编译平台窗口与两种心跳回调调用，运行时只检查未打开的窗口；服务启动与数据完整性测试覆盖普通正则匹配和元件库工作流。
 - Linux/Windows 另运行 `test_matching_regex_raii`，用 GNU `--wrap` 注入 PCRE2 编译上下文分配失败。Apple ld 不支持该选项，macOS 不注册这一项，不能据此声称 macOS 跑过同一故障注入测试。
-- Python：`tests.python.test_plugins`、`tests.python.test_lcsc_staging`、`tests.python.test_lcsc_workflow`、`tests.python.test_installer`、`tests.python.test_runtime_assets`、`tests.python.test_repository_layout`。其中两份 LCSC 测试有 22 项离线 staged 协议用例，安装包输入及参数转发有 17 项；资源刷新测试检查缺少源文件、复制失败与路径重定向时保留原输出和源码。布局检查器自身用临时目录验证禁止路径、大小写碰撞和本地链接判断。总数以 unittest 输出为准。Windows 无文件符号链接权限时会跳过对应的一项。旧的 `fetch_and_merge`/插件直接写目标库协议已移除。
+- Python：`tests.python.test_plugins`、`tests.python.test_lcsc_staging`、`tests.python.test_lcsc_workflow`、`tests.python.test_installer`、`tests.python.test_runtime_assets`、`tests.python.test_repository_layout`、`tests.python.test_build_cleanup`。其中两份 LCSC 测试有 22 项离线 staged 协议用例，安装包输入及参数转发有 17 项；资源刷新测试检查缺少源文件、复制失败与路径重定向时保留原输出和源码。布局检查器自身用临时目录验证禁止路径、大小写碰撞和本地链接判断；清理测试验证显式类别、未知包保留、清单指纹和联接边界，并覆盖 POSIX `S_ISLNK` 与 Windows reparse 判断。总数以 unittest 输出为准。Windows 无文件符号链接权限时会跳过对应的一项。旧的 `fetch_and_merge`/插件直接写目标库协议已移除。
 - 目录与本地链接：`python -B scripts/check_repository_layout.py` 检查已跟踪的 `__pycache__`、`.pyc`、编译数据库、构建输出回流，以及旧迁移路径、大小写碰撞和 Markdown/HTML/CSS 本地引用。脚本只用标准库和 `git ls-files`；`docs/AgentDocs` 是被忽略的本地资料，不纳入公开 CI 链接检查。
 - Node：独立的 Ubuntu `frontend` 作业运行 `node --test webui/tests/unit/*.test.js webui/tests/unit/*.test.mjs`；四个平台的 Debug 作业也运行同一组测试，以覆盖平台差异。先生成 SDK 和插件产物，再运行读取产物的测试，不能依赖开发目录残留的 `dist`。
 - Windows Debug：现有 Edge + CDP 浏览器脚本（`webui/tests/browser/`）默认流程、`--types` 及 `--type-matching`，实际运行 LCSC、设置导入、元件类型和匹配规则组件交互，并运行插件原型夹具。不额外下载浏览器或引入测试框架。
@@ -144,10 +144,37 @@ python scripts/build_installer.py --source "build/ci-dist/KiCad_Forge-windows-x6
 AppId、Program Files 安装目录和卸载时保留用户数据库、插件及日志的规则保持不变；实际安装、升级、卸载仍需单独的桌面验收。
 离线输入校验与参数转发回归为 `python -B -m unittest tests.python.test_installer -v`；测试不会运行 Inno 安装程序。
 
+## build 缓存与旧包清理
+
+本机 build 目录可用标准库脚本精确清理，不引入新依赖：
+
+```powershell
+# 默认预览：列出可清理项和保留项，不删除任何文件。
+python scripts/clean_build.py
+
+# 预览指定类别（预览缺省为 all）。
+python scripts/clean_build.py --categories cache,logs
+
+# 明确应用；必须显式指定类别，--yes 跳过交互确认。
+python scripts/clean_build.py --apply --yes --categories cache
+```
+
+`cache` 对应 `build/.build_cache`、`.objs`、`.deps`、`.gens`；`logs` 是 build 根下的日志；`packages` 和 `snapshot` 只处理 `scripts/clean_build_manifest.json` 中逐项核准的条目，未列入清单的包、zip 和 `commit-preparation-*` 快照只报告为 retained，不会被推断为可删。当前 build 中的交付包默认保持不动。
+
+清单每个条目必须给出 `path`、`category`（`packages` 或 `snapshot`）、`purpose`、`data`（`none` 或 `archived`）、`recovery` 和 `tree_sha256`。可用以下命令生成指纹：
+
+```powershell
+python scripts/clean_build.py --fingerprint build/ci-dist/old-package
+```
+
+应用前会重新计算指纹；目标被替换、新增未审核文件、清单缺失或条目无效时拒绝删除。`build/ci-dist` 本身不能作为条目。`packages` 条目可指向 `ci-dist` 下的一个目录或 zip；`snapshot` 条目只能指向 `commit-preparation-*` 目录。
+
+脚本拒绝清理 build 之外的路径、build 根、`build/ci-dist` 根、`mingw`/`dependencies` 及其祖先；build 根、候选根和候选祖先的重解析点直接拒绝，候选内部的符号链接或目录联接只摘除链接本身，不递归到目标。`--apply` 未显式提供 `--categories`、`all` 与其他类别混用、或出现未知类别时，均以非零退出且不删除任何候选。删除 cache 后重新运行 `xmake build` 会重建对象、依赖记录和 `compile_commands.json`。行为回归为 `python -B -m unittest tests.python.test_build_cleanup -v`。
+
 ## English
 
 The workflow builds and tests Debug and Release on Linux x64, Windows x64, macOS ARM64 and macOS x64.
-It runs seven C++ regression executables on all platforms, plus the GNU-linker-only PCRE2 RAII fault injection executable on Linux/Windows, the offline Python regressions (including installer input/argument checks, runtime asset staging; file-symlink tests are skipped on Windows without the required privilege), all Node test files including matching-rule regressions, Windows Edge interaction suites, and a relocated-bundle HTTP/SQLite smoke test. The smoke test disables automatic library imports and verifies matching configuration recovery only in its temporary bundle copy.
+It runs seven C++ regression executables on all platforms, plus the GNU-linker-only PCRE2 RAII fault injection executable on Linux/Windows, the offline Python regressions (including installer input/argument checks, runtime asset staging, and build-cleanup manifest/boundary checks; file-symlink tests are skipped on Windows without the required privilege), all Node test files including matching-rule regressions, Windows Edge interaction suites, and a relocated-bundle HTTP/SQLite smoke test. The smoke test disables automatic library imports and verifies matching configuration recovery only in its temporary bundle copy.
 PCRE2 10.47 archives and source checksums are committed; native static SDKs use upstream CMake. Other dependency recipes are vendored from a fixed official xmake-repo commit with source SHA256 values. Configuration explicitly prepares dependencies before the build. Linux/macOS CI has not been executed from this Windows workspace; the matrix is the verification path, not evidence that those jobs have already passed.
 Desktop rendering and native dialogs are not covered by the headless test.
 

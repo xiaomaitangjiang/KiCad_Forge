@@ -43,6 +43,8 @@ P1 的文件与数据库一致性测试覆盖可捕获的 I/O、SQL 和提交失
 
 `python -B -m unittest tests.python.test_repository_layout -v` 检查目录规则和本地链接检查器本身；`python -B scripts/check_repository_layout.py` 是 CI 入口，拦截生成物回流、旧迁移路径、大小写碰撞和失效的 Markdown/HTML/CSS 本地引用。AgentDocs 属于本地忽略资料，不进入公开 CI 的链接检查。
 
+`python -B -m unittest tests.python.test_build_cleanup -v` 检查 `scripts/clean_build.py` 的预览/应用边界：`--apply` 必须显式指定类别，`all` 不能与其他类别混用，未知类别不删除；`packages`/`snapshot` 只接受 `scripts/clean_build_manifest.json` 中逐项核准且指纹匹配的条目，未知包/zip/快照保留；拒绝 build 之外、build 根、`ci-dist` 根、`mingw`、依赖及其祖先，build 根、候选根和祖先的符号链接/目录联接拒绝，候选内部链接只摘除本身。链接判断同时覆盖 POSIX `S_ISLNK` 和 Windows reparse 属性；POSIX 用真实符号链接，Windows 用 junction 模拟 POSIX stat。默认执行 `python scripts/clean_build.py` 只打印清单；`--apply --yes --categories cache` 才会删除。
+
 `test_data_integrity --test-case="import progress*"` 检查解析、写入、跳过、回滚和取消时的内存任务进度；持有数据库会话时仍能读到快照。`node webui/tests/browser/run-lcsc-browser.mjs --import-progress` 定向运行真实导入弹窗，检查串行轮询、失败重试、阶段切换和卸载保护；这些场景也包含在完整 `--types` 检查中。
 
 `test_data_integrity --test-case="U08*"` 检查符号/封装路径类型、单符号文件、扫描错误、封装解析取消、轻量关联查询、正确自动关系不重写和并发手动导入拒绝。`node webui/tests/browser/run-lcsc-browser.mjs --settings-import` 检查设置导入的忙态、防重复、错误恢复、路径说明以及关闭窗口后的回包；同样包含在 `--types` 中。
