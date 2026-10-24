@@ -1,0 +1,12 @@
+Package: kicad-forge
+Version: {version}
+Architecture: amd64
+Section: electronics
+Priority: optional
+Maintainer: {maintainer}
+Homepage: https://github.com/xiaomaitangjiang/KiCad_Forge
+Depends: {depends}
+Recommends: git
+Installed-Size: {installed_size}
+Description: KiCad component library manager
+ Manage KiCad component libraries with bundled Python plugins.

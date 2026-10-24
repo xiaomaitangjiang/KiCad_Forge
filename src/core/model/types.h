@@ -102,6 +102,8 @@ struct LibraryMeta {
     std::filesystem::path file_path;
     std::string description;
     std::string component_library_id;
+    /// 已落盘来源的规范路径标识（见 core/db/source_key.h）；未落盘的虚拟库为空
+    std::string source_key;
     int symbol_count{0};
     int footprint_count{0};
 };

@@ -2,11 +2,14 @@
 #include "core/repo/repositories.h"
 #include "interface/api/api_server.h"
 #include "interface/api/routes.h"
+#include "interface/api/type_matching.h"
 #include "interface/manager/setup/launcher.hpp"
 #include "interface/service/classification/service.h"
 #include "interface/service/correspondence/service.h"
+#include "interface/service/editing/history.h"
 #include "interface/service/library/service.h"
 #include "plugin/plugin_manager.h"
+#include "plugin/task_service.h"
 #include "util/logger.h"
 #include "util/platform.h"
 #include "util/result.h"
@@ -24,6 +27,13 @@ using json = nlohmann::json;
 
 namespace kforge::api
 {
+
+// Implemented in routes.cpp. Declared here because routes.h is outside this
+// change's write scope; ApiServer owns the TaskService and hands it to the
+// route group before the HTTP server starts.
+void register_plugin_task_routes(httplib::Server& srv, plugin::TaskService* tasks,
+                                 plugin::PluginManager* plugins, storage::Database& db,
+                                 util::ConfigStore* config);
 
 namespace
 {
@@ -62,7 +72,7 @@ bool is_local_host(const std::string& host)
 
 std::string find_webui_dir()
 {
-    auto exe_dir = kforge::util::get_exe_dir();
+    auto exe_dir = kforge::util::get_resource_dir();
     auto pkg_dist = exe_dir / "webui" / "dist";
     if (std::filesystem::exists(pkg_dist / "index.html"))
     {
@@ -90,15 +100,22 @@ ApiServer::ApiServer(ApiServer&& other) noexcept
       thread_(std::move(other.thread_)),
       db_(other.db_),
       plugins_(other.plugins_),
+      tasks_(std::move(other.tasks_)),
       config_(other.config_),
       import_manager_(other.import_manager_),
       shutting_down_(false),   // atomic 不可移动 —— 标量重置
-      last_heartbeat_(0)
+      last_heartbeat_(0),
+      closed_(other.closed_.exchange(true, std::memory_order_acq_rel))
 {
 }
 ApiServer::~ApiServer()
 {
-    // 幂等兜底：launcher destroy 已调 shutdown；析构再调一次无害
+    // launcher destroy()/move 已完成 — dependencies may already be gone,
+    // do NOT touch anything (static store destruction order is unspecified)
+    if (closed_.load(std::memory_order_acquire))
+    {
+        return;
+    }
     try
     {
         shutdown();
@@ -131,10 +148,15 @@ util::Result<void> ApiServer::destroy()
 util::Result<void> ApiServer::init(storage::DbService& db, util::ConfigStore* cfg,
                                    plugin::PluginManager* plugins, ImportManager* imports)
 {
+    closed_.store(false, std::memory_order_release);
     db_ = db.db.get();
     config_ = cfg;
     plugins_ = plugins;
     import_manager_ = imports;
+
+    // TaskService owns async plugin actions and admission; it is created before
+    // route registration so handlers can be wired to the same instance.
+    tasks_ = std::make_unique<plugin::TaskService>(config_);
 
     setup_routes();
     srv_->set_mount_point("/", find_webui_dir());
@@ -208,6 +230,12 @@ util::Result<void> ApiServer::init(storage::DbService& db, util::ConfigStore* cf
             });
     }
     kforge::util::log_info{}("Server bound to 127.0.0.1:{}", port_);
+
+    // Expose the host API to plugin subprocesses (search APIs etc.)
+    if (plugins_)
+    {
+        plugins_->set_api_port(port_);
+    }
     return {};
 }
 
@@ -221,25 +249,29 @@ void ApiServer::wait()
 // 停 HTTP 服务与线程；依赖的导入/插件由各自服务销毁（此处仅作为 ApiServer 依赖的连带停止）
 void ApiServer::shutdown()
 {
-    kforge::util::log_info{}("Shutdown: stopping plugins...");
-    if (plugins_)
+    // Claim cleanup once, while Launcher still owns the dependent services.
+    // An unopened instance (including skipped startup) has nothing to stop.
+    if (closed_.exchange(true, std::memory_order_acq_rel))
+        return;
+
+    // Close admission and converge all tasks while the service is still alive;
+    // HTTP handlers may still be reading task snapshots here.
+    if (tasks_)
     {
         try
         {
-            plugins_->shutdown_all();
+            tasks_->shutdown_all();
         }
         catch (const std::exception& e)
         {
-            kforge::util::log_error{}("Plugin shutdown error: {}", e.what());
-        }
-        catch (...)
-        {
-            kforge::util::log_error{}("Plugin shutdown error: unknown.Please send log to us");
+            kforge::util::log_error{}("Task service shutdown error: {}", e.what());
         }
     }
 
+    // Stop HTTP before dropping plugin/task services: no route may observe a
+    // released object through the file-local dependency bridges.
     kforge::util::log_info{}("Shutdown: stopping HTTP server...");
-    if (srv_)  // 移动构造后源对象 srv_ 为 null（析构兜底时跳过）
+    if (srv_)
     {
         srv_->stop();
     }
@@ -261,6 +293,26 @@ void ApiServer::shutdown()
         }
         thread_.reset();
     }
+
+    kforge::util::log_info{}("Shutdown: stopping plugins...");
+    if (plugins_)
+    {
+        try
+        {
+            plugins_->shutdown_all();
+        }
+        catch (const std::exception& e)
+        {
+            kforge::util::log_error{}("Plugin shutdown error: {}", e.what());
+        }
+        catch (...)
+        {
+            kforge::util::log_error{}("Plugin shutdown error: unknown.Please send log to us");
+        }
+    }
+
+    // HTTP workers are gone and no route can acquire the task service now.
+    tasks_.reset();
 
     if (import_manager_)
     {
@@ -326,14 +378,16 @@ void ApiServer::serve_plugin_icon(const std::filesystem::path& plugin_dir,
 void ApiServer::setup_routes()  // NOLINT(readability-function-cognitive-complexity)
 {
     // ---- Route groups (extracted to src/api/routes.cpp) ----
-    register_library_routes(*srv_, db_->handle(),
+    register_library_routes(*srv_, *db_,
                             import_manager_ ? import_manager_->orchestrator() : nullptr);
-    register_symbol_routes(*srv_, db_->handle());
-    register_plugin_routes(*srv_, plugins_);
-    register_settings_routes(*srv_, db_->handle(), import_manager_, config_);
-    register_type_routes(*srv_, db_->handle());
-    register_status_routes(*srv_, db_->handle());
-    register_classify_routes(*srv_, db_->handle(), import_manager_);
+    register_symbol_routes(*srv_, *db_);
+    register_library_manifest_routes(*srv_, *db_);
+    register_plugin_routes(*srv_, plugins_, *db_);
+    register_plugin_task_routes(*srv_, tasks_.get(), plugins_, *db_, config_);
+    register_settings_routes(*srv_, *db_, import_manager_, config_);
+    register_type_routes(*srv_, *db_);
+    register_status_routes(*srv_, *db_);
+    register_classify_routes(*srv_, *db_, import_manager_);
 
     // ---- Heartbeat + import status (need ApiServer internals) ----
     srv_->Get("/api/status",
@@ -342,11 +396,19 @@ void ApiServer::setup_routes()  // NOLINT(readability-function-cognitive-complex
                  last_heartbeat_.store(std::chrono::steady_clock::now().time_since_epoch().count(),
                                        std::memory_order_relaxed);
                  json j;
-                 storage::SymbolRepository sr(db_->handle());
-                 j["symbols"] = sr.count();
-                 storage::FootprintRepository fr(db_->handle());
-                 j["footprints"] = fr.count();
                  j["ok"] = true;
+                 // 心跳不能被长事务拖住：限时取会话，拿不到就只回存活
+                 if (auto session = db_->try_session(std::chrono::milliseconds(250)))
+                 {
+                     storage::SymbolRepository sr(*session);
+                     j["symbols"] = sr.count();
+                     storage::FootprintRepository fr(*session);
+                     j["footprints"] = fr.count();
+                 }
+                 else
+                 {
+                     j["busy"] = true;
+                 }
                  r.set_content(j.dump(), "application/json");
              });
 
@@ -354,13 +416,19 @@ void ApiServer::setup_routes()  // NOLINT(readability-function-cognitive-complex
              [this](const httplib::Request&, httplib::Response& r)
              {
                  json j;
-                 j["importing"] = import_manager_ ? import_manager_->is_running() : false;
-                 storage::SymbolRepository sr(db_->handle());
-                 j["symbols"] = sr.count();
-                 storage::FootprintRepository fr(db_->handle());
-                 j["footprints"] = fr.count();
-                 storage::Model3DRepository mr(db_->handle());
-                 j["models"] = mr.count();
+                 j["importing"] = import_manager_ && import_manager_->is_running();
+                 // This endpoint describes the current task, entirely from memory.
+                 // Database totals belong to /api/status and must not delay progress.
+                 if (auto* orchestrator = import_manager_ ? import_manager_->orchestrator() : nullptr)
+                 {
+                     const auto progress = orchestrator->progress_snapshot();
+                     j["progress"] = {{"phase", progress.phase},
+                                      {"completed", progress.completed}, {"total", progress.total}};
+                 }
+                 else
+                 {
+                     j["progress"] = {{"phase", "idle"}, {"completed", 0}, {"total", 0}};
+                 }
                  r.set_content(j.dump(), "application/json");
              });
 
@@ -372,33 +440,15 @@ void ApiServer::setup_routes()  // NOLINT(readability-function-cognitive-complex
               });
 
     // ---- Classify / Check / Automatch (need Database*) ----
+    const auto matching_context = configured_type_matching_context(*db_);
     srv_->Post("/api/classify",
-              [this](const httplib::Request&, httplib::Response& r)
+              [matching_context](const httplib::Request&, httplib::Response& r)
               {
-                  services::ClassificationService svc(db_);
-                  auto summary = svc.classify_all();
-                  json j;
-                  if (!summary)
-                  {
-                      j["error"] = summary.error().format_message();
-                  }
-                  else
-                  {
-                      j["total"] = summary->total;
-                      j["matched"] = summary->matched;
-                      j["type_updated"] = summary->type_updated;
-                      json arr = json::array();
-                      for (auto& res : summary->results)
-                      {
-                          json o;
-                          o["name"] = res.symbol_name;
-                          o["library"] = res.target_library;
-                          o["type"] = res.type_name;
-                          o["confidence"] = res.confidence;
-                          arr.push_back(o);
-                      }
-                      j["results"] = arr;
-                  }
+                  auto j = matching_context ? type_matching_classify(*matching_context)
+                      : type_matching_error(matching_context.error().format_message());
+                  if (j.value("ok", false) && j.contains("summary") &&
+                      j["summary"].value("type_updated", 0) > 0)
+                      services::note_successful_edit();
                   r.set_content(j.dump(), "application/json");
               });
 
@@ -448,6 +498,13 @@ void ApiServer::setup_routes()  // NOLINT(readability-function-cognitive-complex
                   auto id = req.matches[1];
                   services::CorrespondenceService svc(db_);
                   auto sug = svc.suggest_matches_for(id, 10);
+                  if (!sug)
+                  {
+                      r.status = sug.error().kind() == util::Error::Kind::NotFound ? 404 : 500;
+                      r.set_content(json{{"error", sug.error().format_message()}}.dump(),
+                                    "application/json");
+                      return;
+                  }
                   json arr = json::array();
                   if (sug)
                   {

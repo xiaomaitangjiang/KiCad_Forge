@@ -8,6 +8,7 @@
 
 - [开发流程](#开发流程)
 - [代码规范](#代码规范)
+- [提交规范](#提交规范)
 - [提交前检查清单](#提交前检查清单)
 - [架构约定](#架构约定)
 - [目录结构](#目录结构)
@@ -17,11 +18,12 @@
 ### 开发流程
 
 1. Fork 仓库并 clone
-2. 创建 feature 分支：`git checkout -b feature/xxx`
+2. 创建分支：`git checkout -b xxx/xxx`
 3. 安装依赖（见 [README 快速开始](README.md#快速开始)）
 4. 遵循下方规范提交修改
 5. Debug + Release 均通过编译
-6. 提交 PR，附带清晰的改动说明
+6. 补全单元测试
+7. 提交 PR，附带清晰的改动说明
 
 ### 代码规范
 
@@ -30,9 +32,8 @@
 - C++23，clang（MSYS2 MinGW 目标）
 - 文件名 `snake_case`，类型名 `PascalCase`，方法名 `snake_case`
 - `#pragma once`，不用 include guard
-- `util::Result<T>` 处理可失败操作，核心逻辑不抛异常
+- `util::Result<T>` 处理可能失败的操作，核心逻辑不抛异常
 - 优先用 `std::filesystem::path`，不用字符串拼接路径
-- 不为第三方库做兼容修改
 
 **前端（React）**
 
@@ -43,47 +44,65 @@
 
 **构建**
 
-- `xmake` 管理 C++ 编译，`npm`/Vite 管理前端
-- `before_build` 检查 SVG 是否更新，按需重生成 `app.ico`
+- `xmake` 管理 C++ 编译
+- `npm`/Vite 管理前端
+- 常规构建使用已提交的 `resources/icons/app.ico`；修改图标素材后手动运行 `scripts/svg2ico.py`
+- 使用 Python 3.12、Node.js 24、xmake 3.0.9+；前端依赖用 `npm ci` 安装，PCRE2 与锁定依赖准备见 [docs/development/ci.md](docs/development/ci.md#本地构建)
 - `after_build` 复制 webui、plugins、DLL 到输出目录
+
+### 提交规范
+
+采用 Conventional Commits，解释性文字以中文为主，文件名、API、SDK 和框架名保留实际名称。每个分点独立说明问题或新增功能、关键实现及效果，可以使用多句话讲清楚，不为压缩字数省掉必要信息。类型选择、消息格式和示例以 [Git 提交规范](docs/specs/COMMIT_CONVENTIONS.md) 为准。
 
 ### 提交前检查清单
 
 1. `xmake build` 两种模式均编译通过
 2. `npm run build` 无警告
 3. 无新增编译警告
-4. 冒烟测试：启动 → 窗口正常显示 → 心跳正常 → 关闭窗口后进程退出
-
-### 架构约定
-
-| 约定 | 说明 |
-|---|---|
-| **便携优先** | 运行时数据在 `./data/`（exe 同级目录），回退 `%APPDATA%/KiCad_Forge/data/` |
-| **管道导入** | `ImportPipeline(db) \| symbols_from{...} \| footprints_from{...} \| models_from{...} \| execute` |
-| **CRTP 平台** | `AppWindow<Derived>` 编译期派发 |
-| **心跳生命周期** | 前端每 1s 调用 `/api/status`，后端 30s 无心跳则退出 |
-| **插件隔离** | 插件以独立 Python 进程运行 |
-| **插件发现** | 启动时扫描 `exe_dir/plugins/`，`manifest.json` 驱动全部 UI |
+4. 单元测试无报错
 
 ### 目录结构
 
 ```
-src/
-  api/                  HTTP 路由
-  core/                 领域模型
-  sexpr/                S-Expression 解析
-  parser/               KiCad 文件解析
-  storage/              SQLite 数据库
-  classifier/           分类规则
-  correspondence/       Symbol↔Footprint↔3D 追踪
-  services/             业务逻辑
-  plugin/               插件基础设施
-  platform/             跨平台窗口（CRTP）
-  util/                 工具类
-plugins/                插件包
-webui/                  前端
-resources/              Windows .rc + app.ico
-scripts/                构建辅助脚本
+KiCad_Forge
+├── config
+├── docs
+├── dist/installers
+├── packaging/windows
+├── plugins
+├── resources
+├── scripts
+├── sql
+├── src
+│   ├── classifier
+│   ├── core
+│   │   ├── db
+│   │   ├── io
+│   │   │   ├── parser
+│   │   │   └── sexpr
+│   │   │       ├── dom
+│   │   │       └── token
+│   │   ├── model
+│   │   └── repo
+│   ├── correspondence
+│   ├── interface
+│   │   ├── api
+│   │   ├── manager
+│   │   │   ├── binding
+│   │   │   └── setup
+│   │   └── service
+│   │       ├── classification
+│   │       ├── correspondence
+│   │       ├── import
+│   │       └── library
+│   ├── platform
+│   ├── plugin
+│   ├── third_party
+│   └── util
+│       ├── container
+│       └── template
+├── tests
+└── webui
 ```
 
 ### 添加插件
@@ -94,14 +113,13 @@ scripts/                构建辅助脚本
    - `manifest.json`（id、name、icon、actions 等）
    - `icon.svg`（24×24 SVG）
    - `plugin.py`（接收 `action` + JSON args，输出 JSON 到 stdout）
-2. 支持的字段类型：`text`、`library_picker`、`select`、`file_picker`
+2. 通用表单支持 `text`、`library_picker`；LCSC 专用的 `lcsc_import` 模板使用 `component_library_picker` 和 `footprint_choice`，完整示例见 [README 插件系统](README.md#插件系统)
 3. 构建——`after_build` 自动复制 `plugins/`
 
 ### 不应提交的内容
 
 - `build/` 构建产物
 - `*.db`、`*.db-wal`、`*.db-shm` 运行时数据库
-- `resources/app.ico`（构建时自动生成）
 - IDE 文件（`.idea/`、`*.user`）
 - DLL 和 exe 等二进制文件
 
@@ -113,6 +131,7 @@ scripts/                构建辅助脚本
 
 - [Workflow](#workflow)
 - [Code Conventions](#code-conventions)
+- [Commit Messages](#commit-messages)
 - [Pre-submit Checklist](#pre-submit-checklist)
 - [Architecture Conventions](#architecture-conventions)
 - [Directory Structure](#directory-structure)
@@ -123,10 +142,14 @@ scripts/                构建辅助脚本
 
 1. Fork & clone
 2. Branch: `git checkout -b feature/xxx`
-3. Install dependencies (see [README Quick Start](README.md#quick-start))
+3. Install dependencies (see [README Quick Start](docs/README.en.md#quick-start))
 4. Follow conventions below
 5. Both debug & release build cleanly
 6. Submit a PR with a clear description
+
+### Commit Messages
+
+Use Conventional Commits with Chinese explanatory text while preserving actual file names, API and SDK identifiers, and framework names. Each numbered item should describe one change, its key implementation, and its effect. Use multiple sentences when needed for clarity; do not omit necessary context to shorten the message. See the [commit specification](docs/specs/COMMIT_CONVENTIONS.md) for the full rules and examples.
 
 ### Code Conventions
 
@@ -149,7 +172,8 @@ scripts/                构建辅助脚本
 **Build**
 
 - `xmake` for C++, `npm`/Vite for frontend
-- `before_build` regenerates `app.ico` when source SVG changes
+- Use Python 3.12, Node.js 24, and xmake 3.0.9+; install frontend dependencies with `npm ci`. See [docs/development/ci.md](docs/development/ci.md#本地构建) for PCRE2 and locked dependency preparation
+- Normal builds use the tracked `app.ico`; run `scripts/svg2ico.py` manually when changing the artwork
 - `after_build` copies webui + plugins + DLLs to output
 
 ### Pre-submit Checklist
@@ -166,7 +190,7 @@ scripts/                构建辅助脚本
 | **Portable-first** | Runtime data at `./data/`, fallback `%APPDATA%/KiCad_Forge/data/` |
 | **Pipeline import** | `ImportPipeline(db) \| symbols_from{...} \| footprints_from{...} \| models_from{...} \| execute` |
 | **CRTP platform** | `AppWindow<Derived>` compile-time dispatch |
-| **Heartbeat lifecycle** | Frontend pings `/api/status` every 1s; server exits after 30s of silence |
+| **Heartbeat lifecycle** | Frontend pings `/api/status` every 1s; the fallback timeout is 120s and is suspended while the Windows window is minimized |
 | **Plugin isolation** | Plugins run as separate Python processes |
 | **Plugin discovery** | `exe_dir/plugins/` scanned at startup; `manifest.json` drives all UI |
 
@@ -187,7 +211,8 @@ src/
   util/                 Utilities
 plugins/                Plugin bundles
 webui/                  Frontend
-resources/              Windows .rc + app.ico
+resources/              icons, branding and licenses
+packaging/windows/      Windows .rc, resource.h and Inno Setup script
 scripts/                Build helpers
 ```
 
@@ -196,14 +221,13 @@ scripts/                Build helpers
 Reference: [plugins/lcsc_import/](plugins/lcsc_import/)
 
 1. Create `plugins/<name>/` with `manifest.json`, `icon.svg`, `plugin.py`
-2. Supported field types: `text`, `library_picker`, `select`, `file_picker`
+2. Generic forms support `text` and `library_picker`. The dedicated LCSC `lcsc_import` template uses `component_library_picker` and `footprint_choice`; see the [README plugin example](docs/README.en.md#plugin-system)
 3. Build — `after_build` copies `plugins/` automatically
 
 ### What Not to Commit
 
 - `build/` directory
 - `*.db`, `*.db-wal`, `*.db-shm`
-- `resources/app.ico` (auto-generated)
 - IDE files (`.idea/`, `*.user`)
 - DLL and exe binaries
 

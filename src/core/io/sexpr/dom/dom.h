@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -9,8 +10,13 @@ namespace kforge::sexpr {
 
 /// A node in the S-expression DOM tree — zero-copy into source buffer.
 ///
-/// All string fields are string_views pointing into the source text.
-/// The source buffer MUST outlive the DOM tree.
+/// Atom values and property keys/values are string_views pointing into the
+/// source text; the source buffer MUST outlive the DOM tree.
+///
+/// The node type is the exception: derived types ("line:at" 这类由
+/// 「键 + 子节点类型」拼出来的名字) exist nowhere in the source, so the node
+/// OWNS the type text. type() still returns a string_view, but it points into
+/// the node itself and stays valid as long as the node lives.
 class DomNode {
 public:
     using Ptr = std::unique_ptr<DomNode>;
@@ -20,6 +26,7 @@ public:
 
     // --- Type ---
     std::string_view type() const { return type_; }
+    // 复制语义：调用方可以传临时拼接出来的派生类型，节点自己持有文本
     void set_type(std::string_view t) { type_ = t; }
 
     // --- Atom value (for leaf atoms in property position) ---
@@ -84,7 +91,7 @@ public:
     }
 
 private:
-    std::string_view type_;
+    std::string type_;  // 拥有文本：派生类型不在源缓冲里，不能只存 view
     bool is_atom_{false};
     std::string_view atom_value_;
     std::vector<std::pair<std::string_view, std::string_view>> properties_;

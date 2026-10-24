@@ -1,0 +1,90 @@
+/* Plugin slots keep the default layout untouched when empty. */
+.plugin-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 6px 8px 0;
+  border-bottom: 1px solid var(--sep);
+  flex-wrap: wrap;
+}
+.plugin-tabs button {
+  border: 0;
+  background: transparent;
+  color: var(--text2);
+  padding: 5px 9px;
+  font-size: 12px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+.plugin-tabs button.active {
+  color: var(--text);
+  border-bottom-color: var(--red);
+}
+.plugin-context-menu {
+  z-index: 80;
+  min-width: 150px;
+  padding: 5px;
+  background: var(--panel);
+  border: 1px solid var(--sep);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px #0004;
+}
+.plugin-context-menu > * {
+  padding: 7px 9px;
+  border-radius: 5px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.plugin-context-menu > *:hover {
+  background: var(--hover);
+}
+/* Built-in edit menu: same surface as the plugin context menu, keyboard
+   reachable items with shortcut labels and a disabled reason in the tooltip. */
+.context-menu {
+  z-index: 90;
+  min-width: 208px;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--sep);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px #0004;
+}
+.context-menu-title {
+  padding: 6px 9px;
+  font-size: 10.5px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--text2);
+}
+.context-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  width: 100%;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.context-menu-item:hover:not(.disabled) { background: var(--hover); }
+.context-menu-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.context-menu-item.disabled { color: var(--text3); cursor: default; }
+.context-menu-shortcut { color: var(--text3); font-family: var(--mono); font-size: 11px; }
+.context-menu-separator { height: 1px; margin: 4px 6px; background: var(--sep); }
+.plugin-view {
+  height: 100%;
+  overflow: auto;
+  padding: 16px;
+}
+.plugin-view .kf-card,
+.plugin-context-menu .kf-card,
+.card.accessory .kf-card {
+  border: 1px solid var(--sep);
+  border-radius: 10px;
+  padding: 12px;
+}

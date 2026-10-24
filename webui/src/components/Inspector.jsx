@@ -1,24 +1,50 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
-import { api } from '../api'
+import { PluginTabs } from './PluginSlot'
+import { inspectorService } from '../services/inspector'
+import { createInspectorModel } from '../models/inspector.js'
 import SymbolSettings from './SymbolSettings'
 import { SymbolMatchModal } from './Modals'
-
-const TYPE_ICONS = {
-  Resistor:'⊟',Capacitor:'⊞',Inductor:'◠',Diode:'▷',LED:'☀',
-  Microcontroller:'⬡',Connector:'▣',Crystal:'◇',VoltageRegulator:'▦',
-  Transistor:'△',MOSFET:'△',FPGA:'◰',Memory:'▤',Oscillator:'◆',
-  Fuse:'◎',Switch:'⏣',Relay:'⏻',Jumper:'⌸',TestPoint:'◎',
-}
+import { footprintView, modelView } from '../lib/footprintStatus'
+import { typeColorOf, typeIconOf, typeLabelOf } from '../lib/typeMetadata'
+import { useOverlayLayer } from '../workbench/overlay'
 
 // Fixed-position popover rendered via portal — escapes the .inspector scroll
 // container so it is never clipped. Prefers popping above the anchor row.
-function SearchPopover({ open, anchorEl, query, results, placeholder, onQuery, onSelect, onClose }) {
+// kind='footprint' 时候选按服务端状态显示原因：失效/未检查的一律不可选
+// （选中了宿主也会拒绝，不能先让用户以为能换）；error 是搜索请求的真实错误。
+function SearchPopover({ open, anchorEl, query, results, kind, error, placeholder, onQuery, onSelect, onClose }) {
+  const { t } = useTranslation()
   const popRef = useRef(null)
+  const inputRef = useRef(null)
+  const focusedRef = useRef(false)
   const [pos, setPos] = useState(null)
+  // 搜索浮层进同一浮层栈：Escape 只关它；关闭后焦点回到打开它的字段。
+  const popInStack = useOverlayLayer(onClose, open)
+  useEffect(() => {
+    if (!open || popInStack) return undefined
+    const onKey = (event) => {
+      if (event.key !== 'Escape') return
+      event.stopPropagation()
+      onClose()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [open, popInStack, onClose])
+  useEffect(() => {
+    if (!open) return undefined
+    return () => { if (anchorEl?.isConnected) anchorEl.focus?.() }
+  }, [open, anchorEl])
+  // 首次定位前浮层是 visibility:hidden，autoFocus 在那个阶段拿不到焦点；可见后再聚焦一次。
+  useEffect(() => {
+    if (!open) { focusedRef.current = false; return }
+    if (!pos || focusedRef.current) return
+    focusedRef.current = true
+    inputRef.current?.focus()
+  }, [open, pos])
 
-  const place = () => {
+  const place = useCallback(() => {
     if (!open || !anchorEl) return
     const a = anchorEl.getBoundingClientRect()
     const width = Math.min(360, window.innerWidth - 24)
@@ -34,62 +60,119 @@ function SearchPopover({ open, anchorEl, query, results, placeholder, onQuery, o
     let left = Math.min(a.left, window.innerWidth - width - 16)
     left = Math.max(8, left)
     setPos({ top, left, width, maxHeight: Math.max(160, Math.min(320, maxH)) })
-  }
+  }, [open, anchorEl])
 
   // Re-measure only when the popover's inputs change. Without a dependency
   // array this ran on EVERY render, and place() always setPos()s a fresh
   // object literal → render → effect → setPos → render → … infinite loop
   // (browser freeze / white screen).
-  useLayoutEffect(() => { place() }, [open, anchorEl, query, results])
+  useLayoutEffect(() => { place() }, [place, query, results, error])
   useEffect(() => {
     if (!open || !anchorEl) return
-    const onR = () => place()
-    window.addEventListener('resize', onR)
-    return () => window.removeEventListener('resize', onR)
-  }, [open, anchorEl])
+    window.addEventListener('resize', place)
+    return () => window.removeEventListener('resize', place)
+  }, [open, anchorEl, place])
 
   if (!open) return null
   return createPortal(
     <div className="search-popover" ref={popRef}
       style={pos ? { top: pos.top, left: pos.left, width: pos.width, maxHeight: pos.maxHeight } : { visibility: 'hidden' }}>
       <div className="search-popover-header">
-        <input autoFocus value={query} onChange={e => onQuery(e.target.value)}
+        <input ref={inputRef} autoFocus value={query} onChange={e => onQuery(e.target.value)}
           placeholder={placeholder} className="search-popover-input" />
         <button className="search-popover-close" onClick={onClose}>✕</button>
       </div>
       <div className="search-popover-list">
-        {results.length === 0 && <div className="search-popover-empty">{query.length > 0 ? '—' : '...'}</div>}
-        {results.map(r => (
-          <div key={r.id} className="search-popover-item" onClick={() => onSelect(r)}>
-            <span className="search-popover-name">{r.name}</span>
-            {r.pad_count != null && <span className="search-popover-extra">{r.pad_count}p</span>}
-            {r.format != null && <span className="search-popover-extra">{r.format}</span>}
-          </div>
-        ))}
+        {/* 搜索失败要显示真实错误，不能伪装成「没有候选」 */}
+        {error && <div className="search-popover-error" data-testid="search-popover-error">{error}</div>}
+        {!error && results.length === 0 && <div className="search-popover-empty">{query.length > 0 ? '—' : '...'}</div>}
+        {results.map(r => {
+          // 封装候选只在服务端说 available 时可选；缺少状态=未检查，也不是可用
+          const state = kind === 'footprint' ? footprintView(r) : null
+          const selectable = state === null || state.available
+          return (
+            <div key={r.id}
+              className={`search-popover-item${selectable ? '' : ' disabled'}`}
+              data-status={state ? state.status : undefined}
+              data-selectable={state ? (selectable ? 'true' : 'false') : undefined}
+              onClick={() => selectable && onSelect(r)}>
+              <span className="search-popover-name">{r.name}</span>
+              {r.pad_count != null && <span className="search-popover-extra">{r.pad_count}p</span>}
+              {r.format != null && <span className="search-popover-extra">{r.format}</span>}
+              {state && !state.available && (
+                <span className={`status-note ${state.tone}`}>
+                  {t(state.labelKey)}{state.reasonKey ? `（${t(state.reasonKey)}）` : ''}
+                </span>
+              )}
+            </div>
+          )
+        })}
       </div>
     </div>,
     document.body)
 }
 
-export default function Inspector({ selected, classify, onDeleteSymbol, onRefresh }) {
+export default function Inspector({ selected, selectionCount = 0, onClearSelection, classify, onDeleteSymbol, onRefresh, toastMsg, typeMap, workspaceId }) {
   const { t } = useTranslation()
-  const [picker, setPicker] = useState(null) // 'footprint' | 'model' | null
-  const [pickerAnchor, setPickerAnchor] = useState(null) // triggering row element
-  const [searchQ, setSearchQ] = useState('')
-  const [results, setResults] = useState([])
-  const [binding, setBinding] = useState(null) // null = loading
+  const callbacks = useRef({ onRefresh })
+  callbacks.current = { onRefresh }
+  const [model] = useState(() => createInspectorModel({
+    service: inspectorService,
+    refresh: () => callbacks.current.onRefresh?.(),
+  }))
+  const snapshot = useSyncExternalStore(model.subscribe, model.getSnapshot, model.getSnapshot)
+  const [pickerAnchor, setPickerAnchor] = useState(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [symMatches, setSymMatches] = useState(null) // null = closed
+  const { picker, query: searchQ } = snapshot
+  const binding = snapshot.binding.data
+  const bindingError = snapshot.binding.error
+  const results = snapshot.search.data || []
+  const searchError = snapshot.search.error
+    ? snapshot.search.error.message || t('toast.failedUnknown') : ''
+  const symMatches = snapshot.matchesOpen && snapshot.matches.status !== 'loading'
+    ? snapshot.matches.data || [] : null
 
-  async function loadBinding() {
-    try { const b = await api.getBinding(selected.id); setBinding(b) } catch {}
+  useLayoutEffect(() => {
+    model.select(selected)
+    setPickerAnchor(null)
+    // Clear resources, rather than terminally dispose the model: React's
+    // StrictMode repeats setup after cleanup on this same component instance.
+    return () => { model.select(null) }
+  }, [model, selected])
+
+  function notify(message) {
+    if (toastMsg) toastMsg(message)
+    else alert(message)
+  }
+  function showOutcome(outcome) {
+    if (outcome.status === 'missing-footprint') notify(t('inspector.noFootprintFirst'))
+    else if (outcome.status === 'failed' || outcome.status === 'refresh-failed') {
+      notify(t('toast.failed', { error: outcome.error?.message || t('toast.failedUnknown') }))
+    }
+    return outcome
   }
 
-  // Preload binding whenever the selected symbol changes
-  useEffect(() => {
-    setBinding(null)
-    if (selected) loadBinding()
-  }, [selected?.id])
+  // 多选（ED-023）：集合态只给只读摘要与清除入口；单对象写操作必须指向
+  // 明确的活动对象，不能把“最近点击的对象”当成批量目标。
+  if (selectionCount > 1 || (selectionCount > 0 && !selected)) return (
+    <div className="inspector">
+      <div className="inspector-multi" data-testid="inspector-multi">
+        <h4>{t('inspector.multiTitle', { count: selectionCount })}</h4>
+        <p>{t('inspector.multiHint')}</p>
+        {onClearSelection ? (
+          <button type="button" className="btn" onClick={onClearSelection}>{t('app.clearSelection')}</button>
+        ) : null}
+        {/* 多选时插件仍应拿到兼容的活动对象，而不是整块区域消失（plan §3） */}
+        {selected ? (
+          <PluginTabs slot="inspector.tab" ownerProps={{ workspaceId: workspaceId || null, symbolId: selected.id, binding: null, typeMap }} defaultLabel="详情">
+            <div className="inspector-section">
+              <div className="inspector-row"><span className="inspector-label">{t('inspector.multiActive')}</span><span>{selected.name}</span></div>
+            </div>
+          </PluginTabs>
+        ) : null}
+      </div>
+    </div>
+  )
 
   if (!selected) return (
     <div className="inspector">
@@ -100,97 +183,90 @@ export default function Inspector({ selected, classify, onDeleteSymbol, onRefres
     </div>
   )
 
-  function openPicker(type, ev) {
-    setPicker(type)
-    setPickerAnchor(ev?.currentTarget || null)
-    setSearchQ('')
-    setResults([])
-    if (type === 'footprint') handleSearch('')
-    else handleModelSearch('')
+  function closePicker() {
+    model.closePicker()
+    setPickerAnchor(null)
   }
+  function openPicker(kind, event) {
+    setPickerAnchor(event?.currentTarget || null)
+    model.openPicker(kind)
+  }
+  function onQuery(query) { model.search(query) }
+  async function onSelect(item) { showOutcome(await model.selectCandidate(item)) }
+  async function onSettingsChanged() { showOutcome(await model.refresh()) }
+  async function findMatches() { showOutcome(await model.findMatches()) }
+  async function pickMatch(item) { showOutcome(await model.pickMatch(item)) }
 
-  async function handleSearch(q) {
-    setSearchQ(q)
-    const near = binding?.footprint_name || selected.footprint || ''
-    try { const r = await api.searchFootprints(q, near); setResults(r || []) } catch { setResults([]) }
-  }
-
-  async function handleModelSearch(q) {
-    setSearchQ(q)
-    const near = binding?.model_name || ''
-    try { const r = await api.searchModels(q, near); setResults(r || []) } catch { setResults([]) }
-  }
-
-  function onQuery(q) {
-    if (picker === 'footprint') handleSearch(q)
-    else handleModelSearch(q)
-  }
-
-  async function onSelect(item) {
-    try {
-      if (picker === 'footprint') {
-        await api.bindFootprint(selected.id, item.id)
-      } else {
-        // Bind the model to the footprint linked to this symbol
-        const b = binding || await api.getBinding(selected.id)
-        if (!b.footprint_id) {
-          alert(t('inspector.noFootprintFirst'))
-          return
-        }
-        await api.bindModel(b.footprint_id, item.id)
-      }
-      setPicker(null)
-      await loadBinding()
-      if (onRefresh) onRefresh()
-    } catch {}
-  }
-
-  async function onSettingsChanged() {
-    await loadBinding()
-    if (onRefresh) onRefresh()
-  }
-
-  // Lazy per-symbol match suggestions — computed only when clicked
-  async function findMatches() {
-    try { const m = await api.symbolMatches(selected.id); setSymMatches(m || []) }
-    catch { setSymMatches([]) }
-  }
-
-  async function pickMatch(fp) {
-    try {
-      await api.bindFootprint(selected.id, fp.footprint_id)
-      setSymMatches(null)
-      await loadBinding()
-      if (onRefresh) onRefresh()
-    } catch {}
-  }
+  // 身份是 type_id（旧响应才回退到 type），展示名/图标/颜色取自同一份类型配置：
+  // 改名不改 ID，重排与改图标都不影响已落库的数据；认不出的历史 ID 原样显示。
+  const typeId = selected.type_id || selected.type
+  const typeIcon = typeIconOf(typeMap, typeId)
+  const typeColor = typeColorOf(typeMap, typeId)
+  const typeLabel = typeLabelOf(typeMap, typeId, selected.type) || 'Unknown'
 
   const locked = !!selected.locked
+  // 存在性只认服务端状态：加载中/请求失败都不显示正常，也不靠 selected.footprint 猜
+  const bindingFailed = !!bindingError
+  const bindingErrorText = bindingError?.message || ''
+  const bindingLoading = snapshot.binding.status === 'loading' || (binding === null && !bindingFailed)
+  const fpState = footprintView(binding || selected, { loading: bindingLoading, failed: bindingFailed })
+  const modelState = modelView(binding || selected, { loading: bindingLoading, failed: bindingFailed })
+  const statusSuffix = (state) => {
+    if (state.loading) return t('footprintStatus.loading')
+    // 失败时带上真实原因（服务端的 DB-DOWN、网络错误……），不能只剩一句通用文案
+    if (state.failed) {
+      return bindingErrorText
+        ? t('footprintStatus.errorWithReason', { error: bindingErrorText })
+        : t('footprintStatus.error')
+    }
+    const reason = state.reasonKey ? `（${t(state.reasonKey)}）` : ''
+    return `${t(state.labelKey)}${reason}`
+  }
+  const footprintText = fpState.available
+    ? (binding?.footprint_name || fpState.reference || t('inspector.notAssigned'))
+    : `${fpState.reference || '—'} · ${statusSuffix(fpState)}`
+  const modelText = modelState.usable
+    ? (binding?.model_name || t('inspector.notLinked'))
+    : `${binding?.model_name || t('inspector.notLinked')} · ${statusSuffix(modelState)}`
   return (
     <div className="inspector">
       <div className="inspector-header">
-        <div className="inspector-icon">{TYPE_ICONS[selected.type] || '○'}</div>
-        <div><h4>{selected.name}</h4><div className="inspector-type">{selected.type || 'Unknown'}</div></div>
+        <div className="inspector-icon" aria-hidden="true"
+          style={typeColor ? { color: typeColor } : undefined}>{typeIcon}</div>
+        <div><h4>{selected.name}</h4><div className="inspector-type" data-testid="inspector-type">{typeLabel}</div></div>
         <button className="inspector-gear" onClick={() => setSettingsOpen(true)} disabled={locked}
           title={t('inspector.settings')}>⚙</button>
       </div>
       {locked && (
         <div className="inspector-locked">🔒 {t('inspector.lockedHint')}</div>
       )}
+      <PluginTabs slot="inspector.tab" ownerProps={{ workspaceId: workspaceId || null, symbolId: selected.id, binding, typeMap }} defaultLabel="详情">
       <div className="inspector-section">
         {[
-          ['footprint', binding?.footprint_name || selected.footprint || t('inspector.notAssigned'),
+          ['footprint', footprintText,
            locked ? undefined : (ev) => openPicker('footprint', ev),
-           (binding?.footprint_name || selected.footprint) ? 'ok' : 'warn'],
-          ['3dModel', binding === null ? '…' : (binding.model_name || `⚠ ${t('inspector.notLinked')}`),
-           locked ? undefined : (ev) => openPicker('model', ev), binding?.model_name ? 'ok' : 'warn'],
+           fpState.available ? 'ok' : (fpState.loading || fpState.failed ? 'unknown' : 'bad'),
+           `fp-state-${fpState.status}`],
+          ['3dModel', modelText,
+           locked ? undefined : (ev) => openPicker('model', ev),
+           modelState.usable ? 'ok' : (modelState.status === 'loading' || modelState.status === 'error' ? 'unknown' : 'bad'),
+           `model-state-${modelState.status}`],
           ['pinCount', selected.pins || '—'],
           ['mpn', selected.mpn || '—'],
           ['value', selected.value || '—'],
-        ].map(([key, val, onClick, cls]) => (
+        ].map(([key, val, onClick, cls, testid]) => (
           <div className="field" key={key}>
             <label>{t(`inspector.${key}`)}</label>
             <div className={`val ${cls || ''} ${onClick ? 'wrap' : ''}`}
+              data-testid={testid}
+              tabIndex={onClick ? 0 : undefined}
+              role={onClick ? 'button' : undefined}
+              onKeyDown={onClick ? (event) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return
+                event.preventDefault()
+                onClick(event)
+              } : undefined}
+              data-status={key === 'footprint' ? fpState.status : (key === '3dModel' ? modelState.status : undefined)}
               style={{ fontSize: (key === 'mpn' || key === 'value' || key === 'footprint' || key === '3dModel') ? 12 : undefined,
                       cursor: onClick ? 'pointer' : undefined,
                       opacity: locked && onClick ? 0.5 : undefined }}
@@ -206,30 +282,41 @@ export default function Inspector({ selected, classify, onDeleteSymbol, onRefres
         anchorEl={pickerAnchor}
         query={searchQ}
         results={results}
+        kind={picker}
+        error={searchError}
         placeholder={picker === 'footprint' ? t('inspector.searchFootprint') : t('inspector.searchModel')}
         onQuery={onQuery}
         onSelect={onSelect}
-        onClose={() => setPicker(null)}
+        onClose={closePicker}
       />
 
       <div className="inspector-section">
         <h5>{t('inspector.quickActions')}</h5>
         <div className="actions">
           <button className="primary" onClick={classify}>{t('toolbar.autoClassify')}</button>
-          {binding && !binding.footprint_name && !selected.footprint && (
+          {!bindingLoading && !fpState.reference && (
             <button onClick={findMatches}>{t('inspector.findFootprint')}</button>
+          )}
+          {/* 未找到/已失效/多个同名来源/检查失败：给一个明确的更换入口 */}
+          {!locked && fpState.canReplace && (
+            <button data-testid="inspector-replace-footprint"
+              onClick={(ev) => openPicker('footprint', ev)}>{t('inspector.replaceFootprint')}</button>
           )}
           <button style={{ color:'var(--red)', borderColor:'var(--red)', opacity: locked ? 0.4 : 1 }}
             onClick={() => onDeleteSymbol(selected)} disabled={locked}>{t('inspector.deleteSymbol')}</button>
         </div>
       </div>
+      </PluginTabs>
 
+      {/* 加载中/请求失败（含真实原因）必须一起传进去：
+          设置弹窗不能拿列表里的旧 available 快照当结论，也不能丢掉失败原因 */}
       <SymbolSettings open={settingsOpen} symbol={selected} binding={binding}
-        onClose={() => setSettingsOpen(false)} onChanged={onSettingsChanged} />
+        bindingLoading={bindingLoading} bindingError={bindingError}
+        onClose={() => setSettingsOpen(false)} onChanged={onSettingsChanged} toastMsg={toastMsg} />
 
       {symMatches !== null && (
         <SymbolMatchModal symbol={selected} matches={symMatches}
-          onClose={() => setSymMatches(null)} onPick={pickMatch} />
+          onClose={model.closeMatches} onPick={pickMatch} />
       )}
     </div>
   )

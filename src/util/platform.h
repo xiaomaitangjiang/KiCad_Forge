@@ -6,6 +6,7 @@
 #include <array>
 #include <cstdlib>
 #include <filesystem>
+#include <stdexcept>
 #include <string>
 
 #ifdef _WIN32
@@ -22,9 +23,12 @@ namespace kforge::util
 inline std::filesystem::path get_exe_dir()
 {
 #ifdef _WIN32
-    std::array<char, MAX_PATH> buf{};
-    GetModuleFileNameA(nullptr, buf.data(), static_cast<DWORD>(buf.size()));
-    return std::filesystem::path(buf.data()).parent_path();
+    std::wstring buf(32768, L'\0');
+    const auto length = GetModuleFileNameW(nullptr, buf.data(), static_cast<DWORD>(buf.size()));
+    if (length == 0 || length >= buf.size())
+        throw std::runtime_error("Cannot resolve the application executable path");
+    buf.resize(length);
+    return std::filesystem::path(buf).parent_path();
 #elif defined(__APPLE__)
     char buf[PATH_MAX];
     uint32_t size = sizeof(buf);
@@ -36,11 +40,29 @@ inline std::filesystem::path get_exe_dir()
 #endif
 }
 
-/// Portable: <exe_dir>/data if it exists, otherwise %APPDATA%/KiCad_Forge/data
-/// (installer mode) or $HOME/.KiCad_Forge.
-inline std::string get_data_dir()
+inline bool is_macos_app_bundle(const std::filesystem::path& exe_dir)
 {
-    auto exe_dir = get_exe_dir();
+    return exe_dir.filename() == "MacOS" && exe_dir.parent_path().filename() == "Contents" &&
+           exe_dir.parent_path().parent_path().extension() == ".app";
+}
+
+/// Immutable assets live in Contents/Resources for an installed macOS app.
+inline std::filesystem::path get_resource_dir(const std::filesystem::path& exe_dir = get_exe_dir())
+{
+    return is_macos_app_bundle(exe_dir) ? exe_dir.parent_path() / "Resources" : exe_dir;
+}
+
+/// A bundled app always uses user data; writing into the app would break
+/// read-only installs and code signatures. Other layouts retain portable data.
+inline std::string get_data_dir(const std::filesystem::path& exe_dir = get_exe_dir())
+{
+    if (is_macos_app_bundle(exe_dir))
+    {
+        const char* home = std::getenv("HOME");
+        if (home == nullptr || *home == '\0')
+            throw std::runtime_error("HOME is required to locate macOS application data");
+        return (std::filesystem::path(home) / "Library/Application Support/KiCad_Forge/data").string();
+    }
     auto portable = exe_dir / "data";
     if (std::filesystem::exists(portable))
     {
@@ -53,6 +75,24 @@ inline std::string get_data_dir()
 #else
     const char* home = std::getenv("HOME");
     return home ? std::string(home) + "/.KiCad_Forge" : "./data";
+#endif
+}
+
+/// Resolve the private interpreter before fork, in the parent process.
+inline std::filesystem::path get_python_executable(const std::filesystem::path& exe_dir = get_exe_dir())
+{
+    if (is_macos_app_bundle(exe_dir))
+        return exe_dir.parent_path() / "Helpers/python/bin/python3";
+#ifdef _WIN32
+    if (std::filesystem::exists(exe_dir / "kforge-distribution.json") ||
+        std::filesystem::is_directory(exe_dir / "runtime/python"))
+        return exe_dir / "runtime/python/python.exe";
+    return "python";
+#else
+    if (std::filesystem::exists(exe_dir / "kforge-distribution.json") ||
+        std::filesystem::is_directory(exe_dir / "runtime/python"))
+        return exe_dir / "runtime/python/bin/python3";
+    return "python3";
 #endif
 }
 

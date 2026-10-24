@@ -1,7 +1,9 @@
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <string_view>
+#include <vector>
 
 #include "core/model/symbol.h"
 #include "core/model/types.h"
@@ -20,10 +22,13 @@ public:
         std::string_view buffer, const std::string& lib_name = "imported");
 
 private:
-    static util::Result<core::Symbol> parse_symbol(const sexpr::DomNode& node);
-    static void parse_property(core::Symbol& sym, const sexpr::DomNode& node);
+    static util::Result<core::Symbol> parse_symbol(const sexpr::DomNode& node,
+                                                  std::uint8_t& declared_fields);
+    static void parse_property(core::Symbol& sym, const sexpr::DomNode& node,
+                                std::uint8_t& declared_fields);
     static void parse_pin(core::Symbol& sym, const sexpr::DomNode& node);
-    static void resolve_extends(core::Library<core::Symbol>& lib);
+    static util::Result<void> resolve_extends(core::Library<core::Symbol>& lib,
+                                               const std::vector<std::uint8_t>& declared_fields);
 };
 
 }  // namespace kforge::parser

@@ -17,6 +17,7 @@
 #include "util/error.h"
 
 namespace kforge::services { class LibraryService; }
+namespace kforge::plugin { class TaskService; }
 
 namespace kforge::api {
 
@@ -46,7 +47,7 @@ public:
     bool should_stop() const { return shutting_down_.load(std::memory_order_relaxed); }
 
     // For route handler access
-    sqlite3* db_handle() { return db_->handle(); }
+    storage::Database& database() { return *db_; }
     plugin::PluginManager* plugins() { return plugins_; }
 
 private:
@@ -61,10 +62,15 @@ private:
     std::unique_ptr<std::thread> thread_;
     storage::Database* db_{nullptr};
     plugin::PluginManager* plugins_{nullptr};
+    std::unique_ptr<plugin::TaskService> tasks_;  // owns async plugin/import tasks
     util::ConfigStore* config_{nullptr};
     ImportManager* import_manager_{nullptr};
     std::atomic<bool> shutting_down_{false};
     std::atomic<int64_t> last_heartbeat_{0};
+    // Unstarted, stopped and moved-from instances have no cleanup responsibility.
+    // In particular, a preceding service can fail before init() is attempted;
+    // that instance must not touch the logger during static-store destruction.
+    std::atomic<bool> closed_{true};
 };
 
 }  // namespace kforge::api

@@ -5,6 +5,9 @@
 #include <charconv>
 #include <fstream>
 #include <sstream>
+#ifdef __APPLE__
+#include <fast_float/fast_float.h>
+#endif
 
 namespace kforge::parser
 {
@@ -13,8 +16,35 @@ using Kind = util::Error::Kind;
 static double sv_to_double(std::string_view sv)
 {
     double v = 0;
+#ifdef __APPLE__
+    fast_float::from_chars(sv.data(), sv.data() + sv.size(), v);
+#else
     std::from_chars(sv.data(), sv.data() + sv.size(), v);
+#endif
     return v;  // invalid input → 0, from_chars never throws
+}
+
+/// KiCad 的简单参数节点（at/size/drill）没有子节点：DOM 把顺序参数存成
+/// property 对，最后落单的参数放在 atom_value。按源码顺序展开，坐标/尺寸
+/// 才不会被当成「属性键」而丢掉。
+static std::vector<std::string_view> positional_values(const sexpr::DomNode& node)
+{
+    std::vector<std::string_view> values;
+    for (const auto& [key, value] : node.properties())
+    {
+        values.push_back(key);
+        if (!value.empty())
+            values.push_back(value);
+    }
+    if (node.is_atom())
+        values.push_back(node.atom_value());
+    return values;
+}
+
+static bool is_pad_type(std::string_view text)
+{
+    return text == "smd" || text == "thru_hole" || text == "np_thru_hole" ||
+           text == "connect" || text == "mixed";
 }
 
 util::Result<core::Footprint> FootprintParser::parse(const std::filesystem::path& path)
@@ -36,7 +66,9 @@ util::Result<core::Footprint> FootprintParser::parse_buffer(std::string_view buf
         return std::unexpected(root_result.error());
 
     auto& root = *root_result;
-    if (root->type() != "footprint")
+    // KiCad 5 的 (module ...) 与 v6+ 的 (footprint ...) 结构一致；
+    // 老库文件（以及部分第三方转换器输出）仍是 module，直接兼容
+    if (root->type() != "footprint" && root->type() != "module")
         return std::unexpected(util::Error::make<Kind::ParseError>(
             std::string("expected (footprint ...), got (") + std::string(root->type()) + ")"));
 
@@ -44,11 +76,22 @@ util::Result<core::Footprint> FootprintParser::parse_buffer(std::string_view buf
 
     auto name_opt = root->property("name");
     if (name_opt)
-        fp.set_name(std::string(*name_opt));
+    {
+        std::string raw(*name_opt);
+        // 旧格式把库名一起写在名字里："easyeda2kicad:SOT-23" → "SOT-23"
+        if (auto colon = raw.find(':'); colon != std::string::npos)
+            raw = raw.substr(colon + 1);
+        fp.set_name(std::move(raw));
+    }
     else if (root->is_atom())
         fp.set_name(std::string(root->atom_value()));
     else if (!root->children().empty() && root->children()[0]->is_atom())
-        fp.set_name(std::string(root->children()[0]->atom_value()));
+    {
+        std::string raw(root->children()[0]->atom_value());
+        if (auto colon = raw.find(':'); colon != std::string::npos)
+            raw = raw.substr(colon + 1);
+        fp.set_name(std::move(raw));
+    }
 
     auto desc_opt = root->property("descr");
     if (desc_opt)
@@ -101,28 +144,50 @@ void FootprintParser::parse_pad(core::Footprint& fp, const sexpr::DomNode& node)
     auto shape = node.property("shape");
     if (shape)
         pad.shape = *shape;
-
-    auto* at_node = node.find_child("at");
-    if (at_node && at_node->children().size() >= 2)
+    // v6+ 的焊盘类型/形状是紧跟编号的位置参数：(pad "1" smd roundrect ...)。
+    // DOM 把它们存成第一组 property 对，不会出现在 property("type") 里。
+    if ((pad.type.empty() || pad.shape.empty()) && !node.properties().empty())
     {
-        if (at_node->children()[0]->is_atom())
-            pad.x = sv_to_double(at_node->children()[0]->atom_value());
-        if (at_node->children()[1]->is_atom())
-            pad.y = sv_to_double(at_node->children()[1]->atom_value());
+        const auto& [first, second] = node.properties().front();
+        if (is_pad_type(first))
+        {
+            if (pad.type.empty())
+                pad.type = std::string(first);
+            if (pad.shape.empty())
+                pad.shape = std::string(second);
+        }
     }
 
-    auto* size_node = node.find_child("size");
-    if (size_node && size_node->children().size() >= 2)
+    if (auto* at_node = node.find_child("at"))
     {
-        if (size_node->children()[0]->is_atom())
-            pad.width = sv_to_double(size_node->children()[0]->atom_value());
-        if (size_node->children()[1]->is_atom())
-            pad.height = sv_to_double(size_node->children()[1]->atom_value());
+        const auto values = positional_values(*at_node);
+        if (values.size() >= 2)
+        {
+            pad.x = sv_to_double(values[0]);
+            pad.y = sv_to_double(values[1]);
+        }
     }
 
-    auto* drill_node = node.find_child("drill");
-    if (drill_node && !drill_node->children().empty() && drill_node->children()[0]->is_atom())
-        pad.drill = sv_to_double(drill_node->children()[0]->atom_value());
+    if (auto* size_node = node.find_child("size"))
+    {
+        const auto values = positional_values(*size_node);
+        if (values.size() >= 2)
+        {
+            pad.width = sv_to_double(values[0]);
+            pad.height = sv_to_double(values[1]);
+        }
+    }
+
+    if (auto* drill_node = node.find_child("drill"))
+    {
+        for (auto value : positional_values(*drill_node))
+        {
+            if (value.empty() || value == "oval" || value == "round" || value == "circle")
+                continue;
+            pad.drill = sv_to_double(value);
+            break;
+        }
+    }
 
     if (!pad.number.empty())
         fp.add_pad(std::move(pad));

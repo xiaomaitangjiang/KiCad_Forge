@@ -1,37 +1,202 @@
 {
   "types": [
-    {"name": "Resistor",         "icon": "⊟", "color": "#34C759"},
-    {"name": "Capacitor",        "icon": "⊞", "color": "#007AFF"},
-    {"name": "Inductor",         "icon": "◠", "color": "#AF52DE"},
-    {"name": "Diode",            "icon": "▷", "color": "#FF9500"},
-    {"name": "LED",              "icon": "☀", "color": "#FFCC00"},
-    {"name": "Transistor",       "icon": "△", "color": "#FF3B30"},
-    {"name": "MOSFET",           "icon": "△", "color": "#FF3B30"},
-    {"name": "JFET",             "icon": "△", "color": "#FF3B30"},
-    {"name": "VoltageRegulator", "icon": "▦", "color": "#5856D6"},
-    {"name": "OpAmp",            "icon": "▷", "color": "#FF9500"},
-    {"name": "Comparator",       "icon": "≽", "color": "#FF9500"},
-    {"name": "LogicGate",        "icon": "⊡", "color": "#5856D6"},
-    {"name": "Microcontroller",  "icon": "⬡", "color": "#007AFF"},
-    {"name": "FPGA",             "icon": "◰", "color": "#007AFF"},
-    {"name": "Memory",           "icon": "▤", "color": "#5856D6"},
-    {"name": "Connector",        "icon": "▣", "color": "#8E8E93"},
-    {"name": "Switch",           "icon": "⏣", "color": "#8E8E93"},
-    {"name": "Fuse",             "icon": "◎", "color": "#FF9500"},
-    {"name": "Crystal",          "icon": "◇", "color": "#AF52DE"},
-    {"name": "Oscillator",       "icon": "◆", "color": "#AF52DE"},
-    {"name": "Transformer",      "icon": "◎", "color": "#FF9500"},
-    {"name": "Relay",            "icon": "⏻", "color": "#FF9500"},
-    {"name": "Jumper",           "icon": "⌸", "color": "#8E8E93"},
-    {"name": "TestPoint",        "icon": "◎", "color": "#8E8E93"},
-    {"name": "MountingHole",     "icon": "◉", "color": "#8E8E93"},
-    {"name": "FerriteBead",      "icon": "◎", "color": "#34C759"},
-    {"name": "Varistor",         "icon": "◎", "color": "#FF9500"},
-    {"name": "Thermistor",       "icon": "◎", "color": "#FF9500"},
-    {"name": "Photodiode",       "icon": "☀", "color": "#FFCC00"},
-    {"name": "Phototransistor",  "icon": "☀", "color": "#FFCC00"},
-    {"name": "TRIAC",            "icon": "△", "color": "#FF3B30"},
-    {"name": "SCR",              "icon": "△", "color": "#FF3B30"},
-    {"name": "Unknown",          "icon": "○", "color": "#8E8E93"}
+    {
+      "color": "#34C759",
+      "icon": "⊟",
+      "id": "Resistor",
+      "name": "Resistor"
+    },
+    {
+      "color": "#007AFF",
+      "icon": "⊞",
+      "id": "Capacitor",
+      "name": "Capacitor"
+    },
+    {
+      "color": "#AF52DE",
+      "icon": "◠",
+      "id": "Inductor",
+      "name": "Inductor"
+    },
+    {
+      "color": "#FF9500",
+      "icon": "▷",
+      "id": "Diode",
+      "name": "Diode"
+    },
+    {
+      "color": "#FFCC00",
+      "icon": "☀",
+      "id": "LED",
+      "name": "LED"
+    },
+    {
+      "color": "#FF3B30",
+      "icon": "△",
+      "id": "Transistor",
+      "name": "Transistor"
+    },
+    {
+      "color": "#FF3B30",
+      "icon": "△",
+      "id": "MOSFET",
+      "name": "MOSFET"
+    },
+    {
+      "color": "#FF3B30",
+      "icon": "△",
+      "id": "JFET",
+      "name": "JFET"
+    },
+    {
+      "color": "#5856D6",
+      "icon": "▦",
+      "id": "VoltageRegulator",
+      "name": "VoltageRegulator"
+    },
+    {
+      "color": "#FF9500",
+      "icon": "▷",
+      "id": "OpAmp",
+      "name": "OpAmp"
+    },
+    {
+      "color": "#FF9500",
+      "icon": "≽",
+      "id": "Comparator",
+      "name": "Comparator"
+    },
+    {
+      "color": "#5856D6",
+      "icon": "⊡",
+      "id": "LogicGate",
+      "name": "LogicGate"
+    },
+    {
+      "color": "#007AFF",
+      "icon": "⬡",
+      "id": "Microcontroller",
+      "name": "Microcontroller"
+    },
+    {
+      "color": "#007AFF",
+      "icon": "◰",
+      "id": "FPGA",
+      "name": "FPGA"
+    },
+    {
+      "color": "#5856D6",
+      "icon": "▤",
+      "id": "Memory",
+      "name": "Memory"
+    },
+    {
+      "color": "#8E8E93",
+      "icon": "▣",
+      "id": "Connector",
+      "name": "Connector"
+    },
+    {
+      "color": "#8E8E93",
+      "icon": "⏣",
+      "id": "Switch",
+      "name": "Switch"
+    },
+    {
+      "color": "#FF9500",
+      "icon": "◎",
+      "id": "Fuse",
+      "name": "Fuse"
+    },
+    {
+      "color": "#AF52DE",
+      "icon": "◇",
+      "id": "Crystal",
+      "name": "Crystal"
+    },
+    {
+      "color": "#AF52DE",
+      "icon": "◆",
+      "id": "Oscillator",
+      "name": "Oscillator"
+    },
+    {
+      "color": "#FF9500",
+      "icon": "◎",
+      "id": "Transformer",
+      "name": "Transformer"
+    },
+    {
+      "color": "#FF9500",
+      "icon": "⏻",
+      "id": "Relay",
+      "name": "Relay"
+    },
+    {
+      "color": "#8E8E93",
+      "icon": "⌸",
+      "id": "Jumper",
+      "name": "Jumper"
+    },
+    {
+      "color": "#8E8E93",
+      "icon": "◎",
+      "id": "TestPoint",
+      "name": "TestPoint"
+    },
+    {
+      "color": "#8E8E93",
+      "icon": "◉",
+      "id": "MountingHole",
+      "name": "MountingHole"
+    },
+    {
+      "color": "#34C759",
+      "icon": "◎",
+      "id": "FerriteBead",
+      "name": "FerriteBead"
+    },
+    {
+      "color": "#FF9500",
+      "icon": "◎",
+      "id": "Varistor",
+      "name": "Varistor"
+    },
+    {
+      "color": "#FF9500",
+      "icon": "◎",
+      "id": "Thermistor",
+      "name": "Thermistor"
+    },
+    {
+      "color": "#FFCC00",
+      "icon": "☀",
+      "id": "Photodiode",
+      "name": "Photodiode"
+    },
+    {
+      "color": "#FFCC00",
+      "icon": "☀",
+      "id": "Phototransistor",
+      "name": "Phototransistor"
+    },
+    {
+      "color": "#FF3B30",
+      "icon": "△",
+      "id": "TRIAC",
+      "name": "TRIAC"
+    },
+    {
+      "color": "#FF3B30",
+      "icon": "△",
+      "id": "SCR",
+      "name": "SCR"
+    },
+    {
+      "color": "#8E8E93",
+      "icon": "○",
+      "id": "Unknown",
+      "name": "Unknown"
+    }
   ]
 }

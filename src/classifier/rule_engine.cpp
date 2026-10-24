@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <regex>
+#include <string_view>
 
 #include "core/model/type_registry.h"
 
@@ -52,7 +53,8 @@ struct ConditionEvaluator {
     const core::Component& comp;
 
     bool operator()(const MatchType& c) const {
-        return core::component_type_name(static_cast<int>(comp.type())) == c.type_name;
+        // 规则的 type 字段比较类型 ID（内置 ID 由静态表给出，与注册表顺序无关）
+        return std::string(core::builtin_component_id(comp.type())) == c.type_name;
     }
     bool operator()(const MatchPackage& c) const {
         return RuleEngine::match_glob(c.pattern, "unknown");
@@ -167,15 +169,90 @@ core::ComponentType guess_type_from_name(const std::string& name) {
     }
 }
 
+namespace {
+
+char upper_ascii(char c) {
+    return static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+}
+
+/// 两位位号 → 内置类型（KiCad 约定：SW/FB/JP/TP/VR，以及 LED）
+core::ComponentType two_letter_type(char first, char second) {
+    if (first == 'L' && second == 'E') return core::ComponentType::LED;
+    if (first == 'S' && second == 'W') return core::ComponentType::Switch;
+    if (first == 'F' && second == 'B') return core::ComponentType::FerriteBead;
+    if (first == 'J' && second == 'P') return core::ComponentType::Jumper;
+    if (first == 'T' && second == 'P') return core::ComponentType::TestPoint;
+    if (first == 'V' && second == 'R') return core::ComponentType::VoltageRegulator;
+    return core::ComponentType::Unknown;
+}
+
+/// 单位号 → 内置类型。U（通用 IC，KiCad 里什么 IC 都叫 U）不在表内：
+/// 宁可不定类型，也不能替用户猜一个具体类型。
+core::ComponentType single_letter_type(char first) {
+    switch (first) {
+    case 'R': return core::ComponentType::Resistor;
+    case 'C': return core::ComponentType::Capacitor;
+    case 'L': return core::ComponentType::Inductor;
+    case 'D': return core::ComponentType::Diode;
+    case 'Q': return core::ComponentType::Transistor;
+    case 'J': return core::ComponentType::Connector;
+    case 'X':
+    case 'Y': return core::ComponentType::Crystal;
+    case 'F': return core::ComponentType::Fuse;
+    case 'K': return core::ComponentType::Relay;
+    case 'T': return core::ComponentType::Transformer;
+    case 'H': return core::ComponentType::MountingHole;
+    default:  return core::ComponentType::Unknown;
+    }
+}
+
+/// 文本整体必须就是一个完整位号才算数：单个字母、已知的两位组合，
+/// 或 LED 这个三位位号。多一个字符都不是位号 —— "LM"/"CD" 是型号名前缀，
+/// "LEDdriver" 是型号名，不能因为前两位像 LED 就猜成 LED。
+/// 首字母/前缀都不是类型依据。
+core::ComponentType type_from_designator(std::string_view text) {
+    if (text.size() == 1)
+        return single_letter_type(upper_ascii(text[0]));
+    if (text.size() == 2)
+        return two_letter_type(upper_ascii(text[0]), upper_ascii(text[1]));
+    if (text.size() == 3 && upper_ascii(text[0]) == 'L' && upper_ascii(text[1]) == 'E'
+        && upper_ascii(text[2]) == 'D')
+        return core::ComponentType::LED;
+    return core::ComponentType::Unknown;
+}
+
+}  // namespace
+
+std::string guess_symbol_type(const core::Symbol& symbol) {
+    // 只有真实 Reference 算依据：它就是位号，语义最明确。
+    // 这里不做任何名字兜底 —— 型号名（LM358 / CD4011 / LEDdriver）不是位号，
+    // U 只是通用 IC，都不能替用户猜一个具体类型。没有 Reference 的老库由
+    // parser 在继承完成后按本符号名字兜底（见 SymbolLibParser::parse_buffer），
+    // 分类器不再补第二层。
+    auto type = type_from_designator(symbol.reference_prefix());
+    if (type == core::ComponentType::Unknown) return {};
+    return std::string(core::builtin_component_id(type));
+}
+
 std::vector<ClassificationResult> RuleEngine::evaluate(
     const core::Component& component) const {
-    std::vector<ClassificationResult> results;
-
-    // Infer type from name if not already set
+    // 旧路径的行为保持不变：类型为空时按名字前缀猜一个内置类型
     core::ComponentType effective_type = component.type();
     if (effective_type == core::ComponentType::Unknown) {
         effective_type = guess_type_from_name(component.name());
     }
+    return evaluate_impl(component, core::builtin_component_id(effective_type));
+}
+
+std::vector<ClassificationResult> RuleEngine::evaluate_impl(
+    const core::Component& component, const std::string& type_id) const {
+    std::vector<ClassificationResult> results;
+
+    // 类型身份由调用方给定：符号走真实 Reference / 已持久化 ID，
+    // 组件走枚举 + 名字兜底。这里不再做任何回退。
+    const std::string& effective_id = type_id;
+    const core::ComponentType effective_type =
+        core::builtin_component_type(effective_id);  // 非内置 ID → Unknown
 
     for (const auto& rule : rules_) {
         if (!rule.enabled) continue;
@@ -189,11 +266,8 @@ std::vector<ClassificationResult> RuleEngine::evaluate(
             using T = std::decay_t<decltype(cond)>;
 
             if constexpr (std::is_same_v<T, MatchType>) {
-                // Use TypeRegistry for dynamic type name lookup
-                int rule_idx = core::component_type_index(cond.type_name);
-                if (rule_idx < 0) return false;
-                auto rule_type = static_cast<core::ComponentType>(rule_idx);
-                bool m = (effective_type == rule_type);
+                // 比较类型 ID：本次求值的类型身份与规则里的 ID 相等才算命中
+                bool m = effective_id == cond.type_name;
                 if (m) {
                     reason = "Name prefix matches type '" + cond.type_name + "'";
                     confidence = 90;
@@ -242,6 +316,7 @@ std::vector<ClassificationResult> RuleEngine::evaluate(
             result.confidence = rule.confidence;
             result.reason = reason;
             result.inferred_type = effective_type;
+            result.inferred_type_id = effective_id;
             results.push_back(std::move(result));
         }
     }
@@ -258,7 +333,7 @@ std::vector<ClassificationResult> RuleEngine::evaluate(
 }
 
 std::vector<ClassificationResult> RuleEngine::evaluate_symbol(
-    const core::Symbol& symbol) const {
+    const core::Symbol& symbol, bool infer_reference) const {
     // Convert symbol to a minimal Component for evaluation
     core::Component comp;
     comp.set_name(symbol.name());
@@ -267,8 +342,26 @@ std::vector<ClassificationResult> RuleEngine::evaluate_symbol(
         comp.set_property("footprint", symbol.footprint());
     if (!symbol.mpn().empty())
         comp.set_property("mpn", symbol.mpn());
+    // 真实 Reference 也是分类依据：规则可能按 reference 属性匹配
+    if (auto reference = symbol.property("reference");
+        reference && !reference->empty()) {
+        comp.set_property("reference", *reference);
+    }
 
-    return evaluate(comp);
+    // 类型身份：已持久化的原始 ID 原样带入（内置/custom/未注册都不经过枚举），
+    // 只有「还没有类型」才按真实 Reference 推断 —— 空串是老行的写法，
+    // 显式的 "Unknown" 是导入路径给未分类符号落的占位值（见 pipeline /
+    // staged_import），两者都是待分类，不能因为 "Unknown" 非空就跳过推断。
+    // 其余任何原始 ID（OpAmp、custom:xxx、LegacyRawId）一律保留。
+    // 这里不启用名字兜底 —— 型号首字母不是类型依据（LM358 不是电感），
+    // U 也只是通用 IC。infer_reference=false 时连位号推断也关掉：
+    // 生产分类由匹配核心给出已决类型，推荐库只按该类型算，不得自行改判。
+    std::string type_id = symbol.component_type_id;
+    if (infer_reference
+        && (type_id.empty() || type_id == core::builtin_component_id(core::ComponentType::Unknown)))
+        type_id = guess_symbol_type(symbol);
+
+    return evaluate_impl(comp, type_id);
 }
 
 std::vector<std::vector<ClassificationResult>> RuleEngine::evaluate_batch(
@@ -282,10 +375,8 @@ std::vector<std::vector<ClassificationResult>> RuleEngine::evaluate_batch(
 }
 
 const char* component_type_to_string(core::ComponentType t) {
-    // Cache the string in a thread_local to support returning const char*
-    static thread_local std::string cached;
-    cached = core::component_type_name(static_cast<int>(t));
-    return cached.c_str();
+    // 内置 ID 的静态映射 —— 不再经注册表下标转名字
+    return core::builtin_component_id(t);
 }
 
 }  // namespace kforge::classifier

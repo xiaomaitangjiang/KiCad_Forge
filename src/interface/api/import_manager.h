@@ -13,8 +13,6 @@
 #include "util/config_store.h"
 #include "util/service_runtime.hpp"
 
-struct sqlite3;
-
 namespace kforge::api {
 
 class ImportOrchestrator;
@@ -22,12 +20,17 @@ class ImportOrchestrator;
 class ImportManager {
 public:
     struct Options {
-        bool force = false;  // true = drop mtime snapshots, re-import everything
+        // true = 本次忽略已缓存 mtime、强制重导启用目标。
+        // 不再先 DELETE 全表：那样会在健康领取之前消费别人的来源快照，
+        // 坏配置下会连带丢掉停用来源的 mtime。清表只属于 db/reset。
+        bool force = false;
     };
 
-    ImportManager() = default;  // 右值槽：build 内初始化
+    explicit ImportManager(classifier::TypeMatchingStore* matching_store = nullptr)
+        : matching_store_(matching_store ? matching_store : &classifier::TypeMatchingStore::instance()) {}
     ImportManager(ImportManager&&) = default;  // 自定义析构抑制隐式移动，显式恢复
-    ImportManager(sqlite3* db, util::ConfigStore* config);
+    ImportManager(storage::Database& db, util::ConfigStore* config,
+                  classifier::TypeMatchingStore* matching_store = nullptr);
     ~ImportManager();
 
     // Launcher 服务接口
@@ -50,12 +53,14 @@ public:
     /// One directory of symbols (POST /api/import?dir=).
     services::ImportPipeline::Result import_directory(const std::string& dir);
 
-    /// Drop the mtime snapshot table — used by db/reset and force re-import.
+    /// Drop the mtime snapshot table — used by db/reset (整表重建)。
+    /// 重导入按钮走 import_all({.force = true})，不再经过这里。
     void clear_imported_files_cache();
 
 private:
-    sqlite3* db_{nullptr};
+    storage::Database* db_{nullptr};
     util::ConfigStore* config_{nullptr};
+    classifier::TypeMatchingStore* matching_store_;
     std::unique_ptr<ImportOrchestrator> orch_;
 };
 

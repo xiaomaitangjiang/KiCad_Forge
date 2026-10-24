@@ -1,0 +1,365 @@
+name: Cross-platform build and test
+
+on:
+  push:
+    branches: [master, 'ci/**']
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: "Publish a Release after ALL builds and tests pass"
+        type: boolean
+        default: false
+      release_tag:
+        description: "New version tag (e.g. v0.2.0); required when publishing"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cross-platform-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Validate the release request
+        if: github.event_name == 'workflow_dispatch' && inputs.publish_release
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Use a new stable version tag, such as v0.2.0."
+            exit 1
+          fi
+          if gh api "repos/$GH_REPO/git/ref/tags/$RELEASE_TAG" > /dev/null 2>&1; then
+            echo "This version tag already exists. Choose a new version."
+            exit 1
+          fi
+
+  frontend:
+    name: Plugin SDK, types and frontend regressions
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: |
+            webui/package-lock.json
+            examples/plugins/*/package-lock.json
+            plugins/*/frontend/package-lock.json
+
+      - name: Install the locked frontend toolchain
+        run: |
+          mkdir -p test-results
+          npm ci --prefix webui --no-audit --no-fund 2>&1 | tee test-results/frontend-install.log
+
+      - name: Verify framework versions and dependency licenses
+        run: node scripts/frontend_lock.mjs --verify 2>&1 | tee test-results/frontend-lock.log
+
+      - name: Lint the frontend
+        run: npm run lint --prefix webui 2>&1 | tee test-results/frontend-lint.log
+
+      - name: Build the SDK and every plugin before tests read their artifacts
+        run: node scripts/build_plugins.mjs 2>&1 | tee test-results/plugin-build.log
+
+      - name: Build the host and shared browser runtime
+        run: npm run build --prefix webui 2>&1 | tee test-results/frontend-build.log
+
+      - name: Typecheck the public SDK fixtures
+        run: node webui/node_modules/typescript/bin/tsc -p tests/types/tsconfig.json 2>&1 | tee test-results/sdk-types.log
+
+      - name: Typecheck example and first-party plugin sources
+        run: |
+          for plugin_dir in examples/plugins/demo_* plugins/git_version/frontend plugins/lcsc_import/frontend; do
+            npm ci --prefix "$plugin_dir" --no-audit --no-fund
+            npm run typecheck --prefix "$plugin_dir"
+          done 2>&1 | tee test-results/plugin-types.log
+
+      - name: Test helpers and the public plugin runtime contracts
+        run: node --test webui/tests/unit/*.test.js webui/tests/unit/*.test.mjs 2>&1 | tee test-results/frontend-tests.log
+
+      - name: Upload frontend diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: logs-frontend
+          path: test-results/
+          if-no-files-found: error
+          retention-days: 7
+
+  build:
+    needs: [validate, frontend]
+    name: ${{ matrix.platform.name }} / ${{ matrix.mode }}
+    runs-on: ${{ matrix.platform.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [debug, release]
+        platform:
+          - {name: linux-x64, os: ubuntu-24.04, plat: linux, arch: x86_64, shell: bash, exe: ""}
+          - {name: windows-x64, os: windows-2025, plat: mingw, arch: x86_64, shell: "msys2 {0}", exe: ".exe"}
+          - {name: macos-arm64, os: macos-15, plat: macosx, arch: arm64, shell: bash, exe: ""}
+          - {name: macos-x64, os: macos-15-intel, plat: macosx, arch: x86_64, shell: bash, exe: ""}
+    defaults:
+      run:
+        shell: ${{ matrix.platform.shell }}
+    env:
+      BUILD_DIR: build/${{ matrix.platform.plat }}/${{ matrix.platform.arch }}/${{ matrix.mode }}
+      PACKAGE_NAME: KiCad_Forge-${{ matrix.platform.name }}-${{ matrix.mode }}
+      PCRE2_SDK_DIR: ${{ github.workspace }}/build/dependencies/pcre2/${{ matrix.platform.plat }}/${{ matrix.platform.arch }}/${{ matrix.mode }}/install
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: webui/package-lock.json
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install the Linux C++23 compiler
+        if: runner.os == 'Linux'
+        timeout-minutes: 5
+        run: |
+          if command -v g++-14 >/dev/null && command -v cmake >/dev/null; then
+            g++-14 --version
+            cmake --version
+          else
+            sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+            sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y g++-14 cmake
+          fi
+
+      - uses: msys2/setup-msys2@v2
+        if: runner.os == 'Windows'
+        with:
+          msystem: MINGW64
+          path-type: inherit
+          update: true
+          install: >-
+            mingw-w64-x86_64-clang
+            mingw-w64-x86_64-lld
+            mingw-w64-x86_64-gcc
+
+      - uses: xmake-io/github-action-setup-xmake@v1
+        with:
+          xmake-version: "3.1.1"
+          # Install the tool before dependency preparation; automatic package
+          # caching loads the project before the matrix configuration exists.
+          package-cache: false
+
+      - name: Prepare locked distribution dependencies before building
+        if: matrix.mode == 'release'
+        env:
+          REQUESTED_TAG: ${{ inputs.release_tag }}
+        run: |
+          python -B scripts/prepare_packaging.py --platform "${{ matrix.platform.plat }}" --arch "${{ matrix.platform.arch }}" --download
+          if [[ -n "$REQUESTED_TAG" ]]; then
+            echo "KFORGE_PACKAGE_VERSION=${REQUESTED_TAG#v}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Verify native Linux binary packaging tools
+        if: runner.os == 'Linux' && matrix.mode == 'release'
+        run: |
+          dpkg-deb --version
+          dpkg-shlibdeps --version
+          objdump --version
+
+      - name: Prepare the locked static PCRE2 SDK
+        run: |
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            echo "MSYS2_DIR=$(cygpath -m "$MINGW_PREFIX")" >> "$GITHUB_ENV"
+            python scripts/prepare_dependencies.py --plat mingw --arch x86_64 --mode "${{ matrix.mode }}"
+          elif [[ "${{ runner.os }}" == "Linux" ]]; then
+            python scripts/prepare_dependencies.py --plat linux --arch x86_64 --mode "${{ matrix.mode }}" --cc gcc-14
+          else
+            python scripts/prepare_dependencies.py --plat macosx --arch "${{ matrix.platform.arch }}" --mode "${{ matrix.mode }}" --cc clang
+          fi
+
+      - name: Build the frontend
+        working-directory: webui
+        run: |
+          npm ci
+          npm run build
+
+      - name: Build the plugin SDK and example/first-party plugin bundles
+        run: node scripts/build_plugins.mjs
+
+      - name: Install locked plugin dependencies before source-level tests
+        if: matrix.mode == 'debug'
+        run: |
+          set -euo pipefail
+          for plugin_dir in examples/plugins/demo_* plugins/git_version/frontend plugins/lcsc_import/frontend; do
+            npm ci --prefix "$plugin_dir" --no-audit --no-fund
+          done
+
+      - name: Test frontend helpers on the native platform
+        if: matrix.mode == 'debug'
+        run: node --test webui/tests/unit/*.test.js webui/tests/unit/*.test.mjs
+
+      - name: Test the actual LCSC and component type browser interactions
+        if: runner.os == 'Windows' && matrix.mode == 'debug'
+        run: |
+          node webui/tests/browser/run-lcsc-browser.mjs
+          node webui/tests/browser/run-lcsc-browser.mjs --types
+          node webui/tests/browser/run-lcsc-browser.mjs --type-matching
+          node webui/tests/browser/run-plugin-browser.mjs
+
+      - name: Prepare the remaining locked dependencies and configure the native build
+        run: |
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            xmake f -y -c -p mingw -a x86_64 -m "${{ matrix.mode }}" --portable_deps=y --mingw="$(cygpath -m "$MINGW_PREFIX")"
+          elif [[ "${{ runner.os }}" == "Linux" ]]; then
+            xmake f -y -c -p linux -a x86_64 -m "${{ matrix.mode }}" --portable_deps=y --cc=gcc-14 --cxx=g++-14 --ld=g++-14 --sh=g++-14
+          else
+            xmake f -y -c -p macosx -a "${{ matrix.platform.arch }}" -m "${{ matrix.mode }}" --portable_deps=y
+          fi
+
+      - name: Compile the application and unit tests
+        run: xmake build -y -j 2
+
+      - name: Check Python plugin syntax
+        run: python -m compileall -q plugins
+
+      - name: Test Python plugins and build helpers
+        run: python -B -m unittest tests.python.test_plugins tests.python.test_lcsc_staging tests.python.test_lcsc_workflow tests.python.test_installer tests.python.test_deb tests.python.test_distribution tests.python.test_distribution_outputs tests.python.test_packaging_dependencies tests.python.test_runtime_assets tests.python.test_repository_layout tests.python.test_build_cleanup -v
+
+      - name: Check repository layout and local links
+        run: python -B scripts/check_repository_layout.py
+
+      - name: Test Git history, repository identity and write outcomes
+        run: |
+          set -euo pipefail
+          mkdir -p test-results
+          python -B -m unittest discover -s plugins/git_version/tests -v 2>&1 | tee test-results/git-python-tests.log
+
+      - name: Run every registered C++ regression executable
+        run: xmake test -v
+
+      - name: Stage the portable bundle
+        run: python scripts/package.py --binary "$BUILD_DIR/KiCad_Forge${{ matrix.platform.exe }}" --name "$PACKAGE_NAME"
+
+      - name: Run the relocated bundle and test API startup and shutdown
+        run: python scripts/smoke_test.py --binary "dist/$PACKAGE_NAME/KiCad_Forge${{ matrix.platform.exe }}"
+
+      - name: Generate native distributions with XPack
+        if: matrix.mode == 'release'
+        run: xmake pack --autobuild=n -j 1 -o dist/installers
+
+      - name: Require every expected native installer and archive
+        if: matrix.mode == 'release'
+        run: python -B scripts/verify_distributions.py --directory dist/installers --platform "${{ matrix.platform.plat }}" --arch "${{ matrix.platform.arch }}"
+
+      - name: Test the application installed from the macOS DMG
+        if: runner.os == 'macOS' && matrix.mode == 'release'
+        run: python -B scripts/smoke_macos.py --dmg dist/installers/*.dmg
+
+      - name: Test the Windows/Linux distribution without external Python
+        if: runner.os != 'macOS' && matrix.mode == 'release'
+        run: |
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            python -B scripts/smoke_distribution.py --platform mingw --archive dist/installers/*.zip
+          else
+            python -B scripts/smoke_distribution.py --platform linux --archive dist/installers/*.tar.gz
+            python -B scripts/smoke_distribution.py --platform linux --archive dist/installers/*.deb
+          fi
+
+      - name: Test real WebView2 editing, workbench recovery and plugin actions
+        if: runner.os == 'Windows' && matrix.mode == 'debug'
+        timeout-minutes: 15
+        env:
+          KFORGE_STATE_E2E: "1"
+          KFORGE_GIT_WRITE_E2E: "1"
+          KFORGE_IMPORTS_E2E: "1"
+          # WebView2 150+ ignores WEBVIEW2_* overrides on elevated runners.
+          # The harness restores only this app's HKLM values after each launch.
+          KFORGE_WEBVIEW2_MACHINE_POLICY: "1"
+        run: |
+          set -euo pipefail
+          mkdir -p test-results/webview2
+          export KFORGE_BUILD_ROOT="$(cygpath -m "$PWD/dist/$PACKAGE_NAME")"
+          export KFORGE_TEST_RESULTS="$(cygpath -m "$PWD/test-results/webview2")"
+          node webui/tests/e2e/run-plugin-webview2.mjs 2>&1 | tee test-results/webview2/prototype.log
+          node webui/tests/e2e/run-editing-e2e.mjs 2>&1 | tee test-results/webview2/editing.log
+          node webui/tests/e2e/run-workbench-e2e.mjs 2>&1 | tee test-results/webview2/workbench.log
+          node webui/tests/e2e/run-home-tab-e2e.mjs 2>&1 | tee test-results/webview2/home-tab.log
+          node webui/tests/e2e/run-delivery-review-e2e.mjs 2>&1 | tee test-results/webview2/delivery-review.log
+          node webui/tests/e2e/run-plugin-state-e2e.mjs 2>&1 | tee test-results/webview2/restart.log
+          node webui/tests/e2e/run-git-write-e2e.mjs 2>&1 | tee test-results/webview2/git-actions.log
+          node webui/tests/e2e/run-import-contract-e2e.mjs 2>&1 | tee test-results/webview2/import-contract.log
+
+      - name: Upload test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: logs-${{ matrix.platform.name }}-${{ matrix.mode }}
+          path: |
+            test-results/
+            build/.gens/**/tests/**
+            xmake-requires.lock
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload the tested native installers and archives
+        if: matrix.mode == 'release'
+        uses: actions/upload-artifact@v7
+        with:
+          name: package-${{ matrix.platform.name }}
+          path: dist/installers/*
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish the requested Release
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: package-*
+          merge-multiple: true
+          path: release-assets
+
+      - name: Publish all four platform packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        shell: bash
+        run: |
+          # Recheck after the builds: never reuse a tag for different binaries.
+          if gh api "repos/$GH_REPO/git/ref/tags/$RELEASE_TAG" > /dev/null 2>&1; then
+            echo "This version tag already exists. Choose a new version."
+            exit 1
+          fi
+          gh release create "$RELEASE_TAG" release-assets/* \
+            --target "$GITHUB_SHA" \
+            --title "$RELEASE_TAG" \
+            --generate-notes

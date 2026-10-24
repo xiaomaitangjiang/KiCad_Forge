@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM"],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": [],
+    "baseUrl": ".",
+    "paths": {
+      "@kiforge/plugin-sdk": ["../../webui/packages/plugin-sdk/dist/index.d.ts"],
+      "react": ["../../webui/node_modules/@types/react/index.d.ts"],
+      "react/jsx-runtime": ["../../webui/node_modules/@types/react/jsx-runtime.d.ts"]
+    }
+  },
+  "include": ["*.ts"]
+}

@@ -1,0 +1,25 @@
+{
+  "manifestVersion": 2,
+  "id": "demo.supply-page",
+  "name": "Demo Supply Page",
+  "version": "1.0.0-rc.1",
+  "author": "KiCad Forge",
+  "description": "Phase-1 prototype supply page view with a child tab slot",
+  "license": "MIT",
+  "engines": { "sdk": "^1.0.0" },
+  "frontend": {
+    "root": "dist",
+    "entry": "index.js",
+    "styles": ["style.css"],
+    "requires": [{ "contract": "demo.supplier", "range": "^1.0.0" }]
+  },
+  "config": {
+    "schema": {
+      "type": "object",
+      "required": ["showPrices"],
+      "properties": {
+        "showPrices": { "type": "boolean", "default": true }
+      }
+    }
+  }
+}

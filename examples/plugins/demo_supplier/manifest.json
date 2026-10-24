@@ -1,0 +1,16 @@
+{
+  "manifestVersion": 2,
+  "id": "demo.supplier",
+  "name": "Demo Supplier",
+  "version": "1.0.0-rc.1",
+  "author": "KiCad Forge",
+  "description": "Phase-1 prototype supplier service provider (mock data, frontend only)",
+  "license": "MIT",
+  "engines": { "sdk": "^1.0.0" },
+  "frontend": {
+    "root": "dist",
+    "entry": "index.js",
+    "styles": [],
+    "provides": [{ "contract": "demo.supplier", "version": "1.0.0" }]
+  }
+}

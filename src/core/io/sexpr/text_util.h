@@ -5,6 +5,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <vector>
 
 namespace kforge::sexpr {
 
@@ -25,16 +26,27 @@ std::string insert_property(std::string_view text, size_t before_pos, std::strin
 std::string remove_node(std::string_view text, size_t start, size_t end);
 
 /// Replace the value of (property "KEY" ...) inside the (type "name" ...) node.
-/// Rebuilds the property subtree (same layout as insert_property) with
-/// new_value. Returns false when the node or the property cannot be located.
+/// Only replaces the direct property's value token; preserves all other text.
+/// Returns false on invalid input or a missing node/property.
 bool replace_property_value(std::string& text, std::string_view node_type,
                             std::string_view node_name, std::string_view prop_key,
                             std::string_view new_value);
 
+/// 取顶层 (type "name" ...) 节点的完整文本（含括号），按出现顺序。
+/// 用于把插件生成的符号原样并入目标库 —— 保留全部图形，不做重建。
+std::vector<std::string_view> top_level_nodes(std::string_view text, std::string_view type);
+
 /// Patch (property "Kicad_Forge_ID" "...") into each symbol node listed in
-/// name_to_kf_id. Skips symbols that already have the property. Returns the
-/// number of patched symbols. Writes to the file only when at least one symbol
-/// was patched.
+/// name_to_kf_id, in memory only. Returns the number of patched symbols.
+/// 落盘交给统一变更服务 —— 它负责文件锁、备份和恢复日志。
+int patch_kf_id_content(
+    std::string& text,
+    const std::unordered_map<std::string, std::string>& name_to_kf_id);
+
+/// Same, but reads and writes the file directly. 仅测试/独立工具使用；
+/// 应用内的写回走 SourceMutationService。
+/// Returns the number of patched symbols. Writes to the file only when at least
+/// one symbol was patched.
 int patch_kf_id_to_file(
     const std::filesystem::path& sym_file,
     const std::unordered_map<std::string, std::string>& name_to_kf_id);

@@ -10,16 +10,22 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@deepseek-ai/cordis": "4.0.5",
+    "@deepseek-ai/dsh-client-ui-slots": "0.2.1-rc.2",
+    "@kiforge/plugin-sdk": "file:packages/plugin-sdk",
     "i18next": "^26.3.6",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
-    "react-i18next": "^17.0.11"
+    "react-i18next": "^17.0.11",
+    "react-resizable-panels": "4.14.6"
   },
   "devDependencies": {
+    "@deepseek-ai/dsh-client-store": "0.2.1-rc.2",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.3",
     "oxlint": "^1.71.0",
+    "typescript": "5.9.3",
     "vite": "^8.1.1"
   }
 }
