@@ -35,7 +35,9 @@ on run argv
             -- an alias after the image is remounted read-only. Compare the
             -- files' native URLs instead, resolving both through Finder.
             set expectedBackgroundURL to URL of file ".background:background.png" of imageFolder
-            set actualBackgroundURL to URL of (background picture of viewOptions)
+            set savedBackground to get background picture of viewOptions
+            log {"DMG saved background", savedBackground}
+            set actualBackgroundURL to URL of savedBackground
             if actualBackgroundURL is not expectedBackgroundURL then error "DMG background was not saved"
         else
             error "Unknown DMG layout action"
