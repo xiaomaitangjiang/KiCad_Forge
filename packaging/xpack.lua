@@ -9,7 +9,7 @@ for _, format in ipairs(formats) do
         set_title("KiCad Forge")
         set_description("KiCad component library manager")
         set_inputkind("binary")
-        set_version(os.getenv("KFORGE_PACKAGE_VERSION") or "1.1.0")
+        set_version(os.getenv("KFORGE_PACKAGE_VERSION") or "1.1.1")
         set_basename("KiCad_Forge-$(plat)-$(arch)-$(version)")
         add_targets("KiCad_Forge")
 

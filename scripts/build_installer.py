@@ -32,7 +32,7 @@ def parser():
     result.add_argument("--source", type=Path, default=PROJECT / "build/mingw/x86_64/release")
     result.add_argument("--output", type=Path, default=PROJECT / "dist/installers")
     result.add_argument("--name", default="KiCad_Forge_Setup")
-    result.add_argument("--version", default="1.1.0")
+    result.add_argument("--version", default="1.1.1")
     result.add_argument("--nsis", type=Path, help="Optional explicit makensis.exe; otherwise use the locked prepared compiler")
     result.add_argument("--dry-run", action="store_true")
     return result
