@@ -27,7 +27,7 @@ def main():
     report = {"arch": arch, "source_version": "1.1.1", "source_sha256": DIGESTS[arch]}
     try:
         with tempfile.TemporaryDirectory(prefix="KiForge signature audit ") as temporary:
-            root = Path(temporary)
+            root = Path(temporary).resolve()
             subprocess.run(["/usr/bin/ditto", "-x", "-k", str(archive), str(root)], check=True)
             app = root / "KiCad Forge.app"
             original = subprocess.run(["/usr/bin/codesign", "--verify", "--deep", "--strict", "--verbose=4", str(app)],

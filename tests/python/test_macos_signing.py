@@ -30,6 +30,10 @@ class MacSigningTests(unittest.TestCase):
         (self.app / "Contents/MacOS/helper.py").write_text("print('a script')")
         self.assertEqual(set(signing.native_files(self.app)), {self.main, self.library})
 
+    def test_native_temporary_directory_alias_can_be_used_to_verify_a_bundle(self):
+        original_path = Path(self.temporary.name) / "KiCad Forge.app"
+        self.assertEqual(signing.check_app(original_path), self.app)
+
     def test_nested_and_outer_signatures_are_checked_with_strict_validation(self):
         with mock.patch.object(signing, "run") as run:
             signing.verify_bundle(self.app)

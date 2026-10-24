@@ -30,6 +30,11 @@ def native_files(app):
 
 def check_app(app):
     app = Path(app).absolute()
+    if app.is_symlink():
+        raise ValueError("The application bundle itself must not be a symlink")
+    # macOS exposes the system temporary directory through /var -> /private/var.
+    # Canonicalize that parent before applying the bundle's internal link check.
+    app = app.resolve(strict=True)
     # Defer the import: stage_distribution uses this module after its own
     # preflight, while the standalone command must check the same boundaries.
     if __package__:
