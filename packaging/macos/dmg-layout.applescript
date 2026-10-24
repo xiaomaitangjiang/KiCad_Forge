@@ -31,8 +31,12 @@ on run argv
             if icon size of viewOptions is not 128 then error "DMG icon size was not saved"
             if position of item "KiCad Forge.app" of imageFolder is not {160, 190} then error "DMG app position was not saved"
             if position of item "Applications" of imageFolder is not {480, 190} then error "DMG Applications position was not saved"
-            set expectedBackground to file ".background:background.png" of imageFolder as alias
-            if (background picture of viewOptions as alias) is not expectedBackground then error "DMG background was not saved"
+            -- Finder cannot always coerce its background-picture reference to
+            -- an alias after the image is remounted read-only. Compare the
+            -- files' native URLs instead, resolving both through Finder.
+            set expectedBackgroundURL to URL of file ".background:background.png" of imageFolder
+            set actualBackgroundURL to URL of (background picture of viewOptions)
+            if actualBackgroundURL is not expectedBackgroundURL then error "DMG background was not saved"
         else
             error "Unknown DMG layout action"
         end if

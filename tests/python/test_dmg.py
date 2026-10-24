@@ -4,6 +4,7 @@ from pathlib import Path
 import plistlib
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -125,6 +126,18 @@ class DiskImageTests(unittest.TestCase):
             self.assertEqual(run.call_args.args[0],
                              ["/usr/bin/osascript", str(dmg.LAYOUT_SCRIPT), str(mount), "verify"])
             self.assertTrue(run.call_args.kwargs["check"])
+
+    @unittest.skipUnless(sys.platform == "darwin", "Native Finder and hdiutil required")
+    def test_native_read_only_image_preserves_finder_layout_after_remount(self):
+        artifact = self.build()
+        mount = self.root / "remounted read only image"
+        mount.mkdir()
+        subprocess.run(["/usr/bin/hdiutil", "attach", "-readonly", "-nobrowse", "-noautoopen",
+                        "-mountpoint", str(mount), str(artifact)], check=True, timeout=40)
+        try:
+            smoke_macos.check_dmg_layout(mount)
+        finally:
+            subprocess.run(["/usr/bin/hdiutil", "detach", str(mount)], check=True, timeout=40)
 
 
 if __name__ == "__main__":
