@@ -245,7 +245,7 @@ jobs:
         run: python -m compileall -q plugins
 
       - name: Test Python plugins and build helpers
-        run: python -B -m unittest tests.python.test_plugins tests.python.test_lcsc_staging tests.python.test_lcsc_workflow tests.python.test_installer tests.python.test_deb tests.python.test_distribution tests.python.test_distribution_outputs tests.python.test_packaging_dependencies tests.python.test_runtime_assets tests.python.test_repository_layout tests.python.test_build_cleanup -v
+        run: python -B -m unittest tests.python.test_plugins tests.python.test_lcsc_staging tests.python.test_lcsc_workflow tests.python.test_installer tests.python.test_installer_native tests.python.test_dmg tests.python.test_deb tests.python.test_distribution tests.python.test_distribution_outputs tests.python.test_packaging_dependencies tests.python.test_runtime_assets tests.python.test_repository_layout tests.python.test_build_cleanup -v
 
       - name: Check repository layout and local links
         run: python -B scripts/check_repository_layout.py
