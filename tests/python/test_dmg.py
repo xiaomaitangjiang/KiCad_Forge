@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import sys
+import struct
 import tempfile
 import unittest
 from unittest import mock
@@ -122,11 +123,31 @@ class DiskImageTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Finder layout"):
                 smoke_macos.check_dmg_layout(mount)
             run.assert_not_called()
-            (mount / ".DS_Store").write_bytes(b"saved layout")
+            (mount / ".DS_Store").write_bytes(self.finder_store())
             smoke_macos.check_dmg_layout(mount)
             self.assertEqual(run.call_args.args[0],
                              ["/usr/bin/osascript", str(dmg.LAYOUT_SCRIPT), str(mount), "verify"])
             self.assertTrue(run.call_args.kwargs["check"])
+
+    @staticmethod
+    def finder_store(options=None):
+        relative = b"/.background/background.png"
+        if options is None:
+            options = {"backgroundType": 2,
+                       "backgroundImageAlias": struct.pack(">HH", 18, len(relative)) + relative}
+        payload = plistlib.dumps(options, fmt=plistlib.FMT_BINARY)
+        marker = struct.pack(">I", 1) + ".".encode("utf-16be") + b"icvpblob"
+        return b"\0\0\0\1Bud1" + marker + struct.pack(">I", len(payload)) + payload
+
+    def test_saved_background_rejects_missing_truncated_or_incorrect_finder_metadata(self):
+        path = self.root / "Finder.DS_Store"
+        for data in (b"invalid", self.finder_store()[:-5], self.finder_store({"backgroundType": 0}),
+                     self.finder_store({"backgroundType": 2, "backgroundImageAlias": b"other picture"})):
+            path.write_bytes(data)
+            with self.subTest(data=data[:20]), self.assertRaises((RuntimeError, ValueError)):
+                smoke_macos.check_saved_background(path)
+        path.write_bytes(self.finder_store())
+        smoke_macos.check_saved_background(path)
 
     @unittest.skipUnless(sys.platform == "darwin", "Native Finder and hdiutil required")
     def test_native_read_only_image_preserves_finder_layout_after_remount(self):
@@ -137,6 +158,10 @@ class DiskImageTests(unittest.TestCase):
                         "-mountpoint", str(mount), str(artifact)], check=True, timeout=40)
         try:
             smoke_macos.check_dmg_layout(mount)
+            diagnostics = dmg.PROJECT / "test-results/dmg-layout"
+            diagnostics.mkdir(parents=True, exist_ok=True)
+            subprocess.run(["/usr/sbin/screencapture", "-x", str(diagnostics / "Finder.png")],
+                           check=True, timeout=10)
         except Exception:
             diagnostics = dmg.PROJECT / "test-results/dmg-layout"
             diagnostics.mkdir(parents=True, exist_ok=True)

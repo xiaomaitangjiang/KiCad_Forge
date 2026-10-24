@@ -17,12 +17,6 @@ on run argv
             set icon size of viewOptions to 128
             set text size of viewOptions to 14
             set background picture of viewOptions to file ".background:background.png" of imageFolder
-            try
-                set initialBackground to get background picture of viewOptions
-                log {"DMG background immediately after setting", initialBackground}
-            on error messageText
-                log {"DMG background read failed immediately after setting", messageText}
-            end try
             set position of item "KiCad Forge.app" of imageFolder to {160, 190}
             set position of item "Applications" of imageFolder to {480, 190}
             update imageFolder without registering applications
@@ -37,17 +31,11 @@ on run argv
             if icon size of viewOptions is not 128 then error "DMG icon size was not saved"
             if position of item "KiCad Forge.app" of imageFolder is not {160, 190} then error "DMG app position was not saved"
             if position of item "Applications" of imageFolder is not {480, 190} then error "DMG Applications position was not saved"
-            -- Finder cannot always coerce its background-picture reference to
-            -- an alias after the image is remounted read-only. Compare the
-            -- files' native URLs instead, resolving both through Finder.
-            set expectedBackgroundURL to URL of file ".background:background.png" of imageFolder
-            set savedBackground to get background picture of viewOptions
-            log {"DMG saved background", savedBackground}
-            set actualBackgroundURL to URL of savedBackground
-            if actualBackgroundURL is not expectedBackgroundURL then error "DMG background was not saved"
+            -- The saved background is checked from Finder's binary plist by
+            -- smoke_macos.py: Finder's background getter fails on macOS 15.
         else
             error "Unknown DMG layout action"
         end if
-        close imageWindow
+        if actionName is "style" then close imageWindow
     end tell
 end run

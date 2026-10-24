@@ -5,9 +5,11 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import plistlib
 import re
 import shutil
 import subprocess
+import struct
 import sys
 import tempfile
 import time
@@ -36,7 +38,34 @@ def check_dmg_layout(mount):
             "DMG is missing its drag-to-Applications link")
     require((mount / ".background/background.png").is_file(), "DMG background is missing")
     require((mount / ".DS_Store").is_file(), "DMG Finder layout is missing")
+    check_saved_background(mount / ".DS_Store")
     subprocess.run(["/usr/bin/osascript", str(LAYOUT_SCRIPT), str(mount), "verify"], check=True, timeout=60)
+
+
+def check_saved_background(path):
+    """Read only Finder's root icon-view plist, not a general DS_Store parser.
+
+    macOS 15 renders the saved background but its AppleScript getter raises
+    -10000. The icon-view record is a length-prefixed binary plist, readable
+    with plistlib. Check its picture mode and volume-relative Alias path.
+    """
+    require(path.stat().st_size <= 4 * 1024 * 1024, "DMG Finder metadata is unexpectedly large")
+    data = path.read_bytes()
+    marker = struct.pack(">I", 1) + ".".encode("utf-16be") + b"icvpblob"
+    require(data.startswith(b"\0\0\0\1Bud1") and data.count(marker) == 1,
+            "DMG root icon-view metadata is missing or ambiguous")
+    offset = data.index(marker) + len(marker)
+    size = int.from_bytes(data[offset:offset + 4], "big")
+    require(0 < size <= len(data) - offset - 4, "DMG icon-view plist is truncated")
+    options = plistlib.loads(data[offset + 4:offset + 4 + size])
+    require(isinstance(options, dict) and options.get("backgroundType") == 2,
+            "DMG picture background was not saved")
+    alias = options.get("backgroundImageAlias")
+    relative = b"/.background/background.png"
+    # Alias record tag 18 contains the POSIX path relative to its volume.
+    expected = struct.pack(">HH", 18, len(relative)) + relative
+    require(isinstance(alias, bytes) and expected in alias,
+            "DMG saved background does not point to its bundled picture")
 
 
 def check_app(app, home, log_dir, platform="macosx"):
@@ -141,6 +170,8 @@ def main():
                         str(args.dmg.resolve(strict=True))], check=True, timeout=40)
         try:
             check_dmg_layout(mount)
+            subprocess.run(["/usr/sbin/screencapture", "-x", "test-results/macos-dmg-layout.png"],
+                           check=True, timeout=10)
             app = root / "Applications/KiCad Forge.app"
             shutil.copytree(mount / "KiCad Forge.app", app, symlinks=True)
         finally:
