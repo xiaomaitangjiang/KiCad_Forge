@@ -171,6 +171,23 @@ jobs:
           # caching loads the project before the matrix configuration exists.
           package-cache: false
 
+      - name: Prepare locked distribution dependencies before building
+        if: matrix.mode == 'release'
+        env:
+          REQUESTED_TAG: ${{ inputs.release_tag }}
+        run: |
+          python -B scripts/prepare_packaging.py --platform "${{ matrix.platform.plat }}" --arch "${{ matrix.platform.arch }}" --download
+          if [[ -n "$REQUESTED_TAG" ]]; then
+            echo "KFORGE_PACKAGE_VERSION=${REQUESTED_TAG#v}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Verify native Linux binary packaging tools
+        if: runner.os == 'Linux' && matrix.mode == 'release'
+        run: |
+          dpkg-deb --version
+          dpkg-shlibdeps --version
+          objdump --version
+
       - name: Prepare the locked static PCRE2 SDK
         run: |
           if [[ "${{ runner.os }}" == "Windows" ]]; then
@@ -228,7 +245,7 @@ jobs:
         run: python -m compileall -q plugins
 
       - name: Test Python plugins and build helpers
-        run: python -B -m unittest tests.python.test_plugins tests.python.test_lcsc_staging tests.python.test_lcsc_workflow tests.python.test_installer tests.python.test_runtime_assets tests.python.test_repository_layout tests.python.test_build_cleanup -v
+        run: python -B -m unittest tests.python.test_plugins tests.python.test_lcsc_staging tests.python.test_lcsc_workflow tests.python.test_installer tests.python.test_deb tests.python.test_distribution tests.python.test_distribution_outputs tests.python.test_packaging_dependencies tests.python.test_runtime_assets tests.python.test_repository_layout tests.python.test_build_cleanup -v
 
       - name: Check repository layout and local links
         run: python -B scripts/check_repository_layout.py
@@ -247,6 +264,28 @@ jobs:
 
       - name: Run the relocated bundle and test API startup and shutdown
         run: python scripts/smoke_test.py --binary "dist/$PACKAGE_NAME/KiCad_Forge${{ matrix.platform.exe }}"
+
+      - name: Generate native distributions with XPack
+        if: matrix.mode == 'release'
+        run: xmake pack --autobuild=n -j 1 -o dist/installers
+
+      - name: Require every expected native installer and archive
+        if: matrix.mode == 'release'
+        run: python -B scripts/verify_distributions.py --directory dist/installers --platform "${{ matrix.platform.plat }}" --arch "${{ matrix.platform.arch }}"
+
+      - name: Test the application installed from the macOS DMG
+        if: runner.os == 'macOS' && matrix.mode == 'release'
+        run: python -B scripts/smoke_macos.py --dmg dist/installers/*.dmg
+
+      - name: Test the Windows/Linux distribution without external Python
+        if: runner.os != 'macOS' && matrix.mode == 'release'
+        run: |
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            python -B scripts/smoke_distribution.py --platform mingw --archive dist/installers/*.zip
+          else
+            python -B scripts/smoke_distribution.py --platform linux --archive dist/installers/*.tar.gz
+            python -B scripts/smoke_distribution.py --platform linux --archive dist/installers/*.deb
+          fi
 
       - name: Test real WebView2 editing, workbench recovery and plugin actions
         if: runner.os == 'Windows' && matrix.mode == 'debug'
@@ -284,12 +323,12 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: Upload the tested Release build
+      - name: Upload the tested native installers and archives
         if: matrix.mode == 'release'
         uses: actions/upload-artifact@v7
         with:
           name: package-${{ matrix.platform.name }}
-          path: dist/*.zip
+          path: dist/installers/*
           if-no-files-found: error
           retention-days: 14
 
@@ -320,7 +359,7 @@ jobs:
             echo "This version tag already exists. Choose a new version."
             exit 1
           fi
-          gh release create "$RELEASE_TAG" release-assets/*.zip \
+          gh release create "$RELEASE_TAG" release-assets/* \
             --target "$GITHUB_SHA" \
             --title "$RELEASE_TAG" \
             --generate-notes
