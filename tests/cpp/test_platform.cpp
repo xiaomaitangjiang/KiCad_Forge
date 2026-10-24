@@ -15,7 +15,7 @@ TEST_CASE("macOS bundle resolves immutable resources and writable user data sepa
         CHECK(std::filesystem::path(kforge::util::get_data_dir(exe)) ==
               std::filesystem::path(home) / "Library/Application Support/KiCad_Forge/data");
     CHECK(kforge::util::get_python_executable(exe) ==
-          std::filesystem::path("/Applications/KiCad Forge.app/Contents/Helpers/python/bin/python3"));
+          std::filesystem::path("/Applications/KiCad Forge.app/Contents/Resources/python/bin/python3"));
 }
 
 TEST_CASE("ordinary and similarly named directories preserve portable resource layout")

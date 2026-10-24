@@ -17,8 +17,10 @@ import urllib.request
 
 if __package__:
     from .build_dmg import LAYOUT_SCRIPT
+    from .sign_macos_bundle import verify_bundle, assessment
 else:
     from build_dmg import LAYOUT_SCRIPT
+    from sign_macos_bundle import verify_bundle, assessment
 
 
 def require(condition, message):
@@ -72,7 +74,10 @@ def check_app(app, home, log_dir, platform="macosx"):
     if platform == "macosx":
         binary = app / "Contents/MacOS/KiCad_Forge"
         resources = app / "Contents/Resources"
-        python = app / "Contents/Helpers/python/bin/python3"
+        python = app / "Contents/Resources/python/bin/python3"
+        verify_bundle(app)
+        log_dir.mkdir(parents=True, exist_ok=True)
+        (log_dir / "macos-gatekeeper.json").write_text(json.dumps(assessment(app), indent=2), encoding="utf-8")
         data = home / "Library/Application Support/KiCad_Forge/data"
     else:
         binary = app / ("KiCad_Forge.exe" if platform == "mingw" else "KiCad_Forge")
@@ -150,6 +155,8 @@ def check_app(app, home, log_dir, platform="macosx"):
             require(process.wait(timeout=15) == 0, "Installed app exited with an error")
             require((data / "meta.db").is_file(), "Database was not created in the isolated user data directory")
             require(inventory(app) == before, "Running the app modified its signed/immutable bundle")
+            if platform == "macosx":
+                verify_bundle(app)
         finally:
             if process.poll() is None:
                 process.kill()
