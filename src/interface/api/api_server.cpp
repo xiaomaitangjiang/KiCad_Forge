@@ -72,7 +72,7 @@ bool is_local_host(const std::string& host)
 
 std::string find_webui_dir()
 {
-    auto exe_dir = kforge::util::get_exe_dir();
+    auto exe_dir = kforge::util::get_resource_dir();
     auto pkg_dist = exe_dir / "webui" / "dist";
     if (std::filesystem::exists(pkg_dist / "index.html"))
     {

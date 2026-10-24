@@ -1,0 +1,3 @@
+# SHA256-locked upstream license originals must survive Windows checkouts.
+resources/licenses/python-standalone/* -text
+packaging/linux/kicad-forge text eol=lf

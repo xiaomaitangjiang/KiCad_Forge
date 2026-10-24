@@ -9,6 +9,7 @@ set_targetdir("build/$(plat)/$(arch)/$(mode)")
 if is_host("windows") then
     set_defaultplat("mingw")
 end
+
 local msys2 = os.getenv("MSYS2_DIR") or os.getenv("MINGW_PREFIX") or "D:/msys64/mingw64"
 option("portable_deps")
     set_default(not is_host("windows"))
@@ -243,7 +244,7 @@ target("bench_import")
     storage_test_sources()
 target_end()
 
-for _, name in ipairs({"test_logger", "test_plugin_manager", "test_launcher", "test_symbol_hash"}) do
+for _, name in ipairs({"test_logger", "test_plugin_manager", "test_launcher", "test_symbol_hash", "test_platform"}) do
     target(name)
         set_kind("binary")
         add_files("tests/cpp/" .. name .. ".cpp")
@@ -307,3 +308,5 @@ if is_plat("linux", "mingw") then
         register_test()
     target_end()
 end
+
+includes("packaging/xpack.lua")

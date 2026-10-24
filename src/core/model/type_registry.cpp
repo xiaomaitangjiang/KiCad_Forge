@@ -444,7 +444,7 @@ util::Result<void> TypeRegistry::build() {
         auto target = config_dir / name;
         if (!std::filesystem::exists(target))
         {
-            auto seed = std::filesystem::path(kforge::util::get_exe_dir()) / "config" / name;
+            auto seed = kforge::util::get_resource_dir() / "config" / name;
             std::error_code copy_error;
             if (std::filesystem::exists(seed))
                 std::filesystem::copy_file(seed, target,

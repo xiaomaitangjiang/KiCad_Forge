@@ -107,9 +107,14 @@ def prepare(lcsc_id: str, output_dir: str) -> dict:
     os.makedirs(output_dir, exist_ok=True)
 
     env = os.environ.copy()
+    if sys.flags.ignore_environment:
+        env = {key: value for key, value in env.items() if not key.upper().startswith("PYTHON")}
     env["PYTHONPATH"] = PLUGIN_DIR
+    python_args = [sys.executable, "-B", "-X", "utf8"]
+    if sys.flags.no_user_site:
+        python_args.append("-s")
     r = subprocess.run(
-        [sys.executable, "-m", "easyeda2kicad",
+        [*python_args, "-m", "easyeda2kicad",
          "--lcsc_id", lcsc_id, "--output", output_dir, "--symbol", "--footprint"],
         capture_output=True, text=True, timeout=120, env=env)
 

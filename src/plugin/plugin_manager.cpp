@@ -425,7 +425,10 @@ util::Result<std::string> run_plugin_process(const std::filesystem::path& script
         return std::unexpected(
             util::Error::make<Kind::ValidationError>("Plugin arguments are not valid UTF-8"));
     }
-    std::wstring command = L"python -X utf8 " + quote_win_arg(script_w) + L" " + quote_win_arg(action_w) +
+    const auto python_path = kforge::util::get_python_executable();
+    std::wstring command = quote_win_arg(python_path.wstring()) +
+                           (python_path.is_absolute() ? L" -E -s -B -X utf8 " : L" -B -X utf8 ") +
+                           quote_win_arg(script_w) + L" " + quote_win_arg(action_w) +
                            L" " + quote_win_arg(args_w);
     kforge::util::log_debug{}("[plugin] Execute: python {} {} {}", path_display(script_path),
                               action, json_args);
@@ -681,6 +684,9 @@ util::Result<std::string> run_plugin_process(const std::filesystem::path& script
     }
 #else
     // ---- POSIX: fork/exec into its own process group ----
+    const auto python_path = kforge::util::get_python_executable();
+    const auto python = python_path.string();
+    const auto script = script_path.string();
     kforge::util::log_debug{}("[plugin] Execute: python {} {} {}", path_display(script_path),
                               action, json_args);
     int fds[2];
@@ -721,8 +727,12 @@ util::Result<std::string> run_plugin_process(const std::filesystem::path& script
         dup2(write_guard.fd, STDERR_FILENO);
         read_guard.close_now();
         write_guard.close_now();
-        execlp("python", "python", "-X", "utf8", script_path.string().c_str(), action.c_str(),
-               json_args.c_str(), static_cast<char*>(nullptr));
+        if (python_path.is_absolute())
+            execl(python.c_str(), python.c_str(), "-E", "-s", "-B", "-X", "utf8", script.c_str(),
+                  action.c_str(), json_args.c_str(), static_cast<char*>(nullptr));
+        else
+            execlp(python.c_str(), python.c_str(), "-B", "-X", "utf8", script.c_str(), action.c_str(),
+                   json_args.c_str(), static_cast<char*>(nullptr));
         _exit(127);  // exec failed
     }
     setpgid(pid, pid);  // race-free: whichever side wins, the group is the child's
@@ -1013,7 +1023,7 @@ std::vector<std::filesystem::path> default_search_paths()
 {
     std::vector<std::filesystem::path> paths;
     paths.reserve(2);  // bundled + user, at most
-    auto bundled = kforge::util::get_exe_dir() / "plugins";
+    auto bundled = kforge::util::get_resource_dir() / "plugins";
     if (std::filesystem::exists(bundled))
     {
         paths.emplace_back(bundled);

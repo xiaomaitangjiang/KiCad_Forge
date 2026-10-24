@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=KiCad Forge
+Comment=Manage KiCad component libraries
+Exec=/opt/kicad-forge/KiCad_Forge
+TryExec=/opt/kicad-forge/KiCad_Forge
+Icon=kicad-forge
+Terminal=false
+Categories=Development;Electronics;

@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /opt/kicad-forge/KiCad_Forge "$@"

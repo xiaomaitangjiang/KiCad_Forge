@@ -470,7 +470,7 @@ def busy_processes() -> list[str]:
         return []
     if result.returncode != 0:
         return []
-    names = ("kicad_forge.exe", "xmake.exe", "iscc.exe")
+    names = ("kicad_forge.exe", "xmake.exe", "makensis.exe", "iscc.exe")
     found = []
     for line in result.stdout.splitlines():
         first = line.split(",", 1)[0].strip('"').lower()

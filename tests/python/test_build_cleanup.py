@@ -377,6 +377,21 @@ class BuildCleanupTests(unittest.TestCase):
         self.assertFalse(cache.exists())
         self.assertTrue(payload.exists())
 
+    def test_nsis_compiler_blocks_cleanup_without_deleting_build_files(self) -> None:
+        cache = self.build / ".build_cache" / "item"
+        cache.parent.mkdir()
+        cache.write_bytes(b"active compiler input")
+        tasklist = subprocess.CompletedProcess(
+            ["tasklist"], 0, '"MakeNSIS.exe","123","Console","1","1024 K"\n', "")
+        with mock.patch.object(clean_build.os, "name", "nt"), \
+             mock.patch.object(clean_build.subprocess, "run", return_value=tasklist):
+            running = clean_build.busy_processes()
+        self.assertEqual(running, ["makensis.exe"])
+        with mock.patch.object(clean_build, "busy_processes", return_value=running):
+            with self.assertRaisesRegex(RuntimeError, "makensis.exe"):
+                clean_build.cleanup(self.build, ["cache"], apply=True)
+        self.assertEqual(cache.read_bytes(), b"active compiler input")
+
 
 if __name__ == "__main__":
     unittest.main()

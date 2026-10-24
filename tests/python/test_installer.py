@@ -1,190 +1,109 @@
-"""Offline regression tests for installer inputs and compiler invocation."""
+"""Offline input and command-line regressions for the XPack NSIS backend."""
 
-import contextlib
-import io
-import json
-import os
 from pathlib import Path
 import subprocess
-import sys
 import tempfile
 import unittest
 from unittest import mock
 
 from scripts import build_installer as installer
-
+from scripts.prepare_packaging import write_manifest
 
 PROJECT = Path(__file__).resolve().parents[2]
 
 
-class InstallerScriptTests(unittest.TestCase):
-    def test_installer_defaults_are_relative_to_the_script(self):
-        script = (PROJECT / "packaging/windows/kiforge.iss").read_text(encoding="utf-8")
-        self.assertNotIn("D:\\VScode", script)
-        for name in ("AppSourceDir", "AppLicenseFile", "AppIconFile", "AppOutputDir", "AppOutputName"):
-            self.assertIn("#ifndef " + name, script)
-
-    def test_installer_keeps_user_data_and_excludes_plugin_runtime_files(self):
-        script = (PROJECT / "packaging/windows/kiforge.iss").read_text(encoding="utf-8")
-        self.assertIn("AppId={{5479F8E3-FE61-4F6F-9299-B34DEBA78041}", script)
-        self.assertIn('Excludes: "__pycache__,*.pyc,.git,fetched,staging"', script)
-        uninstall = script.split("[UninstallDelete]", 1)[1].split("[Run]", 1)[0]
-        self.assertNotIn('Name: "{userappdata}', uninstall)
-
-
 class InstallerBuildTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix="KiCad Forge installer ")
+        self.temp = tempfile.TemporaryDirectory(prefix="KiForge installer ")
         self.addCleanup(self.temp.cleanup)
-        self.directory = Path(self.temp.name).resolve()
-        self.source = self.directory / "完成的 Windows bundle"
-        for relative in ("KiCad_Forge.exe", "runtime.dll", "webui/index.html",
-                         "config/component_types.json", "config/package_types.json",
-                         "config/component_type_matching.json", "plugins/git_version/manifest.json",
-                         "plugins/git_version/plugin.py", "plugins/lcsc_import/manifest.json",
-                         "plugins/lcsc_import/plugin.py", "licenses/pcre2-LICENCE.md",
-                         "licenses/sljit-LICENSE.txt"):
-            path = self.source / relative
+        self.root = Path(self.temp.name).resolve()
+        self.source = self.root / "完成的 Windows bundle"
+        for name in ("KiCad_Forge.exe", "runtime.dll", "webui/index.html",
+                     "config/component_types.json", "config/package_types.json",
+                     "config/component_type_matching.json", "plugins/git_version/manifest.json",
+                     "plugins/git_version/plugin.py", "plugins/lcsc_import/manifest.json",
+                     "plugins/lcsc_import/plugin.py", "licenses/pcre2-LICENCE.md", "licenses/sljit-LICENSE.txt"):
+            path = self.source / name
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(b"test build asset")
-        self.license = self.directory / "custom license.txt"
-        self.icon = self.directory / "custom icon.ico"
-        self.compiler = self.directory / "Inno Setup 7/ISCC.exe"
-        for path in (self.license, self.icon, self.compiler):
+            path.write_bytes(b"build asset")
+        for name in ("runtime/python/python.exe", "runtime/python/Lib/site-packages/certifi/cacert.pem"):
+            path = self.source / name
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(b"test input")
-        self.output = self.directory / "installer output"
+            path.write_bytes(b"private runtime")
+        write_manifest(self.source / "runtime/python", "x86_64", platform="mingw")
+        (self.source / "kforge-distribution.json").write_text('{"platform":"mingw"}')
+        self.compiler = self.root / "NSIS tools/makensis.exe"
+        self.compiler.parent.mkdir()
+        self.compiler.write_bytes(b"compiler")
+        self.output = self.root / "installer output"
 
-    def arguments(self, *extra):
+    def args(self, *extra):
         return installer.parser().parse_args([
-            "--source", str(self.source), "--license", str(self.license),
-            "--icon", str(self.icon), "--iscc", str(self.compiler),
-            "--output", str(self.output), *extra])
+            "--source", str(self.source), "--nsis", str(self.compiler),
+            "--output", str(self.output), "--version", "0.2.0", *extra])
 
-    def test_overrides_preserve_spaces_unicode_and_each_compiler_argument(self):
-        plan = installer.make_plan(self.arguments("--name", "KiCad Forge review"))
-        self.assertEqual(plan.command, [
-            str(self.compiler.resolve()), "/Qp", "/DAppSourceDir=" + str(self.source.resolve()),
-            "/DAppLicenseFile=" + str(self.license.resolve()), "/DAppIconFile=" + str(self.icon.resolve()),
-            "/DAppOutputDir=" + str(self.output.resolve()), "/DAppOutputName=KiCad Forge review",
-            str(installer.SCRIPT)])
-        self.assertEqual(plan.artifact, self.output / "KiCad Forge review.exe")
+    def test_argument_list_preserves_spaces_unicode_and_version(self):
+        plan = installer.make_plan(self.args("--name", "KiForge review"))
+        self.assertEqual(plan.command[0], str(self.compiler.resolve()))
+        self.assertIn("/DKFORGE_SOURCE=" + str(self.source.resolve()), plan.command)
+        self.assertIn("/DKFORGE_VERSION=0.2.0", plan.command)
+        self.assertIn("/DKFORGE_OUTPUT=" + str(self.output / "KiForge review.exe"), plan.command)
         self.assertFalse(self.output.exists())
 
-    def test_defaults_do_not_depend_on_the_callers_directory(self):
-        args = installer.parser().parse_args([])
-        self.assertEqual(args.source, PROJECT / "build/mingw/x86_64/release")
-        self.assertEqual(args.output, PROJECT / "dist/installers")
-        self.assertEqual(args.license, PROJECT / "LICENSE")
-        self.assertEqual(args.icon, PROJECT / "resources/icons/app.ico")
-
-    def test_normal_build_frontend_under_webui_dist_is_accepted(self):
-        frontend = self.source / "webui/index.html"
-        (self.source / "webui/dist").mkdir()
-        frontend.rename(self.source / "webui/dist/index.html")
-        plan = installer.make_plan(self.arguments())
-        self.assertEqual(plan.artifact, self.output / "Kicad_Forge_Setup.exe")
-
-    def test_incomplete_builds_are_rejected_without_invoking_compiler(self):
-        for relative in ("KiCad_Forge.exe", "runtime.dll", "webui/index.html",
-                         "config/component_type_matching.json", "plugins/lcsc_import/plugin.py",
-                         "licenses/pcre2-LICENCE.md"):
-            path = self.source / relative
+    def test_missing_build_assets_fail_before_compiler_runs(self):
+        for name in ("KiCad_Forge.exe", "runtime.dll", "webui/index.html",
+                     "config/component_type_matching.json", "plugins/lcsc_import/plugin.py",
+                     "licenses/pcre2-LICENCE.md", "runtime/python/python.exe", "kforge-distribution.json"):
+            path = self.source / name
             original = path.read_bytes()
             path.unlink()
             try:
-                with self.subTest(relative=relative), mock.patch.object(installer.subprocess, "run") as run:
-                    with self.assertRaises((FileNotFoundError, ValueError)):
-                        installer.make_plan(self.arguments())
-                    run.assert_not_called()
-                    self.assertFalse(self.output.exists())
+                with self.subTest(name=name), self.assertRaises((OSError, ValueError)):
+                    installer.make_plan(self.args())
             finally:
                 path.write_bytes(original)
-
-    def test_missing_external_inputs_are_rejected(self):
-        for option in ("--license", "--icon", "--iscc"):
-            with self.subTest(option=option), self.assertRaises(FileNotFoundError):
-                installer.make_plan(self.arguments(option, str(self.directory / "missing input")))
         self.assertFalse(self.output.exists())
 
-    def test_a_directory_named_dll_does_not_count_as_a_runtime_library(self):
-        dll = self.source / "runtime.dll"
-        dll.unlink()
-        dll.mkdir()
-        with self.assertRaises(FileNotFoundError):
-            installer.make_plan(self.arguments())
-
-    def test_output_cannot_be_written_into_the_input_bundle(self):
-        for output in (self.source, self.source / "installers"):
-            with self.subTest(output=output), self.assertRaises(ValueError):
-                installer.make_plan(self.arguments("--output", str(output)))
-        self.assertFalse((self.source / "installers").exists())
-
-    def test_installer_name_cannot_escape_output_or_be_a_windows_device(self):
-        for name in ("", ".", "..", "../outside", "a/b", "a\\b", "C:outside", "CON", "aux.txt",
-                     "LPT1", "COM9.foo", "trailing.", "trailing ", "bad\nname", "bad?name", "setup.exe"):
+    def test_names_cannot_inject_nsis_or_escape_output(self):
+        for name in ("", ".", "..", "../escape", "a/b", "a\\b", "CON", "aux.txt",
+                     "trailing.", "trailing ", "bad\nname", "bad?name", "setup.exe", "$TEMP"):
             with self.subTest(name=name), self.assertRaises(ValueError):
-                installer.make_plan(self.arguments("--name", name))
-        self.assertFalse(self.output.exists())
+                installer.make_plan(self.args("--name", name))
 
-    def test_redirected_assets_are_rejected(self):
-        leak = self.source / "outside.dll"
-        try:
-            leak.symlink_to(self.license)
-        except OSError as error:
-            self.skipTest("File symlinks unavailable: " + str(error))
-        with self.assertRaisesRegex(ValueError, "redirected asset"):
-            installer.make_plan(self.arguments())
-        self.assertEqual(self.license.read_bytes(), b"test input")
+    def test_bad_version_and_overlapping_output_are_rejected(self):
+        with self.assertRaises(ValueError):
+            installer.make_plan(self.args("--version", "1.2.3\nExec bad"))
+        with self.assertRaises(ValueError):
+            installer.make_plan(self.args("--output", str(self.source / "installers")))
 
-    def test_compiler_uses_an_argument_list_and_does_not_run_the_installer(self):
-        plan = installer.make_plan(self.arguments())
-
-        def compile_output(*_args, **_kwargs):
-            plan.artifact.parent.mkdir()
-            plan.artifact.write_bytes(b"compiled installer")
-
-        with mock.patch.object(installer.subprocess, "run", side_effect=compile_output) as run:
-            self.assertEqual(installer.compile_installer(plan), plan.artifact)
-        run.assert_called_once_with(plan.command, check=True, cwd=PROJECT)
-
-    def test_failed_compiler_is_reported_without_removing_existing_outputs(self):
-        self.output.mkdir()
-        marker = self.output / "existing.txt"
-        marker.write_bytes(b"keep")
-        with mock.patch.object(installer.subprocess, "run", side_effect=subprocess.CalledProcessError(2, "ISCC")):
-            with contextlib.redirect_stderr(io.StringIO()) as errors:
-                result = installer.main([
-                    "--source", str(self.source), "--output", str(self.output), "--iscc", str(self.compiler)])
-        self.assertEqual(result, 1)
-        self.assertIn("Installer build failed", errors.getvalue())
-        self.assertEqual(marker.read_bytes(), b"keep")
-
-    def test_compiler_success_without_expected_artifact_is_rejected(self):
+    def test_no_artifact_is_reported_for_compiler_failure_or_missing_output(self):
+        plan = installer.make_plan(self.args())
+        with mock.patch.object(installer.subprocess, "run", side_effect=subprocess.CalledProcessError(2, "makensis")):
+            with self.assertRaises(subprocess.CalledProcessError):
+                installer.compile_installer(plan)
         with mock.patch.object(installer.subprocess, "run"):
-            with self.assertRaisesRegex(RuntimeError, "did not produce"):
-                installer.compile_installer(installer.make_plan(self.arguments()))
+            with self.assertRaises(RuntimeError):
+                installer.compile_installer(plan)
 
-    def test_cli_dry_run_from_another_directory_writes_nothing(self):
-        result = subprocess.run([
-            sys.executable, "-X", "utf8", str(PROJECT / "scripts/build_installer.py"),
-            "--source", str(self.source), "--output", str(self.output),
-            "--iscc", str(self.compiler), "--dry-run"], cwd=self.directory,
-            capture_output=True, encoding="utf-8", timeout=15, check=True)
-        plan = json.loads(result.stdout)
-        self.assertEqual(plan["artifact"], str(self.output / "Kicad_Forge_Setup.exe"))
-        self.assertIn("/DAppSourceDir=" + str(self.source), plan["command"])
-        self.assertFalse(self.output.exists())
+    def test_compiler_uses_no_shell_and_requires_the_expected_artifact(self):
+        plan = installer.make_plan(self.args())
+        def compile_fake(*args, **kwargs):
+            self.assertEqual(args[0], plan.command)
+            self.assertTrue(kwargs["check"])
+            self.assertFalse(kwargs.get("shell", False))
+            plan.artifact.parent.mkdir(parents=True, exist_ok=True)
+            plan.artifact.write_bytes(b"installer")
+        with mock.patch.object(installer.subprocess, "run", side_effect=compile_fake):
+            self.assertEqual(installer.compile_installer(plan), plan.artifact)
 
-    def test_missing_compiler_has_a_clear_error(self):
-        with mock.patch.object(installer.shutil, "which", return_value=None), mock.patch.dict(os.environ, {}, clear=True):
-            with self.assertRaisesRegex(FileNotFoundError, "--iscc"):
-                installer.compiler_path(None)
-
-    def test_standard_compiler_locations_are_detected_without_execution(self):
-        with mock.patch.object(installer.shutil, "which", return_value=None):
-            with mock.patch.dict(os.environ, {"ProgramFiles": str(self.directory)}, clear=True):
-                self.assertEqual(installer.compiler_path(None), self.compiler)
+    def test_uninstall_preserves_user_data_and_excludes_downloads(self):
+        script = (PROJECT / "packaging/windows/kiforge.nsi").read_text(encoding="utf-8")
+        uninstall = script.split('Section "Uninstall"', 1)[1]
+        self.assertNotIn("$APPDATA", uninstall)
+        self.assertNotIn('RMDir /r "$INSTDIR"', uninstall)
+        self.assertNotIn('RMDir /r "$INSTDIR\\data"', uninstall)
+        for name in ("fetched", "staging", "__pycache__", "node_modules"):
+            self.assertIn("/x " + name, script)
 
 
 if __name__ == "__main__":

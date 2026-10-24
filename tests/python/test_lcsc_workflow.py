@@ -15,6 +15,8 @@
 import importlib.util
 import json
 import os
+from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -250,6 +252,34 @@ class HostSearchContract(unittest.TestCase):
                 os.environ["KFORGE_API_URL"] = original_url
         self.assertEqual(candidates, [])
         self.assertIn("connection refused", warning)
+
+
+class PrivateRuntimeConverter(unittest.TestCase):
+    def test_nested_converter_ignores_foreign_python_home_and_user_site(self):
+        with tempfile.TemporaryDirectory(prefix="kforge converter runtime ") as temporary:
+            root = Path(temporary)
+            module = root / "converter/easyeda2kicad"
+            module.mkdir(parents=True)
+            (module / "__init__.py").write_text("")
+            (module / "__main__.py").write_text(
+                "import json,os,sys\nfrom pathlib import Path\n"
+                "out=Path(sys.argv[sys.argv.index('--output')+1])\n"
+                "(out/'fixture.kicad_sym').write_text('(kicad_symbol_lib (symbol \\\"Fixture\\\"))')\n"
+                "(out/'probe.json').write_text(json.dumps({'home':os.environ.get('PYTHONHOME'),"
+                "'no_user_site':sys.flags.no_user_site}))\n", encoding="utf-8")
+            output = root / "output"
+            script = ("import importlib.util,json\n"
+                      f"spec=importlib.util.spec_from_file_location('lcsc', {str(Path(PLUGIN_PATH).resolve())!r})\n"
+                      "plugin=importlib.util.module_from_spec(spec);spec.loader.exec_module(plugin)\n"
+                      f"plugin.PLUGIN_DIR={str(module.parent)!r}\n"
+                      f"print(json.dumps(plugin.prepare('C123', {str(output)!r})))\n")
+            env = dict(os.environ, PYTHONHOME=str(root / "foreign-home"), PYTHONUSERBASE=str(root / "foreign-site"))
+            result = subprocess.run([sys.executable, "-E", "-s", "-B", "-X", "utf8", "-c", script],
+                                    env=env, check=True, capture_output=True, text=True, timeout=20)
+            self.assertTrue(json.loads(result.stdout)["ok"])
+            probe = json.loads((output / "probe.json").read_text())
+            self.assertIsNone(probe["home"])
+            self.assertEqual(probe["no_user_site"], 1)
 
 
 if __name__ == "__main__":
