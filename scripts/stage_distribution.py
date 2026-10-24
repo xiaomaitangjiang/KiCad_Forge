@@ -14,9 +14,11 @@ import tempfile
 if __package__:
     from .sync_runtime_assets import CACHE_IGNORE, PROTECTED_ROOTS, check_directory_chain, check_tree, overlaps
     from .prepare_packaging import verify_prepared
+    from .sign_macos_bundle import seal_bundle
 else:
     from sync_runtime_assets import CACHE_IGNORE, PROTECTED_ROOTS, check_directory_chain, check_tree, overlaps
     from prepare_packaging import verify_prepared
+    from sign_macos_bundle import seal_bundle
 
 PROJECT = Path(__file__).resolve().parents[1]
 ASSETS = ("webui", "config", "plugins", "licenses")
@@ -160,7 +162,7 @@ def stage_distribution(source, output, platform, arch, version, *, runtime=None)
             resources = contents / "Resources"
             binary_dir.mkdir(parents=True)
             resources.mkdir(parents=True)
-            shutil.copytree(runtime, contents / "Helpers/python", symlinks=True, ignore=CACHE_IGNORE)
+            shutil.copytree(runtime, resources / "python", symlinks=True, ignore=CACHE_IGNORE)
             info = {"CFBundleName": "KiCad Forge", "CFBundleDisplayName": "KiCad Forge",
                     "CFBundleIdentifier": "com.kicadforge.desktop", "CFBundlePackageType": "APPL",
                     "CFBundleExecutable": executable, "CFBundleShortVersionString": version,
@@ -185,6 +187,8 @@ def stage_distribution(source, output, platform, arch, version, *, runtime=None)
         for name in ("LICENSE", "README.md"):
             shutil.copy2(PROJECT / name, resources / name)
         # Preflight and copy failures leave any previous payload untouched.
+        if platform == "macosx":
+            seal_bundle(stage / APP_NAME, arch)
         check_internal_links(stage)
         if output.exists():
             check_internal_links(output)

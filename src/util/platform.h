@@ -82,7 +82,7 @@ inline std::string get_data_dir(const std::filesystem::path& exe_dir = get_exe_d
 inline std::filesystem::path get_python_executable(const std::filesystem::path& exe_dir = get_exe_dir())
 {
     if (is_macos_app_bundle(exe_dir))
-        return exe_dir.parent_path() / "Helpers/python/bin/python3";
+        return exe_dir.parent_path() / "Resources/python/bin/python3";
 #ifdef _WIN32
     if (std::filesystem::exists(exe_dir / "kforge-distribution.json") ||
         std::filesystem::is_directory(exe_dir / "runtime/python"))

@@ -9,7 +9,7 @@ for _, format in ipairs(formats) do
         set_title("KiCad Forge")
         set_description("KiCad component library manager")
         set_inputkind("binary")
-        set_version(os.getenv("KFORGE_PACKAGE_VERSION") or "1.1.1")
+        set_version(os.getenv("KFORGE_PACKAGE_VERSION") or "1.1.2")
         set_basename("KiCad_Forge-$(plat)-$(arch)-$(version)")
         add_targets("KiCad_Forge")
 
@@ -48,6 +48,14 @@ for _, format in ipairs(formats) do
                     "--source", path.absolute(path.join(package:builddir(), "payload")),
                     "--output", path.absolute(package:outputdir()),
                     "--name", package:basename(), "--version", package:version()})
+            end)
+        elseif format == "zip" and is_plat("macosx") then
+            on_package(function (package)
+                import("lib.detect.find_tool")
+                local python = assert(find_tool("python3"))
+                os.execv(python.program, {"-B", "-X", "utf8", path.join(os.projectdir(), "scripts/build_macos_zip.py"),
+                    "--source", path.absolute(path.join(package:builddir(), "payload")),
+                    "--output", path.absolute(package:outputdir()), "--name", package:basename()})
             end)
         elseif format == "deb" then
             -- Package the already-built payload with native dpkg tools. The

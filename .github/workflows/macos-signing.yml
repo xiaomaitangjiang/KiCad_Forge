@@ -1,0 +1,94 @@
+name: macOS bundle signature regression
+on:
+  push:
+    branches: [codex/macos-signing-20261024]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: macos-signing-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  signature-audit:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Inspect the verified release and test bundle signing
+        run: python -B scripts/audit_macos_bundle.py
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: macos-signature-audit-${{ matrix.os }}
+          path: test-results/macos-signature-audit/
+          if-no-files-found: error
+          retention-days: 7
+
+  candidate:
+    name: Signed macOS candidate / ${{ matrix.arch }}
+    needs: signature-audit
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: macos-15, arch: arm64}
+          - {os: macos-15-intel, arch: x86_64}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: xmake-io/github-action-setup-xmake@v1
+        with:
+          xmake-version: "3.1.1"
+          package-cache: false
+      - name: Prepare locked frontend, plugin and packaging dependencies
+        run: |
+          npm ci --prefix webui --no-audit --no-fund
+          npm run build --prefix webui
+          node scripts/build_plugins.mjs
+          python -B scripts/prepare_packaging.py --platform macosx --arch "${{ matrix.arch }}" --download
+          python -B scripts/prepare_dependencies.py --plat macosx --arch "${{ matrix.arch }}" --mode release --cc clang
+          xmake f -y -c -p macosx -a "${{ matrix.arch }}" -m release --portable_deps=y
+      - name: Test signing, staging and distribution contracts
+        run: python -B -m unittest tests.python.test_macos_signing tests.python.test_macos_zip tests.python.test_distribution tests.python.test_dmg tests.python.test_distribution_outputs -v
+      - name: Build the corrected app and platform path regression
+        run: |
+          xmake build -y -j 2 KiCad_Forge
+          xmake build -y test_platform
+          "build/macosx/${{ matrix.arch }}/release/test_platform"
+      - name: Package and verify the corrected native app
+        run: |
+          mkdir -p test-results
+          xmake pack --autobuild=n -j 1 -o dist/installers
+          python -B scripts/verify_distributions.py --directory dist/installers --platform macosx --arch "${{ matrix.arch }}"
+          python -B scripts/smoke_macos.py --dmg dist/installers/*.dmg
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: macos-signed-candidate-diagnostics-${{ matrix.arch }}
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+      - uses: actions/upload-artifact@v7
+        with:
+          name: KiCad_Forge-1.1.2-macos-${{ matrix.arch }}-candidate
+          path: dist/installers/*
+          if-no-files-found: error
+          retention-days: 14

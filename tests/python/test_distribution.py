@@ -14,6 +14,9 @@ from scripts.prepare_packaging import write_manifest
 
 class DistributionTests(unittest.TestCase):
     def setUp(self):
+        signer = mock.patch.object(distribution, "seal_bundle")
+        self.mac_signer = signer.start()
+        self.addCleanup(signer.stop)
         self.temp = tempfile.TemporaryDirectory(prefix="KiForge distribution ")
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name).resolve()
@@ -97,8 +100,11 @@ class DistributionTests(unittest.TestCase):
         self.assertEqual(info["LSMinimumSystemVersion"], "11.0.0")
         self.assertTrue((contents / "MacOS/KiCad_Forge").is_file())
         self.assertTrue((contents / "Resources/webui/dist/index.html").is_file())
-        self.assertTrue((contents / "Helpers/python/bin/python3").is_file())
-        self.assertTrue((contents / "Helpers/python/lib/python3.12/site-packages/certifi/cacert.pem").is_file())
+        self.assertTrue((contents / "Resources/python/bin/python3").is_file())
+        self.assertTrue((contents / "Resources/python/lib/python3.12/site-packages/certifi/cacert.pem").is_file())
+        self.mac_signer.assert_called_once()
+        self.assertEqual(self.mac_signer.call_args.args[0].name, "KiCad Forge.app")
+        self.assertEqual(self.mac_signer.call_args.args[1], "arm64")
         self.assertFalse((contents / "MacOS/data").exists())
         self.assertFalse((contents / "Resources/data").exists())
 
@@ -146,6 +152,14 @@ class DistributionTests(unittest.TestCase):
         with mock.patch.object(distribution.shutil, "copytree", side_effect=OSError("copy failed")):
             with self.assertRaises(OSError):
                 self.stage()
+        self.assertEqual((self.output / "previous").read_text(), "keep")
+
+    def test_mac_signing_failure_preserves_previous_output(self):
+        self.output.mkdir()
+        (self.output / "previous").write_text("keep")
+        self.mac_signer.side_effect = RuntimeError("signature verification failed")
+        with self.assertRaisesRegex(RuntimeError, "signature verification failed"):
+            self.stage()
         self.assertEqual((self.output / "previous").read_text(), "keep")
 
     def test_mac_rejects_a_windows_or_wrong_architecture_binary(self):

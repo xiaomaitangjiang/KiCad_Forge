@@ -5,6 +5,6 @@ namespace kforge
 {
 
 /// Application version shown by the About dialog and update checks.
-inline constexpr char kAppVersion[] = "1.1.1";
+inline constexpr char kAppVersion[] = "1.1.2";
 
 }  // namespace kforge
