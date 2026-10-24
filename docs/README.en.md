@@ -6,13 +6,13 @@
 
 A library manager for KiCad (symbols & footprints)
 
- [![Version](https://img.shields.io/github/v/release/xiaomaitangjiang/KiCad_Forge?style=flat-square&label=release&color=45658D)](https://github.com/xiaomaitangjiang/KiCad_Forge/releases) [![License](https://img.shields.io/github/license/xiaomaitangjiang/KiCad_Forge?style=flat-square)](https://github.com/xiaomaitangjiang/KiCad_Forge/blob/master/LICENSE) [![Platform](https://img.shields.io/badge/platform-Windows-665A8A?style=flat-square)](#download) [![Bugs](https://img.shields.io/github/issues/xiaomaitangjiang/KiCad_Forge/bug?style=flat-square)](https://github.com/xiaomaitangjiang/KiCad_Forge/issues?q=is%3Aopen+is%3Aissue+label%3Abug)
+ [![Version](https://img.shields.io/github/v/release/xiaomaitangjiang/KiCad_Forge?style=flat-square&label=release&color=45658D)](https://github.com/xiaomaitangjiang/KiCad_Forge/releases) [![License](https://img.shields.io/github/license/xiaomaitangjiang/KiCad_Forge?style=flat-square)](https://github.com/xiaomaitangjiang/KiCad_Forge/blob/master/LICENSE) [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-665A8A?style=flat-square)](#download) [![Bugs](https://img.shields.io/github/issues/xiaomaitangjiang/KiCad_Forge/bug?style=flat-square)](https://github.com/xiaomaitangjiang/KiCad_Forge/issues?q=is%3Aopen+is%3Aissue+label%3Abug)
 
 KiCad Forge is a modern graphical library manager, built to make managing multi-library files and large component collections in KiCad faster and more intuitive.
 
 English ~ [简体中文](../README.md)
 
-[Cross-platform builds, automated tests, and manual releases](development/ci.md)
+[Build from Source](#build-from-source) · [Packaging and CI](#packaging-and-ci)
 
 ![screenshot](assets/screenshots/main.png)
 
@@ -24,56 +24,167 @@ English ~ [简体中文](../README.md)
 ## Features
 
 - **Multiple component libraries** — Each component library groups symbol and footprint directories, with an optional 3D model directory; browse libraries in groups in the sidebar
-- **One-click batch import** — Scan a KiCad library directory and parse `.kicad_sym` / `.kicad_mod` files automatically (22,000+ symbols imported in seconds in real tests)
+- **Batch import** — Scan a KiCad library directory and parse `.kicad_sym` / `.kicad_mod` files automatically
 - **Search & filter** — Fuzzy search by name, filter by library, locate parts quickly
 - **Component type matching** — Exact exceptions take precedence over PCRE2 regex rules; unmatched parts remain `Unknown`. Choose the name, value, model/MPN, or reference field, and edit type icons and colors
 - **Link checking & auto-matching** — Check Symbol↔Footprint↔3D model link integrity, heuristic auto-matching for footprints
 - **LCSC import** — Look up an LCSC part number, choose the destination component library and an existing or new symbol sublibrary, then reuse one of the automatically found footprint candidates or create a new footprint
-- **Plugin system** — Python plugins run as independent processes, UI driven by `manifest.json`; ships with an [LCSC component importer](../plugins/lcsc_import/) and a [Git version manager](../plugins/git_version/) plugin
-- **Bilingual UI** — 中文 / English (i18next)
-- **Portable storage** — Local SQLite database, data directory travels with the app
+- **Git version control** — View library changes, commit graphs, branch labels, and file diffs in the left sidebar; initialize repositories and commit changes
+- **Symbol editing** — Copy, paste, cut/move, select all, and undo/redo within the current session; whole imports cannot be undone
+- **Workbench** — Page groups, saved layouts, and a closable All Components tab; complete LCSC and Git interfaces stay in the left sidebar, with a drawer on narrow windows
+- **Plugin system** — Independent Python processes and TypeScript frontend plugins; includes an [LCSC component importer](../plugins/lcsc_import/) and [Git version control](../plugins/git_version/), with frontend extensions through the public SDK
+- **Cross-platform packages** — Windows x64, macOS Apple Silicon / Intel, and Linux x64; distribution packages include Python
+- **Bilingual UI** — The host supports Chinese and English; translation coverage depends on each plugin
 
 Preview matching rules against a sample or the database before applying them. Saving changes only updates the configuration. Applying saved rules fills unclassified parts and preserves assigned types. Directory imports and LCSC imports use the same saved rules.
 
 ## Quick Start
 
-### Prerequisites
+### Download
 
-- [xmake](https://xmake.io/) 3.0.9+
-- [MSYS2](https://www.msys64.org/): `mingw-w64-x86_64-clang`, `mingw-w64-x86_64-lld`, and `mingw-w64-x86_64-gcc`
-- Python 3.12
-- Node.js 24 (React 19 + Vite frontend)
+Choose a version and CPU architecture from [Releases](https://github.com/xiaomaitangjiang/KiCad_Forge/releases). The current source and CI configure the formats below; available downloads depend on the **Assets** attached to each release. Build from source if a package has not been uploaded.
 
-Before the first build, prepare PCRE2 and the other locked dependencies as described in [docs/development/ci.md](development/ci.md#本地构建). Normal builds use the tracked `resources/icons/app.ico`. Only changes to the icon artwork require CairoSVG and Pillow, followed by a manual run of `scripts/svg2ico.py`.
+| Platform | Recommended format | Other downloads |
+| --- | --- | --- |
+| Windows x64 | EXE installer | ZIP, no installer required |
+| macOS Apple Silicon (arm64) | DMG | ZIP containing the `.app` bundle |
+| macOS Intel (x86_64) | DMG | ZIP containing the `.app` bundle |
+| Linux x64 (Ubuntu/Debian) | DEB installer | tar.gz / ZIP, no installer required |
 
-> Defaults to `D:/msys64/mingw64`; set the `MSYS2_DIR` environment variable to point to a different MSYS2 installation.
+Distribution packages on all three operating systems include Python 3.12.15 and a certificate bundle. The built-in plugins require no separate Python installation or manual pip setup. The Git plugin still requires Git on the system `PATH`; LCSC lookup and downloads need an internet connection.
 
-### Build & Run
+### How to Use
 
-```bash
-# 1. Install frontend dependencies
-cd webui && npm ci && cd ..
+- **Windows**: Run the EXE installer, or extract the ZIP and launch `KiCad_Forge.exe`. The installer uses a directory under the current user's profile and adds Start menu shortcuts; a desktop shortcut is optional. The embedded UI requires an available WebView2 Runtime.
+- **macOS**: Open the DMG and copy `KiCad Forge.app` into Applications before opening it. Extracting the ZIP produces the same `.app` bundle. Neither format needs an installation wizard. Developer ID signing and notarization are not configured yet, so macOS may restrict the first launch.
+- **Linux**: Open the DEB in the system software installer, or use `sudo apt install ./filename.deb`. For the versions without an installer, extract the files and run `KiCad_Forge`; system library requirements still apply.
 
-# 2. Configure and build (debug)
-xmake f -p mingw -c
-xmake build
+macOS and Linux display the UI in the system browser and need a graphical desktop session. Linux also needs `xdg-open`, usually provided by `xdg-utils`.
 
-# Or build a release version
-xmake f -m release && xmake build
+On first launch, the app tries to detect and import the official libraries from a local KiCad installation. If none are found, or to add third-party libraries, configure symbol, footprint, and optional 3D model paths under Settings → Library Paths.
+
+Symbol paths can be directories or individual `.kicad_sym` files. Footprint and 3D model paths must be directories. One possible layout is shown below; the folder names are not required:
+
+```text
+EXT_Internal_kicad_Lib
+├── 3DModels
+├── Docs
+├── Footprints
+│   ├── EXT_ACDC.pretty
+│   └── EXT_Example.pretty
+└── Symbols
 ```
 
-The binary lands at `build/mingw/x86_64/<mode>/KiCad_Forge.exe`. After building, `after_build` automatically copies webui, plugins, config, and the runtime DLLs into the output directory — just double-click the exe to run (embedded WebView2 window).
+![Settings](assets/screenshots/setting.png)
 
 ### Data Directory
 
-Portable-first: data (SQLite database, settings) lives in a `data/` folder next to the exe; if that is not writable, it falls back to `%APPDATA%/KiCad_Forge/data/`.
+| Platform | Default data directory |
+| --- | --- |
+| Windows | `%APPDATA%/KiCad_Forge/data/` |
+| macOS `.app` | `~/Library/Application Support/KiCad_Forge/data/` |
+| Linux | `~/.KiCad_Forge/` |
+
+On Windows and Linux, an existing `data/` directory next to the executable takes precedence. To keep data with the app, create that directory before the first launch and ensure it is writable. Downloading a version without an installer does not enable portable data storage automatically. macOS `.app` bundles always use the user data directory.
+
+Back up the database, configuration, and library files before upgrading. Windows now uses a per-user NSIS installer. An older system-wide Inno Setup installation has a separate uninstall entry; uninstall that version separately if you want to remove it.
+
+## Build from Source
+
+These tools are for development and packaging. Users of published distribution packages do not need them.
+
+### Prerequisites
+
+- [xmake](https://xmake.io/) 3.0.9+ (CI uses 3.1.1)
+- Python 3.12, Node.js 24, and CMake
+- Windows: [MSYS2](https://www.msys64.org/) packages `mingw-w64-x86_64-clang`, `mingw-w64-x86_64-lld`, and `mingw-w64-x86_64-gcc`; add the toolchain's `bin` directory to `PATH`
+- Linux: GCC 14 / G++ 14
+- macOS: Xcode Command Line Tools / Apple Clang
+
+PCRE2 and the other native dependencies use locked archives, recipes, and checksums under `dependencies/`. Prepare dependencies and configure the project before building. The Windows example assumes MSYS2 is at `D:/msys64/mingw64`; adjust it for your machine.
+
+Normal builds use the tracked `resources/icons/app.ico`. Only icon artwork changes require CairoSVG and Pillow, followed by a manual run of `scripts/svg2ico.py`.
+
+### Prepare the Frontend
+
+Run from the repository root:
+
+```sh
+npm ci --prefix webui
+npm run build --prefix webui
+node scripts/build_plugins.mjs
+```
+
+### Build the Native Application
+
+Windows (PowerShell):
+
+```powershell
+$env:MSYS2_DIR = "D:/msys64/mingw64"
+python -B scripts/prepare_dependencies.py --plat mingw --arch x86_64 --mode release
+$env:PCRE2_SDK_DIR = (Resolve-Path "build/dependencies/pcre2/mingw/x86_64/release/install").Path
+xmake f -y -c -p mingw -a x86_64 -m release --portable_deps=y --mingw="$env:MSYS2_DIR"
+xmake build -y -j 2 KiCad_Forge
+```
+
+Linux x64:
+
+```sh
+python3 -B scripts/prepare_dependencies.py --plat linux --arch x86_64 --mode release --cc gcc-14
+xmake f -y -c -p linux -a x86_64 -m release --portable_deps=y --cc=gcc-14 --cxx=g++-14 --ld=g++-14 --sh=g++-14
+xmake build -y -j 2 KiCad_Forge
+```
+
+macOS Apple Silicon (on Intel Macs, replace both occurrences of `arm64` with `x86_64`):
+
+```sh
+python3 -B scripts/prepare_dependencies.py --plat macosx --arch arm64 --mode release --cc clang
+xmake f -y -c -p macosx -a arm64 -m release --portable_deps=y
+xmake build -y -j 2 KiCad_Forge
+```
+
+The application is written to `build/<platform>/<architecture>/release/`: `KiCad_Forge.exe` on Windows and `KiCad_Forge` elsewhere. The build copies the frontend, plugins, configuration, licenses, and Windows runtime DLLs into that directory.
+
+When run directly from a source build, plugins still use `python` on the Windows `PATH`, or `python3` on macOS/Linux. The XPack step below adds the private Python runtime to distribution packages.
+
+## Packaging and CI
+
+Complete the Release build above on the target operating system, then prepare the locked Python runtime, certificates, and packaging tools separately. Downloads are allowed only in this explicit preparation step with `--download`; every file is checked against `dependencies/packaging.lock.json`. Omit the flag when the cache is complete.
+
+Windows (PowerShell):
+
+```powershell
+python -B scripts/prepare_packaging.py --platform mingw --arch x86_64 --download
+xmake pack --autobuild=n -j 1 -o dist/installers
+```
+
+Linux x64 (requires `dpkg-deb`, `dpkg-shlibdeps`, and `objdump`, usually provided by `dpkg`, `dpkg-dev`, and `binutils`):
+
+```sh
+python3 -B scripts/prepare_packaging.py --platform linux --arch x86_64 --download
+xmake pack --autobuild=n -j 1 -o dist/installers
+```
+
+macOS Apple Silicon (replace `arm64` with `x86_64` on Intel Macs):
+
+```sh
+python3 -B scripts/prepare_packaging.py --platform macosx --arch arm64 --download
+xmake pack --autobuild=n -j 1 -o dist/installers
+```
+
+The [XPack configuration](../packaging/xpack.lua) generates every format listed for the target platform: NSIS on Windows, system DMG tools on macOS, and native dpkg tools for Linux DEB files. Final downloads go to `dist/installers/`; `build/` contains compiled output and dependencies. Both directories are excluded from Git.
+
+The [CI workflow](../.github/workflows/ci.yml) checks the frontend and SDK, then runs Debug and Release builds and tests across four platform/architecture combinations, for eight native jobs. Release jobs generate and upload distribution packages automatically. Ordinary pushes and pull requests do not publish releases. Only a manual run with `publish_release` enabled publishes after all checks pass, using a new stable tag in `vMAJOR.MINOR.PATCH` format.
 
 ## Project Structure
 
 ```
 KiCad_Forge
 ├── config
+├── dependencies
 ├── docs
+├── examples
+├── packaging
 ├── plugins
 ├── resources
 ├── scripts
@@ -98,6 +209,7 @@ KiCad_Forge
 │   │   └── service
 │   │       ├── classification
 │   │       ├── correspondence
+│   │       ├── editing
 │   │       ├── import
 │   │       └── library
 │   ├── platform
@@ -112,155 +224,27 @@ KiCad_Forge
 
 ## Plugin System
 
-> **⚠️ Note: Plugins run as independent Python processes with the same filesystem access as the host application — KiCad Forge cannot provide any security guarantee. Only install plugins from trusted sources; a malicious plugin can read, modify, or delete arbitrary files.**
+> Defaults to `D:/msys64/mingw64`; set the `MSYS2_DIR` environment variable to point to a different MSYS2 installation.
 
-Plugins live in `plugins/`, one folder per plugin, containing `manifest.json` + Python scripts. The backend invokes them via CLI: `python plugin.py <action> '<json_args>'`; the plugin outputs JSON to stdout.
+Plugins can contain an independent Python backend, a TypeScript frontend, or both. The complete interfaces for the built-in LCSC and Git plugins live in the left sidebar.
 
-**manifest.json**
+- Python backends receive an action name and JSON arguments through the CLI and return JSON on stdout. The host manages tasks, status, and cancellation. Distribution packages use the bundled interpreter; source builds use system Python.
+- Frontends register sidebar panels, toolbar actions, and other public slots through `@kiforge/plugin-sdk`, using the host's React and shared runtime. Plugin sources are built independently and do not import host internals.
+- Built-in plugins use `manifestVersion: 2`: `python` declares the backend entry and actions, `frontend` declares frontend assets, and `engines` specifies host and SDK compatibility. Legacy v1 manifests remain supported through a compatibility path.
+- User plugins live in a `plugins/` directory alongside the data directory. Built-in plugins are under `plugins/` in the distribution's resources; on macOS this is `.app/Contents/Resources/plugins/`.
 
-```json
-{
-  "id": "com.kicad_forge.lcsc_import",
-  "name": "LCSC Component Importer",
-  "version": "2.1.0",
-  "author": "KiCad Forge",
-  "description": "Download symbols, footprints, and 3D models from LCSC by part number",
-  "license": "MIT",
-  "capabilities": [
-    "import"
-  ],
-  "one_click": true,
-  "entry": "plugin.py",
-  "entry_function": "import_component",
-  "icon": "icon.svg",
-  "actions": [
-    {
-      "id": "import",
-      "name": "Import LCSC",
-      "description": "Find a part by LCSC number and import it into a component library package",
-      "trigger": "dialog",
-      "template": "lcsc_import",
-      "analyze_action": "analyze",
-      "protocol": "staged-import-v1",
-      "icon": "icon.svg",
-      "button": {
-        "show": true,
-        "style": "both",
-        "location": "sidebar",
-        "tooltip": "Download from LCSC"
-      },
-      "schema": {
-        "fields": [
-          {
-            "key": "lcsc_id",
-            "label": "LCSC Part Number",
-            "type": "text",
-            "required": true
-          },
-          {
-            "key": "target_component_library_id",
-            "label": "Component Library Package",
-            "type": "component_library_picker",
-            "required": true
-          },
-          {
-            "key": "symbol_library_choice",
-            "label": "Symbol Library",
-            "type": "symbol_library_choice",
-            "source": "component_symbol_libraries",
-            "modes": [
-              "existing",
-              "new"
-            ],
-            "required": true
-          },
-          {
-            "key": "footprint_choice",
-            "label": "Footprint",
-            "type": "footprint_choice",
-            "source": "footprints",
-            "near_from": "footprint_name",
-            "modes": [
-              "reuse",
-              "new"
-            ],
-            "required": true
-          }
-        ]
-      }
-    },
-    {
-      "id": "analyze",
-      "name": "Analyze LCSC",
-      "description": "Download and inspect without writing to the library",
-      "trigger": "hidden",
-      "hidden": true,
-      "button": {
-        "show": false
-      }
-    }
-  ],
-  "dependencies": {
-    "python": ">=3.10",
-    "pip": [
-      "easyeda2kicad"
-    ]
-  }
-}
-```
+Development references:
 
-**Top-level fields**
+- [Public plugin SDK](../webui/packages/plugin-sdk/README.md): interfaces, slots, tasks, configuration, and build rules.
+- [Example plugins](../examples/plugins/README.md): independently built frontend examples.
+- [LCSC manifest](../plugins/lcsc_import/manifest.json) / [Git manifest](../plugins/git_version/manifest.json): the v2 manifests used by the built-in plugins.
 
-| Field | Description |
-|---|---|
-| `id` / `name` | Unique plugin ID and display name (required) |
-| `version` / `author` / `description` / `license` | Plugin metadata |
-| `entry` | Entry script, defaults to `plugin.py` |
-| `entry_function` | Entry function name (reserved) |
-| `icon` | Plugin icon (SVG) |
-| `capabilities` | Capability declarations (e.g. `import`, `tool`) |
-| `one_click` | Whether the plugin supports one-click execution |
-| `actions` | Action list, see table below |
-| `dependencies` | Runtime dependencies: `python` version constraint and `pip` packages |
-| `min_app_version` / `platforms` | Optional: minimum app version / supported platforms |
-
-**actions[] fields**
-
-| Field | Description |
-|---|---|
-| `trigger` | `"dialog"` popup form / `"inline"` one-click execution (default) / `"hidden"` hidden action (referenced by templates) |
-| `template` | `"lcsc_import"` opens the dedicated LCSC flow: look up the part → choose the destination component library → choose an existing or new symbol sublibrary → reuse or create a footprint; other plugins use the generic form |
-| `analyze_action` | ID of the hidden analysis action referenced by `lcsc_import` |
-| `protocol` | `"staged-import-v1"` staged import protocol |
-| `preflight` | action id executed before the dialog opens; its result (e.g. Git status) is shown at the top of the form |
-| `auto_args` | Argument keys filled in automatically by the host (e.g. `target_library`) |
-| `button.show` | Show the button (default `true`) |
-| `button.style` | `"icon"` / `"text"` / `"both"` (default) |
-| `button.location` | `"toolbar"` (default) / `"sidebar"` |
-| `button.tooltip` | Button tooltip |
-
-**schema.fields[] supported field types**
-
-| `type` | Description |
-|---|---|
-| `text` | Text input (default) |
-| `library_picker` | Symbol library dropdown in the generic form |
-| `component_library_picker` | `lcsc_import` only: choose a registered, writable component library with symbol and footprint directories |
-| `symbol_library_choice` | `lcsc_import` only: choose a physical `.kicad_sym` file within the destination package, including empty libraries, or enter a new sublibrary name; no default selection |
-| `footprint_choice` | `lcsc_import` only: reuse a footprint by UUID from automatic candidates or search results, or explicitly create a new one |
-
-**style: icon**
-![icon](assets/screenshots/plugin-style/with-icon.png)
-
-**style: both**
-![both](assets/screenshots/plugin-style/icon-and-text.png)
-
-**style: text**
-![text](assets/screenshots/plugin-style/without-text.png)
 
 ## API
 
 The built-in HTTP server exposes a REST API. Full documentation: [docs/api/http-api.md](api/http-api.md) (Chinese).
+
+Import, LCSC, editing, and workbench contracts and acceptance scenarios are in the [feature specifications](specs/README.md) (Chinese). The specifications distinguish implemented behavior, planned rules, and verification gaps.
 
 | Endpoint | Method | Description |
 |---|---|---|
@@ -270,6 +254,9 @@ The built-in HTTP server exposes a REST API. Full documentation: [docs/api/http-
 | `/api/component-libraries` | GET/POST | Manage and import component library directory groups |
 | `/api/plugins` | GET | List plugins |
 | `/api/plugins/{id}/icon` | GET | Plugin icon |
+| `/api/tasks` | POST | Submit a plugin action and create a task |
+| `/api/tasks/{task_id}` | GET | Read task status and results |
+| `/api/tasks/{task_id}/cancel` | POST | Request cancellation of a cancelable task |
 | `/api/classify` | POST | Run classification rules |
 | `/api/check` | POST | Check Symbol↔Footprint↔3D links |
 | `/api/config` | GET/POST | Read/write configuration |
@@ -279,28 +266,32 @@ The built-in HTTP server exposes a REST API. Full documentation: [docs/api/http-
 | `/api/component-type-matching/reload` | POST | Reload matching rules from the data directory |
 | `/api/import` | POST | Import a directory (`?dir=`) |
 
-## Download
-
-Grab the latest release from [Releases](https://github.com/xiaomaitangjiang/KiCad_Forge/releases):
-
-- **Windows**: an installer is provided — download and run
-- Other platforms: no prebuilt packages yet, please build from source (see [Quick Start](#quick-start))
-
 ## Tech Stack
 
 | Layer | Choice |
 |---|---|
 | Language | C++23 |
-| Compiler | clang 22 (MSYS2, MinGW target) |
-| Build | xmake |
-| Frontend | React 19 + Vite |
+| Compiler | Windows: MSYS2 Clang; Linux: GCC 14; macOS: Apple Clang |
+| Build and packaging | xmake + XPack |
+| Frontend | React 19 + Vite + TypeScript plugin SDK |
 | Database | SQLite3 |
 | HTTP | httplib (header-only) |
 | Logging | spdlog |
-| WebView | [webview/webview](https://github.com/webview/webview) (WebView2 Runtime on Windows) |
+| Desktop UI | Windows: [webview/webview](https://github.com/webview/webview) + WebView2; macOS/Linux: system browser |
+| Plugin runtime | Python 3.12.15 bundled in distributions |
 | License | MIT |
 
 ---
+
+## Star History
+
+<a href="https://www.star-history.com/?repos=xiaomaitangjiang%2Fkicad_forge&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=xiaomaitangjiang/kicad_forge&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=xiaomaitangjiang/kicad_forge&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=xiaomaitangjiang/kicad_forge&type=date&legend=top-left" />
+ </picture>
+</a>
 
 ## Contributing
 
