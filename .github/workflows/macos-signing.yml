@@ -1,0 +1,27 @@
+name: macOS signature audit
+on:
+  push:
+    branches: [codex/macos-signing-20261024]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  signature-audit:
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Inspect the verified release and test bundle signing
+        run: python -B scripts/audit_macos_bundle.py
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: macos-signature-audit
+          path: test-results/macos-signature-audit/
+          if-no-files-found: error
+          retention-days: 7
