@@ -34,7 +34,7 @@ def main():
     parser.add_argument("--directory", required=True, type=Path)
     parser.add_argument("--platform", required=True)
     parser.add_argument("--arch", required=True)
-    parser.add_argument("--version", default=os.environ.get("KFORGE_PACKAGE_VERSION", "0.1.1"))
+    parser.add_argument("--version", default=os.environ.get("KFORGE_PACKAGE_VERSION", "1.1.0"))
     args = parser.parse_args()
     try:
         for path in verify_distributions(args.directory, args.platform, args.arch, args.version):
