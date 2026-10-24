@@ -18,7 +18,8 @@ on run argv
             set text size of viewOptions to 14
             set background picture of viewOptions to file ".background:background.png" of imageFolder
             try
-                log {"DMG background immediately after setting", get background picture of viewOptions}
+                set initialBackground to get background picture of viewOptions
+                log {"DMG background immediately after setting", initialBackground}
             on error messageText
                 log {"DMG background read failed immediately after setting", messageText}
             end try
