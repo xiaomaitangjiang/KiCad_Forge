@@ -122,6 +122,14 @@ jobs:
           python-version: "3.12"
       - name: Generate and remount a DMG before compiling native targets
         run: python -B -m unittest tests.python.test_dmg.DiskImageTests.test_native_read_only_image_preserves_finder_layout_after_remount -v
+      - name: Upload Finder layout failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: dmg-layout-${{ matrix.os }}
+          path: test-results/dmg-layout/
+          if-no-files-found: ignore
+          retention-days: 7
 
   build:
     needs: [validate, frontend, dmg-layout]

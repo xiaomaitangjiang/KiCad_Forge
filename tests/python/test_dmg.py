@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import plistlib
+import re
 import shutil
 import subprocess
 import sys
@@ -136,6 +137,28 @@ class DiskImageTests(unittest.TestCase):
                         "-mountpoint", str(mount), str(artifact)], check=True, timeout=40)
         try:
             smoke_macos.check_dmg_layout(mount)
+        except Exception:
+            diagnostics = dmg.PROJECT / "test-results/dmg-layout"
+            diagnostics.mkdir(parents=True, exist_ok=True)
+            store = (mount / ".DS_Store").read_bytes()
+            (diagnostics / "Finder.DS_Store").write_bytes(store)
+            # Finder stores its icon-view dictionary as a length-prefixed
+            # binary plist. Dump only diagnostic fields, never modify the store.
+            for match in re.finditer(b"bplist00", store):
+                if match.start() < 4:
+                    continue
+                size = int.from_bytes(store[match.start() - 4:match.start()], "big")
+                try:
+                    data = plistlib.loads(store[match.start():match.start() + size])
+                except (ValueError, plistlib.InvalidFileException):
+                    continue
+                if isinstance(data, dict) and "backgroundType" in data:
+                    print("Finder saved icon-view options:", {
+                        key: value for key, value in data.items() if not isinstance(value, bytes)})
+                    alias = data.get("backgroundImageAlias", b"")
+                    print("Finder background alias strings:", re.findall(rb"[ -~]{5,}", alias))
+            subprocess.run(["/usr/sbin/screencapture", "-x", str(diagnostics / "Finder.png")], timeout=10)
+            raise
         finally:
             subprocess.run(["/usr/bin/hdiutil", "detach", str(mount)], check=True, timeout=40)
 

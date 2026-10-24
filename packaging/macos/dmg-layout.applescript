@@ -17,6 +17,11 @@ on run argv
             set icon size of viewOptions to 128
             set text size of viewOptions to 14
             set background picture of viewOptions to file ".background:background.png" of imageFolder
+            try
+                log {"DMG background immediately after setting", get background picture of viewOptions}
+            on error messageText
+                log {"DMG background read failed immediately after setting", messageText}
+            end try
             set position of item "KiCad Forge.app" of imageFolder to {160, 190}
             set position of item "Applications" of imageFolder to {480, 190}
             update imageFolder without registering applications
