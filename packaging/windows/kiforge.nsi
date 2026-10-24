@@ -27,11 +27,38 @@ VIAddVersionKey "FileDescription" "KiCad Forge Installer"
 VIAddVersionKey "FileVersion" "${KFORGE_VERSION}"
 VIAddVersionKey "LegalCopyright" "KiCad Forge contributors"
 
+Var UninstallFailed
+
+!macro RemoveInstalledFile File
+  ${If} ${FileExists} "${File}"
+    ClearErrors
+    Delete "${File}"
+    ${If} ${Errors}
+      StrCpy $UninstallFailed 1
+    ${EndIf}
+  ${EndIf}
+!macroend
+
+!macro RemoveInstalledDirectory Directory
+  ${If} ${FileExists} "${Directory}\*.*"
+    ClearErrors
+    RMDir /r "${Directory}"
+    ${If} ${Errors}
+      StrCpy $UninstallFailed 1
+    ${EndIf}
+  ${EndIf}
+!macroend
+
 Function .onInit
   ${IfNot} ${RunningX64}
     MessageBox MB_ICONSTOP "KiCad Forge requires 64-bit Windows."
     Abort
   ${EndIf}
+  SetShellVarContext current
+FunctionEnd
+
+Function un.onInit
+  SetShellVarContext current
 FunctionEnd
 
 Section "KiCad Forge" Main
@@ -60,7 +87,9 @@ Section "KiCad Forge" Main
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\KiCad_Forge" "DisplayName" "KiCad Forge"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\KiCad_Forge" "DisplayVersion" "${KFORGE_VERSION}"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\KiCad_Forge" "DisplayIcon" "$INSTDIR\KiCad_Forge.exe"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\KiCad_Forge" "InstallLocation" "$INSTDIR"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\KiCad_Forge" "UninstallString" '$\"$INSTDIR\Uninstall.exe$\"'
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\KiCad_Forge" "QuietUninstallString" '$\"$INSTDIR\Uninstall.exe$\" /S'
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\KiCad_Forge" "NoModify" 1
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\KiCad_Forge" "NoRepair" 1
 SectionEnd
@@ -72,21 +101,36 @@ SectionEnd
 Section "Uninstall"
   ; All mutable state is under the user's application-data directory.
   ; Preserve it and any app-local data/ from a previous portable installation.
-  Delete "$INSTDIR\KiCad_Forge.exe"
-  Delete "$INSTDIR\*.dll"
-  Delete "$INSTDIR\LICENSE"
-  Delete "$INSTDIR\kforge-distribution.json"
-  Delete "$INSTDIR\Uninstall.exe"
-  RMDir /r "$INSTDIR\webui"
-  RMDir /r "$INSTDIR\config"
-  RMDir /r "$INSTDIR\plugins"
-  RMDir /r "$INSTDIR\licenses"
-  RMDir /r "$INSTDIR\runtime"
-  RMDir "$INSTDIR"
+  ; Windows cannot remove the current working directory. NSIS initializes
+  ; $OUTDIR to $INSTDIR, so leave it before removing any installed files.
+  SetOutPath "$TEMP"
+  StrCpy $UninstallFailed 0
+  !insertmacro RemoveInstalledFile "$INSTDIR\KiCad_Forge.exe"
+  ; Do not dismantle a running application if its executable is still in use.
+  ${If} $UninstallFailed == 0
+    !insertmacro RemoveInstalledFile "$INSTDIR\*.dll"
+    !insertmacro RemoveInstalledFile "$INSTDIR\LICENSE"
+    !insertmacro RemoveInstalledFile "$INSTDIR\kforge-distribution.json"
+    !insertmacro RemoveInstalledDirectory "$INSTDIR\webui"
+    !insertmacro RemoveInstalledDirectory "$INSTDIR\config"
+    !insertmacro RemoveInstalledDirectory "$INSTDIR\plugins"
+    !insertmacro RemoveInstalledDirectory "$INSTDIR\licenses"
+    !insertmacro RemoveInstalledDirectory "$INSTDIR\runtime"
+  ${EndIf}
+  ${If} $UninstallFailed != 0
+    ; Keep both registration and the uninstaller available for another attempt.
+    SetErrorLevel 1
+    IfSilent +2
+      MessageBox MB_ICONEXCLAMATION "Some files could not be removed. Close KiCad Forge and retry uninstalling."
+    Quit
+  ${EndIf}
   Delete "$DESKTOP\KiCad Forge.lnk"
   Delete "$SMPROGRAMS\KiCad Forge\KiCad Forge.lnk"
   Delete "$SMPROGRAMS\KiCad Forge\Uninstall.lnk"
   RMDir "$SMPROGRAMS\KiCad Forge"
   DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\KiCad_Forge"
   DeleteRegKey HKCU "Software\KiCad_Forge"
+  !insertmacro RemoveInstalledFile "$INSTDIR\Uninstall.exe"
+  ; Remove only an empty root; portable data/ and unrelated files are retained.
+  RMDir "$INSTDIR"
 SectionEnd
