@@ -13,6 +13,11 @@ import tempfile
 import time
 import urllib.request
 
+if __package__:
+    from .build_dmg import LAYOUT_SCRIPT
+else:
+    from build_dmg import LAYOUT_SCRIPT
+
 
 def require(condition, message):
     if not condition:
@@ -22,6 +27,16 @@ def require(condition, message):
 def inventory(app):
     return {p.relative_to(app).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
             for p in app.rglob("*") if p.is_file()}
+
+
+def check_dmg_layout(mount):
+    require((mount / "KiCad Forge.app/Contents/Info.plist").is_file(), "DMG application bundle is missing")
+    applications = mount / "Applications"
+    require(applications.is_symlink() and os.readlink(applications) == "/Applications",
+            "DMG is missing its drag-to-Applications link")
+    require((mount / ".background/background.png").is_file(), "DMG background is missing")
+    require((mount / ".DS_Store").is_file(), "DMG Finder layout is missing")
+    subprocess.run(["/usr/bin/osascript", str(LAYOUT_SCRIPT), str(mount), "verify"], check=True, timeout=60)
 
 
 def check_app(app, home, log_dir, platform="macosx"):
@@ -125,6 +140,7 @@ def main():
         subprocess.run(["hdiutil", "attach", "-readonly", "-nobrowse", "-mountpoint", str(mount),
                         str(args.dmg.resolve(strict=True))], check=True, timeout=40)
         try:
+            check_dmg_layout(mount)
             app = root / "Applications/KiCad Forge.app"
             shutil.copytree(mount / "KiCad Forge.app", app, symlinks=True)
         finally:

@@ -38,7 +38,18 @@ for _, format in ipairs(formats) do
             end
         end)
 
-        if format == "deb" then
+        if format == "dmg" then
+            -- Finder's drag-install layout must be saved on a writable image
+            -- before converting it to the final compressed read-only DMG.
+            on_package(function (package)
+                import("lib.detect.find_tool")
+                local python = assert(find_tool("python3"))
+                os.execv(python.program, {"-B", "-X", "utf8", path.join(os.projectdir(), "scripts/build_dmg.py"),
+                    "--source", path.absolute(path.join(package:builddir(), "payload")),
+                    "--output", path.absolute(package:outputdir()),
+                    "--name", package:basename(), "--version", package:version()})
+            end)
+        elseif format == "deb" then
             -- Package the already-built payload with native dpkg tools. The
             -- default deb backend rebuilds sources with debuild instead.
             on_package(function (package)
