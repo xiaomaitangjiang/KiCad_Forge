@@ -49,6 +49,14 @@ for _, format in ipairs(formats) do
                     "--output", path.absolute(package:outputdir()),
                     "--name", package:basename(), "--version", package:version()})
             end)
+        elseif format == "zip" and is_plat("macosx") then
+            on_package(function (package)
+                import("lib.detect.find_tool")
+                local python = assert(find_tool("python3"))
+                os.execv(python.program, {"-B", "-X", "utf8", path.join(os.projectdir(), "scripts/build_macos_zip.py"),
+                    "--source", path.absolute(path.join(package:builddir(), "payload")),
+                    "--output", path.absolute(package:outputdir()), "--name", package:basename()})
+            end)
         elseif format == "deb" then
             -- Package the already-built payload with native dpkg tools. The
             -- default deb backend rebuilds sources with debuild instead.

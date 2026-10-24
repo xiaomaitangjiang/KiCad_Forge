@@ -5,6 +5,9 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: macos-signing-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   signature-audit:
     strategy:
@@ -64,7 +67,7 @@ jobs:
           python -B scripts/prepare_dependencies.py --plat macosx --arch "${{ matrix.arch }}" --mode release --cc clang
           xmake f -y -c -p macosx -a "${{ matrix.arch }}" -m release --portable_deps=y
       - name: Test signing, staging and distribution contracts
-        run: python -B -m unittest tests.python.test_macos_signing tests.python.test_distribution tests.python.test_dmg tests.python.test_distribution_outputs -v
+        run: python -B -m unittest tests.python.test_macos_signing tests.python.test_macos_zip tests.python.test_distribution tests.python.test_dmg tests.python.test_distribution_outputs -v
       - name: Build the corrected app and platform path regression
         run: |
           xmake build -y -j 2 KiCad_Forge

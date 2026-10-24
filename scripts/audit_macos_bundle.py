@@ -9,6 +9,7 @@ import tempfile
 import urllib.request
 
 from sign_macos_bundle import assessment, seal_bundle, verify_bundle
+from build_macos_zip import build_zip
 
 ROOT = Path(__file__).resolve().parents[1]
 RESULTS = ROOT / "test-results/macos-signature-audit"
@@ -47,6 +48,10 @@ def main():
             assert str(app) in result.stdout
             report["relocated_python_prefix"] = result.stdout.strip()
             verify_bundle(app)
+            archive_copy = build_zip(root, root.parent / (root.name + "-archives"), "signature-roundtrip-" + arch)
+            report["zip_roundtrip_integrity"] = "valid"
+            archive_copy.unlink()
+            archive_copy.parent.rmdir()
             report["repaired_gatekeeper"] = assessment(app)
             assert not report["repaired_gatekeeper"]["accepted"], "Ad-hoc signatures must not be described as Developer ID trust"
             print(json.dumps(report, indent=2), flush=True)
