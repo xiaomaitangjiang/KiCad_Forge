@@ -40,7 +40,8 @@ def main():
             report["repaired_integrity"] = "valid"
             python = app / "Contents/Resources/python/bin/python3"
             result = subprocess.run([str(python), "-E", "-s", "-B", "-c",
-                "import ssl,certifi,sys; ssl.create_default_context(cafile=certifi.where()); print(sys.prefix)"],
+                "import ssl,certifi,sys,_crypt,_dbm,_tkinter; "
+                "ssl.create_default_context(cafile=certifi.where()); print(sys.prefix)"],
                 env=dict(os.environ, PYTHONHOME="/invalid", PYTHONPATH="/invalid"),
                 check=True, capture_output=True, text=True, timeout=30)
             assert str(app) in result.stdout

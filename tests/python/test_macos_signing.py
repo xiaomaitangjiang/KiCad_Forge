@@ -54,6 +54,20 @@ class MacSigningTests(unittest.TestCase):
         self.assertFalse(result["accepted"])
         self.assertIn("rejected", result["details"])
 
+    def test_duplicate_runtime_names_fail_before_moving_any_native_file(self):
+        runtime = self.app / "Contents/Resources/python"
+        for name in ("bin/python3", "lib/first/duplicate.dylib", "lib/second/duplicate.dylib"):
+            path = runtime / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"\xcf\xfa\xed\xfe" + bytes(64))
+        with mock.patch.object(signing, "run") as run:
+            with self.assertRaisesRegex(ValueError, "collision"):
+                signing.relocate_python(self.app)
+            run.assert_not_called()
+        for name in ("bin/python3", "lib/first/duplicate.dylib", "lib/second/duplicate.dylib"):
+            self.assertTrue((runtime / name).is_file())
+            self.assertFalse((runtime / name).is_symlink())
+
     def test_unrelated_bundles_are_rejected_before_signing(self):
         with (self.app / "Contents/Info.plist").open("wb") as stream:
             plistlib.dump({"CFBundleIdentifier": "another.app", "CFBundleExecutable": "Other"}, stream)

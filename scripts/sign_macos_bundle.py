@@ -76,12 +76,14 @@ def relocate_python(app):
     libraries = contents / "Frameworks"
     libraries.mkdir(exist_ok=True)
     targets = []
+    destinations = set()
     for source in native_files(runtime):
         relative = source.relative_to(runtime)
         parent = contents / "MacOS" if relative.parts[0] == "bin" else libraries
         destination = parent / source.name
-        if os.path.lexists(destination):
+        if destination in destinations or os.path.lexists(destination):
             raise ValueError("Native runtime filename collision: " + str(destination))
+        destinations.add(destination)
         targets.append((source, destination))
     for source, destination in targets:
         os.replace(source, destination)
